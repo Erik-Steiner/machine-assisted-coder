@@ -1,0 +1,19 @@
+# secrets - never commit
+.env
+
+# generated data artifacts (large; regenerate with download_script.py)
+executive_interviews.json
+executive_interviews.csv
+executive_interviews_by_year.csv
+interviews_by_year_company.csv
+
+# unrelated research material kept in this workspace, not part of the dashboard
+Archive/
+Examples/
+API Notes.docx
+Video Data.txt
+ceo_transcript_summary.ipynb
+
+# python
+__pycache__/
+*.pyc

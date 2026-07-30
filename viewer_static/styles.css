@@ -1,0 +1,217 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-alt: #1d212a;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --text-dim: #9aa2af;
+  --accent: #5b9dff;
+  --accent-dim: #2c4870;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8;
+    --panel: #ffffff;
+    --panel-alt: #eef0f3;
+    --border: #d8dce2;
+    --text: #1a1d23;
+    --text-dim: #5b6270;
+    --accent: #2563eb;
+    --accent-dim: #dbe6ff;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#topbar h1 {
+  font-size: 16px;
+  margin: 0;
+  font-weight: 600;
+}
+
+#resultCount {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+#layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+#filterPanel {
+  width: 260px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow-y: auto;
+}
+#filterPanel.hidden { display: none; }
+
+.filter-group { margin-bottom: 16px; }
+.filter-group > label {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.checkbox-list {
+  max-height: 140px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--panel-alt);
+}
+
+.checkbox-item {
+  display: block;
+  font-size: 13px;
+  padding: 2px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.checkbox-item input { margin-right: 6px; }
+
+.filter-group input[type="text"],
+.filter-group input[type="number"] {
+  width: 100%;
+  padding: 6px 8px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+#listPanel {
+  width: 300px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  overflow-y: auto;
+}
+
+.list-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.list-item:hover { background: var(--panel-alt); }
+.list-item.active { background: var(--accent-dim); }
+
+.li-date { font-size: 11px; color: var(--text-dim); }
+.li-exec { font-size: 13px; font-weight: 600; }
+.li-title {
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#mainPanel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 16px 24px;
+  overflow: hidden;
+}
+
+#metaBox {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+#positionCounter { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+#metaExecutive { margin: 0 0 4px 0; font-size: 20px; }
+#metaItemTitle { font-size: 14px; margin-bottom: 6px; }
+#metaItemTitle a { color: var(--accent); text-decoration: none; }
+#metaItemTitle a:hover { text-decoration: underline; }
+
+#metaDetails {
+  font-size: 12px;
+  color: var(--text-dim);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+
+#navBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+button {
+  font-size: 13px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+button:disabled { opacity: 0.4; cursor: default; }
+button.btn-secondary {
+  background: var(--panel-alt);
+  color: var(--text);
+}
+
+#copyStatus {
+  font-size: 12px;
+  color: var(--accent);
+}
+
+#transcriptBox {
+  flex: 1;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px 20px;
+}
+
+#transcriptContent p {
+  margin: 0 0 10px 0;
+  line-height: 1.5;
+  font-size: 14px;
+}
+#transcriptContent p strong { color: var(--accent); }

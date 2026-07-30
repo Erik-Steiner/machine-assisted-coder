@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Executive Interview Viewer</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header id="topbar">
+  <h1>Executive Interview Viewer</h1>
+  <button id="toggleFilters" class="btn-secondary">Filters</button>
+  <div id="resultCount"></div>
+</header>
+
+<div id="layout">
+
+  <aside id="filterPanel" class="hidden">
+    <div class="filter-group">
+      <label>Company</label>
+      <div id="companyFilters" class="checkbox-list"></div>
+    </div>
+    <div class="filter-group">
+      <label>Executive</label>
+      <div id="executiveFilters" class="checkbox-list"></div>
+    </div>
+    <div class="filter-group">
+      <label>Title</label>
+      <div id="titleFilters" class="checkbox-list"></div>
+    </div>
+    <div class="filter-group">
+      <label>Year</label>
+      <div id="yearFilters" class="checkbox-list"></div>
+    </div>
+    <div class="filter-group">
+      <label for="channelSearch">Channel contains</label>
+      <input id="channelSearch" type="text" placeholder="e.g. Bloomberg">
+    </div>
+    <div class="filter-group">
+      <label for="titleSearch">Interview title contains</label>
+      <input id="titleSearch" type="text" placeholder="e.g. earnings call">
+    </div>
+    <div class="filter-group">
+      <label for="minViews">Min views</label>
+      <input id="minViews" type="number" min="0" placeholder="0">
+    </div>
+    <div class="filter-group">
+      <label for="minLikes">Min likes</label>
+      <input id="minLikes" type="number" min="0" placeholder="0">
+    </div>
+    <div class="filter-group">
+      <label for="minScore">Min classifier score</label>
+      <input id="minScore" type="number" step="0.01" placeholder="0">
+    </div>
+    <button id="resetFilters" class="btn-secondary">Reset filters</button>
+  </aside>
+
+  <aside id="listPanel">
+    <div id="interviewList"></div>
+  </aside>
+
+  <main id="mainPanel">
+    <div id="metaBox">
+      <div id="positionCounter"></div>
+      <h2 id="metaExecutive"></h2>
+      <div id="metaItemTitle"></div>
+      <div id="metaDetails"></div>
+    </div>
+
+    <div id="navBar">
+      <button id="prevBtn">&larr; Previous</button>
+      <button id="nextBtn">Next &rarr;</button>
+      <button id="copyBtn" disabled>Copy selection + citation</button>
+      <span id="copyStatus"></span>
+    </div>
+
+    <div id="transcriptBox">
+      <div id="transcriptContent">Loading&hellip;</div>
+    </div>
+  </main>
+
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
