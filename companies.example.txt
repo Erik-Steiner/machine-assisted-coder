@@ -1,0 +1,11 @@
+# Example company list for download_script.py.
+#
+# Copy this file to companies.txt (kept out of git — it's specific to your
+# own research) to set a default list, or just pass names directly:
+#   python download_script.py "Anthropic" "OpenAI"
+#
+# One company name per line. Blank lines and '#' comments are ignored.
+Anthropic
+OpenAI
+Google LLC
+DeepMind

@@ -1,0 +1,18 @@
+name: Smoke check
+
+# Not a test suite (none exists by design -- see CLAUDE.md rule 8). Just catches an
+# accidental syntax error or missing dependency before a researcher hits it on a fresh clone.
+on:
+  push:
+  pull_request:
+
+jobs:
+  import-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - run: python -c "import viewer_server, coding_store, classifier, query_api, segmentation, appendix_export"

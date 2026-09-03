@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+title: "Executive Interview Viewer"
+type: software
+authors:
+  - family-names: "Steiner"
+    given-names: "Erik"
+license: MIT
+version: 0.1.0
+date-released: "2026-08-28"
+# Update this to your repo's actual GitHub URL once published.
+repository-code: "https://github.com/your-username/your-repo-name"

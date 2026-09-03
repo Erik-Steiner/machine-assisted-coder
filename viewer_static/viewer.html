@@ -3,35 +3,66 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Executive Interview Viewer</title>
+<title>Machine Assisted Coder</title>
 <link rel="stylesheet" href="/styles.css">
 </head>
-<body>
+<body data-tab="browse">
 
 <header id="topbar">
-  <h1>Executive Interview Viewer</h1>
+  <h1>Machine Assisted Coder</h1>
+  <button id="projectBtn" class="btn-secondary" title="Switch or create a project">
+    Project: <span id="projectBtnName">…</span>
+  </button>
+  <nav id="tabs">
+    <button id="tabBrowseBtn" class="tab-btn active">Browse</button>
+    <button id="tabSearchBtn" class="tab-btn">Search / Import</button>
+    <button id="tabCodingBtn" class="tab-btn">Coding</button>
+    <button id="tabModelBtn" class="tab-btn">Model</button>
+    <button id="tabReviewBtn" class="tab-btn">Review</button>
+    <button id="tabAppendixBtn" class="tab-btn">Web Appendix</button>
+  </nav>
+  <select id="datasetSelect" title="Dataset to browse"></select>
   <button id="toggleFilters" class="btn-secondary">Filters</button>
   <div id="resultCount"></div>
 </header>
+
+<div id="projectPanel" class="hidden">
+  <h3>Projects</h3>
+  <p class="hint">Each project has its own datasets and codebook, completely separate from the
+    others. Switching reloads the page.</p>
+  <div id="projectList"></div>
+  <div class="project-form">
+    <input id="projectPathInput" type="text" placeholder="Folder path -- existing or new">
+    <button id="projectBrowseBtn" class="btn-secondary">Browse&hellip;</button>
+    <input id="projectNameInput" type="text" placeholder="Display name (optional)">
+    <button id="projectOpenBtn">Open</button>
+  </div>
+  <div id="projectFormStatus" class="hint"></div>
+  <button id="projectPanelCloseBtn" class="btn-secondary">Close</button>
+</div>
 
 <div id="layout">
 
   <aside id="filterPanel" class="hidden">
     <div class="filter-group">
-      <label>Company</label>
-      <div id="companyFilters" class="checkbox-list"></div>
+      <label>Group</label>
+      <div id="groupFilters" class="checkbox-list"></div>
     </div>
     <div class="filter-group">
-      <label>Executive</label>
-      <div id="executiveFilters" class="checkbox-list"></div>
+      <label>Person</label>
+      <div id="personFilters" class="checkbox-list"></div>
     </div>
     <div class="filter-group">
-      <label>Title</label>
-      <div id="titleFilters" class="checkbox-list"></div>
+      <label>Role</label>
+      <div id="personTitleFilters" class="checkbox-list"></div>
     </div>
     <div class="filter-group">
-      <label>Year</label>
-      <div id="yearFilters" class="checkbox-list"></div>
+      <label>Date range</label>
+      <div id="dateRangeLabel" class="hint"></div>
+      <div class="date-slider">
+        <input id="dateFromSlider" type="range">
+        <input id="dateToSlider" type="range">
+      </div>
     </div>
     <div class="filter-group">
       <label for="channelSearch">Channel contains</label>
@@ -40,6 +71,11 @@
     <div class="filter-group">
       <label for="titleSearch">Interview title contains</label>
       <input id="titleSearch" type="text" placeholder="e.g. earnings call">
+    </div>
+    <div class="filter-group">
+      <label for="transcriptSearch">Interview contains</label>
+      <input id="transcriptSearch" type="text" placeholder="e.g. artificial general intelligence">
+      <div id="transcriptSearchStatus" class="hint"></div>
     </div>
     <div class="filter-group">
       <label for="minViews">Min views</label>
@@ -66,6 +102,7 @@
       <h2 id="metaExecutive"></h2>
       <div id="metaItemTitle"></div>
       <div id="metaDetails"></div>
+      <div id="metaDupNotice"></div>
     </div>
 
     <div id="navBar">
@@ -80,8 +117,260 @@
     </div>
   </main>
 
+  <main id="codingMain">
+    <div id="codingMetaBox">
+      <div id="codingPositionCounter"></div>
+      <h2 id="codingPersonName"></h2>
+      <div id="codingItemTitle"></div>
+      <div id="codingDupNotice"></div>
+    </div>
+
+    <div id="codingNavBar">
+      <button id="codingPrevBtn">&larr; Previous</button>
+      <button id="codingNextBtn">Next &rarr;</button>
+      <button id="toggleCodebook" class="btn-secondary">Codebook</button>
+      <label id="codingMinWordsLabel">Min words <input id="codingMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
+      <div id="codingProgress" class="hint"></div>
+    </div>
+
+    <div id="codebookPanel" class="hidden">
+      <h3>Codebook</h3>
+      <div id="themeList"></div>
+      <div class="theme-form">
+        <input id="newThemeName" type="text" placeholder="Theme name, e.g. Safety &amp; Alignment">
+        <input id="newThemeDesc" type="text" placeholder="Description (what counts as this theme)">
+        <button id="addThemeBtn">Add theme</button>
+      </div>
+      <div id="themeFormStatus" class="hint"></div>
+    </div>
+
+    <div id="segmentBox">
+      <div id="segmentContent"><em>Loading&hellip;</em></div>
+    </div>
+  </main>
+
+</div>
+
+<div id="searchView">
+  <h2 class="import-group-title">Import your own data</h2>
+  <p class="hint">Bring in data you already have -- no command line needed. Either panel below
+    validates before writing anything; the result shows up in Browse immediately. See
+    <code>IMPORTING_DATA.md</code> for the underlying formats, or use the equivalent CLI scripts
+    directly for scripted/batch use.</p>
+
+  <section id="importPanel">
+    <h3>Interview transcript</h3>
+    <p class="hint">A Word "Transcribe"-style .docx or .txt export, or a .json file already in
+      this app's canonical shape.</p>
+    <div class="import-row">
+      <input id="importFileInput" type="file" accept=".docx,.txt,.json">
+    </div>
+    <div id="importStatus" class="hint"></div>
+
+    <div id="importRolesForm" class="hidden">
+      <div class="export-row" id="importTargetRow">
+        <label>Add to
+          <select id="importTargetDataset">
+            <option value="">a new dataset</option>
+          </select>
+        </label>
+      </div>
+      <div id="importLabelRoles" class="import-role-list"></div>
+      <div class="export-row" id="importMetaFields">
+        <label>Group / organization <input id="importGroupName" type="text" placeholder="optional"></label>
+        <label>Subject's name * <input id="importPersonName" type="text" placeholder="required"></label>
+        <label>Subject's title <input id="importPersonTitle" type="text" placeholder="optional"></label>
+        <label>Item title <input id="importItemTitle" type="text" placeholder="optional"></label>
+        <label>Publish date <input id="importPublishDate" type="date"></label>
+      </div>
+      <button id="importCommitBtn">Import</button>
+    </div>
+
+    <div id="importJsonForm" class="hidden">
+      <div id="importJsonSummary" class="hint"></div>
+      <button id="importJsonCommitBtn">Import</button>
+    </div>
+
+    <div id="importResult" class="hidden">
+      <p id="importResultText"></p>
+      <button id="importViewDatasetBtn" class="btn-secondary">View this dataset in Browse</button>
+      <button id="importStartCodingBtn" class="btn-secondary">Start coding this dataset</button>
+    </div>
+  </section>
+
+  <section id="importRedditPanel">
+    <h3>Reddit / Arctic Shift</h3>
+    <p class="hint">Arctic Shift's export shape: submissions and comments as separate JSONL
+      files (one JSON object per line). Comments are optional -- a submissions-only import is
+      valid, you just get single-turn items.</p>
+    <div class="import-row import-reddit-row">
+      <label class="import-file-label">Submissions (.jsonl) *
+        <input id="importRedditSubmissions" type="file" accept=".jsonl,.json,.txt">
+      </label>
+      <label class="import-file-label">Comments (.jsonl, optional)
+        <input id="importRedditComments" type="file" accept=".jsonl,.json,.txt">
+      </label>
+      <button id="importRedditParseBtn">Parse</button>
+    </div>
+    <div id="importRedditStatus" class="hint"></div>
+
+    <div id="importRedditPreview" class="hidden">
+      <div id="importRedditSummary" class="hint"></div>
+      <button id="importRedditCommitBtn">Import</button>
+    </div>
+
+    <div id="importRedditResult" class="hidden">
+      <p id="importRedditResultText"></p>
+      <button id="importRedditViewDatasetBtn" class="btn-secondary">View this dataset in Browse</button>
+      <button id="importRedditStartCodingBtn" class="btn-secondary">Start coding this dataset</button>
+    </div>
+  </section>
+
+  <h2 class="import-group-title">Search the live API</h2>
+  <div id="apiSuspendedNotice" class="api-notice">
+    ceointerviews.ai API access is currently suspended -- searches and downloads below won't
+    return results until access is restored. Use "Import your own data" above in the meantime.
+  </div>
+
+  <section id="searchPanel">
+    <div class="search-box">
+      <input id="searchKeyword" type="text"
+             placeholder="Company or CEO/executive name — e.g. &quot;Airbnb&quot; or &quot;Jensen Huang&quot;">
+      <button id="searchBtn">Search</button>
+    </div>
+    <div id="searchStatus" class="hint"></div>
+
+    <div class="search-results-columns">
+      <div class="search-results-col">
+        <h3>Companies</h3>
+        <div id="companyResults" class="result-list"></div>
+      </div>
+      <div class="search-results-col">
+        <h3>Executives / CEOs</h3>
+        <div id="entityResults" class="result-list"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="exportPanel" class="hidden">
+    <h3 id="selectedLabel"></h3>
+    <div class="export-row">
+      <label>After date <input id="afterDate" type="date"></label>
+      <label>Before date <input id="beforeDate" type="date"></label>
+      <button id="fetchExportBtn">Fetch &amp; export transcripts</button>
+    </div>
+    <div id="jobStatus" class="hint"></div>
+    <div id="jobResult" class="hidden">
+      <p id="jobResultText"></p>
+      <button id="viewDatasetBtn" class="btn-secondary">View this dataset in Browse</button>
+    </div>
+  </section>
+</div>
+
+<div id="modelView">
+  <aside id="modelSidebar">
+    <div id="modelTrainBar">
+      <button id="trainModelsBtn">Train / retrain all eligible themes</button>
+      <div id="modelTrainStatus" class="hint"></div>
+    </div>
+    <div id="modelBanner" class="hint"></div>
+    <div id="modelThemeItems"></div>
+  </aside>
+
+  <main id="modelDetail">
+    <div id="modelDetailEmpty" class="hint">Select a theme to see its metrics.</div>
+    <div id="modelDetailContent" class="hidden">
+      <h2 id="modelThemeName"></h2>
+      <div id="modelValueProp"></div>
+
+      <section id="modelMetricsSection">
+        <h3>Latest run</h3>
+        <div id="modelLatestMetrics"></div>
+        <h3>History</h3>
+        <table id="modelHistoryTable">
+          <thead>
+            <tr>
+              <th>Trained</th><th>Version</th><th>n_pos</th><th>Precision</th>
+              <th>Recall</th><th>F1</th><th>PR-AUC</th><th>Threshold</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="modelTermsSection">
+        <h3>Top predictive terms</h3>
+        <div class="model-terms-cols">
+          <div>
+            <h4>Pushes toward theme</h4>
+            <ul id="modelTermsPos"></ul>
+          </div>
+          <div>
+            <h4>Pushes away from theme</h4>
+            <ul id="modelTermsNeg"></ul>
+          </div>
+        </div>
+      </section>
+
+      <section id="modelExemplarsSection">
+        <h3>Top-scored segments</h3>
+        <div id="modelExemplars"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="reviewView">
+  <aside id="reviewSidebar">
+    <h3>Review themes</h3>
+    <p class="hint">Pick one or more themes to build a recode queue -- every segment already
+      coded under them, plus segments a trained model top-scores for them but that aren't
+      coded yet.</p>
+    <div id="reviewThemeSelect" class="checkbox-list"></div>
+    <label id="reviewMinWordsLabel">Min words <input id="reviewMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
+  </aside>
+  <main id="reviewMain">
+    <div id="reviewEmpty" class="hint">Select one or more themes to build a recode queue.</div>
+    <div id="reviewQueue" class="hidden">
+      <section class="review-section">
+        <h3>Currently coded (<span id="reviewCodedCount">0</span>)</h3>
+        <div id="reviewCodedList"></div>
+      </section>
+      <section class="review-section">
+        <h3>Model-flagged, not yet coded (<span id="reviewPredictedCount">0</span>)</h3>
+        <div id="reviewPredictedList"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<div id="appendixView">
+  <main id="appendixMain">
+    <div id="appendixBar">
+      <p class="hint">A chronological log of research actions taken in this app -- themes
+        created/edited/merged, classifier training runs and their parameters, data
+        downloads, codebook exports, and filter state at the moment of a citation or
+        download. Download it as supplementary material for a manuscript.</p>
+      <button id="appendixExportBtn" class="btn-secondary">Download appendix for manuscript</button>
+      <button id="appendixExportCodebookBtn" class="btn-secondary">Download codebook (CSV/JSON)</button>
+      <div id="appendixExportStatus" class="hint"></div>
+    </div>
+    <table id="appendixTable">
+      <thead>
+        <tr><th>Timestamp (UTC)</th><th>Actor</th><th>Action</th><th>Summary</th></tr>
+      </thead>
+      <tbody id="appendixTableBody"></tbody>
+    </table>
+    <div id="appendixEmpty" class="hint hidden">No recorded actions yet.</div>
+  </main>
 </div>
 
 <script src="/app.js"></script>
+<script src="/projects.js"></script>
+<script src="/import.js"></script>
+<script src="/coding.js"></script>
+<script src="/model.js"></script>
+<script src="/review.js"></script>
+<script src="/appendix.js"></script>
 </body>
 </html>

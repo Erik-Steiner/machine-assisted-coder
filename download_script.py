@@ -1,155 +1,126 @@
-import time
-import requests
-import pandas as pd
-from urllib.parse import urlencode
-from dotenv import load_dotenv
-import os
+"""Bulk-downloads transcripts for one or more companies from the
+ceointerviews.ai API, one query export per company, written into queries/ in
+the exact same JSON+CSV format and registered in the same queries/_index.json
+that viewer_server.py's Search & Export tab uses. Run this to build a
+starting dataset; anything it downloads shows up in the Browse tab's dataset
+dropdown immediately, same as a query run by hand.
 
-load_dotenv()
+Company names are resolved to company_id via the live get_companies keyword
+search -- the same lookup the Search & Export tab's UI uses -- so nothing
+about which companies to fetch is hardcoded here; this script works for
+whichever companies your own research targets.
 
-api_key = os.getenv("API_KEY")
-base_url = os.getenv("BASE_URL")
+Run:
+    python download_script.py "Company Name" "Another Company"
 
-if not api_key or not base_url:
-    raise RuntimeError(
-        "API_KEY and BASE_URL must be set (found in .env). "
-        "Check that .env sits next to this script and defines both."
-    )
-base_url = base_url.rstrip("/")
+With no arguments, reads company names (one per line, blank lines and
+'#'-prefixed lines ignored) from companies.txt next to this script, if
+present -- see companies.example.txt for the format.
+"""
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
-OUTPUT_JSON = "executive_interviews.json"
-CHECKPOINT_EVERY = 1  # rewrite OUTPUT_JSON after every N executives, so a crash mid-run keeps partial progress
+import query_api
+from paths import QUERIES_DIR
 
-# ticker -> company_id (company_id is what get_entities/get_feed actually filter on)
-tickers = {"None-Anthropic": 613, "None-OpenAI": 612, "None-Google LLC": 4183}
+HERE = Path(__file__).parent
+COMPANIES_FILE = HERE / "companies.txt"
+CHECKPOINT_EVERY = 1  # rewrite this company's export after every N executives
 
 
-def api_get(endpoint, **params):
-    """GET one API page. Retries transient errors — large transcript pages can
-    occasionally time out server-side, so never assume a single try succeeds."""
-    url = f"{base_url}/api/{endpoint}/?{urlencode(params)}"
-    for attempt in range(4):
+def _company_label(result):
+    return result.get("name") or result.get("full_name") or f"company_id {result.get('company_id')}"
+
+
+def resolve_company(name):
+    """Look up a company name against the live API. Returns (company_id,
+    matched_name) on a confident match, or None (after printing why) if the
+    name doesn't resolve to exactly one company."""
+    results = query_api.search_companies(name)
+    if not results:
+        print(f'  no match for "{name}" -- skipping')
+        return None
+    exact = [r for r in results if _company_label(r).lower() == name.lower()]
+    match = exact[0] if len(exact) == 1 else results[0] if len(results) == 1 else None
+    if match is None:
+        print(f'  "{name}" matched {len(results)} companies -- rerun with the exact name:')
+        for r in results:
+            print(f"    {_company_label(r)}  (company_id {r.get('company_id')})")
+        return None
+    return match["company_id"], _company_label(match)
+
+
+def fetch_company(company_name, company_id):
+    executives = query_api.api_get("get_entities", company_id=company_id, page_size=500)["results"]
+    print(f"{company_name}: {len(executives)} executives")
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    base_name = f"company_{query_api.slugify(company_name)}_{stamp}"
+
+    rows = []
+    for i, ex in enumerate(executives, start=1):
+        print(f"  {ex['name']:<25} {ex['title']}")
         try:
-            resp = requests.get(url, headers={"X-API-Key": api_key}, timeout=90)
-            if resp.status_code < 500:
-                resp.raise_for_status()
-                return resp.json()
-        except requests.exceptions.RequestException:
-            if attempt == 3:
-                raise
-        time.sleep(2 ** attempt)  # 1s, 2s, 4s between retries
-    raise RuntimeError(f"{endpoint} kept returning 5xx: {url}")
+            items = query_api.fetch_feed(entity_id=ex["id"])
+        except Exception as exc:
+            print(f"    FAILED: {exc}")
+            continue
+
+        rows.extend(query_api.build_row(item, company_name) for item in items)
+        print(f"    {len(items)} interviews")
+
+        if i % CHECKPOINT_EVERY == 0:
+            query_api.write_export(QUERIES_DIR, base_name, query_api.dedupe_rows(rows))
+
+    rows = query_api.dedupe_rows(rows)
+    json_path, csv_path = query_api.write_export(QUERIES_DIR, base_name, rows)
+    query_api.register_export(
+        QUERIES_DIR,
+        dataset_id=f"q_{uuid.uuid4().hex[:10]}",
+        label=f"{company_name} — {len(rows)} interviews",
+        kind="company",
+        source_id=company_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        count=len(rows),
+        json_path=json_path,
+        csv_path=csv_path,
+    )
+    print(f"  Saved {len(rows)} rows to {json_path.name} / {csv_path.name}\n")
+    return rows
 
 
-def fetch_all_feed_for_entity(entity_id, page_size=500):
-    """Keyset-paginate get_feed for one entity_id, returning every interview record they appear in."""
-    items = []
-    last_seen_id = None
-    while True:
-        params = {"entity_id": entity_id, "page_size": page_size}
-        if last_seen_id is not None:
-            params["before_feed_item_id"] = last_seen_id
-        data = api_get("get_feed", **params)
-        items.extend(data.get("results", []))
-        last_seen_id = data.get("last_seen_id")
-        if not data.get("page_has_next", False) or last_seen_id is None:
-            break
-    return items
+def load_company_names(argv):
+    if argv:
+        return argv
+    if COMPANIES_FILE.exists():
+        lines = COMPANIES_FILE.read_text(encoding="utf-8").splitlines()
+        return [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    return []
 
 
-def build_transcript_text(item):
-    """Plain, speaker-labeled text for NLP use. Prefers enhanced_transcript
-    (already clean speaker turns); falls back to parsing the raw SRT blocks
-    for older items that lack it."""
-    segments = item.get("enhanced_transcript") or []
-    if segments:
-        lines = [
-            f"[{seg.get('speaker_name', 'unknown')}] {seg['content'].strip()}"
-            for seg in segments
-            if seg.get("content")
-        ]
-        return "\n".join(lines)
+def main():
+    names = load_company_names(sys.argv[1:])
+    if not names:
+        print('Usage: python download_script.py "Company Name" ["Another Company" ...]')
+        print(f"(or list company names, one per line, in {COMPANIES_FILE.name} -- "
+              f"see companies.example.txt)")
+        sys.exit(1)
 
-    raw_blocks = item.get("transcript") or []
-    words = []
-    for block in raw_blocks:
-        # each block is "index\nHH:MM:SS,mmm --> HH:MM:SS,mmm\ncaption text"
-        parts = block.split("\n")
-        caption = " ".join(parts[2:]) if len(parts) > 2 else ""
-        if caption.strip():
-            words.append(caption.strip())
-    return " ".join(words)
+    total = 0
+    companies_done = 0
+    for name in names:
+        print(f'Looking up "{name}"...')
+        resolved = resolve_company(name)
+        if resolved is None:
+            continue
+        company_id, matched_name = resolved
+        rows = fetch_company(matched_name, company_id)
+        total += len(rows)
+        companies_done += 1
+    print(f"Done. {total} interviews across {companies_done} companies, saved into {QUERIES_DIR}/")
 
 
-def build_row(executive, item):
-    extra = item.get("extra") or {}
-    return {
-        "company": executive["company"],
-        "executive": executive["executive"],
-        "title": executive["title"],
-        "entity_id": executive["entity_id"],
-        "entity_name": item.get("entity_name"),
-        "entity_title": item.get("entity_title"),
-        "feed_item_id": item.get("feed_item_id"),
-        "item_title": item.get("item_title"),
-        "source_url": item.get("source_url"),
-        "publish_date": item.get("publish_date"),
-        "duration_secs": extra.get("duration_secs"),
-        "view_count": extra.get("view_count"),
-        "like_count": extra.get("like_count"),
-        "combined_classifier_score": extra.get("combined_classifier_score"),
-        "channel_name": extra.get("channel_name"),
-        # Clean, ready-to-analyze text — the main payload for a downstream NLP pipeline.
-        "transcript_text": build_transcript_text(item),
-        # Full-fidelity speaker/timestamp structure, kept as native JSON (list of dicts).
-        "enhanced_transcript_json": item.get("enhanced_transcript") or [],
-    }
-
-
-def save_progress(rows, path):
-    if not rows:
-        return
-    df = pd.DataFrame(rows)
-    df = df.drop_duplicates(subset=["entity_id", "feed_item_id"])
-    df["publish_date"] = pd.to_datetime(df["publish_date"], utc=True, format="ISO8601", errors="coerce")
-    df["year"] = df["publish_date"].dt.year
-    df.to_json(path, orient="records", indent=2, date_format="iso", force_ascii=False)
-    return df
-
-
-csuites = {}
-executives = []
-
-for tick in tickers:
-    csuites[tick] = api_get("get_entities", company_id=tickers[tick], page_size=500)["results"]
-
-for tick, entities in csuites.items():
-    print(f"{tick}: {len(entities)} executives")
-    company_name = tick.replace("None-", "")
-    for e in entities:
-        print(f"  {e['name']:<25} {e['title']}")
-        executives.append({
-            "company": company_name,
-            "entity_id": e["id"],
-            "executive": e["name"],
-            "title": e["title"],
-        })
-
-feed_rows = []
-for i, ex in enumerate(executives, start=1):
-    try:
-        feed = fetch_all_feed_for_entity(ex["entity_id"])
-    except requests.exceptions.RequestException as exc:
-        print(f"  {ex['company']:<10} {ex['executive']:<22} FAILED: {exc}")
-        continue
-
-    for item in feed:
-        feed_rows.append(build_row(ex, item))
-    print(f"  {ex['company']:<10} {ex['executive']:<22} {len(feed)} interviews")
-
-    if i % CHECKPOINT_EVERY == 0:
-        save_progress(feed_rows, OUTPUT_JSON)
-
-feed_df = save_progress(feed_rows, OUTPUT_JSON)
-print(f"\nSaved {len(feed_df)} rows to {OUTPUT_JSON}")
-print(f"Rows with transcript text: {(feed_df['transcript_text'].str.len() > 0).sum()}")
+if __name__ == "__main__":
+    main()
