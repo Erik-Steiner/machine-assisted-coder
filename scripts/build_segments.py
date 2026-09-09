@@ -14,8 +14,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-import coding_store
 import query_api
+from coding_store import schema, segments as segments_store
 from paths import QUERIES_DIR
 from segmentation import segment_interview
 
@@ -28,7 +28,7 @@ def main():
               f"or Search & Export first.")
         return
 
-    coding_store.init_db()
+    schema.init_db()
 
     for dataset_id in dataset_ids:
         entry = registry.get(dataset_id)
@@ -54,10 +54,10 @@ def main():
                 seg["dataset_id"] = dataset_id
             all_segments.extend(segs)
 
-        coding_store.upsert_segments(all_segments)
+        segments_store.upsert_segments(all_segments)
         print(f"{entry['label']}: {len(records)} interviews -> {len(all_segments)} segments")
 
-    print(f"Total segments in coding.db: {coding_store.count_segments()}")
+    print(f"Total segments in coding.db: {segments_store.count_segments()}")
 
 
 if __name__ == "__main__":

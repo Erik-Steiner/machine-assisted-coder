@@ -257,27 +257,33 @@ def register_export(queries_dir, *, dataset_id, label, kind, source_id, created_
     return entries[-1]
 
 
-_LABEL_COUNT_SUFFIX_RE = re.compile(r"\s+—\s+\d+\s+interview\(s\)$")
+_LABEL_COUNT_SUFFIX_RE = re.compile(r"\s+—\s+\d+\s+\S+\(s\)$")
 
 
-def relabel_with_count(label, count):
-    """Regenerates a registry label with an updated interview count,
-    preserving whatever researcher-facing name came before the
-    " -- N interview(s)" suffix register_export() adds (or adding that
-    suffix fresh, if the label didn't have one) -- used when appending to an
-    existing dataset via append_to_dataset() so the count in Browse's
-    dataset dropdown doesn't go stale."""
+def relabel_with_count(label, count, noun="interview(s)"):
+    """Regenerates a registry label with an updated count, preserving
+    whatever researcher-facing name came before the " -- N <noun>" suffix
+    register_export() adds (or adding that suffix fresh, if the label didn't
+    have one) -- used when appending to an existing dataset via
+    append_to_dataset() so the count in Browse's dataset dropdown doesn't go
+    stale. noun defaults to "interview(s)" (interview-transcript imports);
+    pass e.g. "submission(s)" for a Reddit dataset so the wording matches
+    what register_export() used when the dataset was first created. The
+    strip regex matches any "<count> <word>(s)" suffix, not just
+    "interview(s)", so relabeling works regardless of which noun a dataset's
+    label already carries."""
     base = _LABEL_COUNT_SUFFIX_RE.sub("", label)
-    return f"{base} — {count} interview(s)"
+    return f"{base} — {count} {noun}"
 
 
-def append_to_dataset(queries_dir, dataset_id, new_records):
+def append_to_dataset(queries_dir, dataset_id, new_records, count_noun="interview(s)"):
     """Adds new_records to an existing queries/*.json export in place, so a
-    researcher can import one more interview into an existing bucket (e.g.
-    every transcript from one research project) instead of every import
-    creating its own one-interview dataset -- the way company downloads
-    already group many executives' interviews under one dataset_id. Updates
-    the registry's count/label to match.
+    researcher can import one more interview (or Reddit submission) into an
+    existing bucket (e.g. every transcript from one research project)
+    instead of every import creating its own one-item dataset -- the way
+    company downloads already group many executives' interviews under one
+    dataset_id. Updates the registry's count/label to match; see
+    relabel_with_count() for count_noun.
 
     Raises KeyError if dataset_id isn't registered, or DatasetValidationError
     if any new record's item_id already exists in the dataset (segment_id is
@@ -306,7 +312,10 @@ def append_to_dataset(queries_dir, dataset_id, new_records):
         )
     combined = existing + new_records
     write_export(queries_dir, Path(entry["json_file"]).stem, combined)
-    entries[idx] = {**entry, "count": len(combined), "label": relabel_with_count(entry["label"], len(combined))}
+    entries[idx] = {
+        **entry, "count": len(combined),
+        "label": relabel_with_count(entry["label"], len(combined), noun=count_noun),
+    }
     save_registry(queries_dir, entries)
     return combined, entries[idx]
 

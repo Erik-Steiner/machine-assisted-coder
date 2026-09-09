@@ -14,14 +14,16 @@
     Project: <span id="projectBtnName">…</span>
   </button>
   <nav id="tabs">
-    <button id="tabBrowseBtn" class="tab-btn active">Browse</button>
     <button id="tabSearchBtn" class="tab-btn">Search / Import</button>
-    <button id="tabCodingBtn" class="tab-btn">Coding</button>
-    <button id="tabModelBtn" class="tab-btn">Model</button>
+    <button id="tabBrowseBtn" class="tab-btn active">Browse</button>
+    <button id="tabCodingBtn" class="tab-btn">Code</button>
+    <button id="tabModelBtn" class="tab-btn">Train</button>
     <button id="tabReviewBtn" class="tab-btn">Review</button>
+    <button id="tabAnalyticsBtn" class="tab-btn">Analyze</button>
     <button id="tabAppendixBtn" class="tab-btn">Web Appendix</button>
   </nav>
   <select id="datasetSelect" title="Dataset to browse"></select>
+  <div id="datasetStatusHint" class="hint hidden"></div>
   <button id="toggleFilters" class="btn-secondary">Filters</button>
   <div id="resultCount"></div>
 </header>
@@ -129,6 +131,7 @@
       <button id="codingPrevBtn">&larr; Previous</button>
       <button id="codingNextBtn">Next &rarr;</button>
       <button id="toggleCodebook" class="btn-secondary">Codebook</button>
+      <button id="toggleDatasets" class="btn-secondary">Datasets</button>
       <label id="codingMinWordsLabel">Min words <input id="codingMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
       <div id="codingProgress" class="hint"></div>
     </div>
@@ -142,6 +145,14 @@
         <button id="addThemeBtn">Add theme</button>
       </div>
       <div id="themeFormStatus" class="hint"></div>
+    </div>
+
+    <div id="datasetsPanel" class="hidden">
+      <h3>Datasets</h3>
+      <p class="hint">Decide which corpora are relevant for analysis. "Exclude" keeps a dataset fully
+        browsable/codeable but leaves it out of classifier training. "Unload" hides it everywhere
+        (Browse, Code, Analyze) without deleting anything -- restorable here any time.</p>
+      <div id="datasetsList"></div>
     </div>
 
     <div id="segmentBox">
@@ -216,6 +227,13 @@
 
     <div id="importRedditPreview" class="hidden">
       <div id="importRedditSummary" class="hint"></div>
+      <div class="export-row" id="importRedditTargetRow">
+        <label>Add to
+          <select id="importRedditTargetDataset">
+            <option value="">a new dataset</option>
+          </select>
+        </label>
+      </div>
       <button id="importRedditCommitBtn">Import</button>
     </div>
 
@@ -265,6 +283,40 @@
       <button id="viewDatasetBtn" class="btn-secondary">View this dataset in Browse</button>
     </div>
   </section>
+</div>
+
+<div id="analyticsView">
+  <main id="analyticsMain">
+    <p class="hint">Scale and density of the corpus currently in scope for classifier training --
+      every included dataset, minus interviewer turns, near-duplicate segments, and fragments
+      under 5 words (the same filters classifier.py itself applies). Excluded/unloaded datasets
+      (see the Code tab's Datasets panel) are never counted here.</p>
+
+    <div id="analyticsEmpty" class="hint hidden"></div>
+
+    <div id="analyticsTiles"></div>
+
+    <div id="analyticsShowing" class="hidden"></div>
+
+    <div id="analyticsBreakdownBar">
+      <label>Break down by
+        <select id="analyticsFieldSelect"><option value="">(none)</option></select>
+      </label>
+      <label id="analyticsNormalizeLabel" class="hidden">
+        <input type="checkbox" id="analyticsNormalize"> Per-document average
+      </label>
+    </div>
+
+    <div id="analyticsChart"></div>
+
+    <div id="analyticsVocabOverlap" class="hidden">
+      <h3>Vocabulary overlap</h3>
+      <p class="hint">How much of each group's vocabulary (after the same stopword removal
+        classifier.py's TF-IDF uses) is shared with the other groups vs. unique to it.</p>
+      <div id="analyticsVocabChart"></div>
+      <div id="analyticsVocabTerms"></div>
+    </div>
+  </main>
 </div>
 
 <div id="modelView">
@@ -369,6 +421,7 @@
 <script src="/projects.js"></script>
 <script src="/import.js"></script>
 <script src="/coding.js"></script>
+<script src="/analytics.js"></script>
 <script src="/model.js"></script>
 <script src="/review.js"></script>
 <script src="/appendix.js"></script>

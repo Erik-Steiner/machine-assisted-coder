@@ -35,7 +35,7 @@ Six tabs, one server:
                       scripts/build_segments.py from each item's `turns`)
                       against it. Backed by coding.db (SQLite), a separate
                       store from the in-memory JSON datasets above — see
-                      coding_store.py. Data can come from the live API
+                      the coding_store package. Data can come from the live API
                       (Search & Export) or from scripts/import_*.py for
                       interview transcripts and Reddit/Arctic Shift data --
                       see IMPORTING_DATA.md.
@@ -54,17 +54,29 @@ Six tabs, one server:
   Web Appendix      — a chronological log of research actions (theme CRUD,
                       training runs with their hyperparameters, downloads,
                       codebook exports, and Browse filter snapshots taken at
-                      a citation/export moment), backed by coding_store.py's
+                      a citation/export moment), backed by coding_store.activity_log's
                       activity_log/model_run_params tables, downloadable as
                       a self-contained HTML file for a manuscript's
-                      supplementary material. See coding_store.log_activity/
-                      get_appendix_feed and appendix_export.py.
+                      supplementary material. See coding_store.activity_log's
+                      log_activity/get_appendix_feed and appendix_export.py.
 
 Endpoints:
 
     GET  /api/datasets                    -> list of browsable datasets (registry-backed entries include
                                               "kind", e.g. "interview_import", so the transcript importer
-                                              can offer only those as append targets)
+                                              can offer only those as append targets), each carrying a
+                                              "status": "active" | "excluded" -- "unloaded" datasets are
+                                              dropped from this list entirely (see /api/datasets/all)
+    GET  /api/datasets/all                -> same as /api/datasets but including "unloaded" ones too --
+                                              the only way to find and restore one; backs the Coding tab's
+                                              Datasets panel
+    POST /api/datasets/status             -> {dataset_id, status: "active"|"excluded"|"unloaded", note?}
+                                              -> flags a whole dataset ("corpus") as excluded from
+                                              classifier training (still fully visible/codeable) or
+                                              unloaded (hidden from Browse/Coding/analysis entirely, but
+                                              nothing on disk or in coding.db is touched/deleted --
+                                              restorable any time); "active" clears any existing flag. See
+                                              coding_store.dataset_status / classifier.build_corpus()
     GET  /api/index?dataset=<id>          -> metadata-only records for one dataset
     GET  /api/interview/<id>?dataset=<id> -> full record (incl. transcript_text)
 
@@ -117,8 +129,10 @@ Endpoints:
 
     POST /api/import/transcript/parse                 -> {filename, content_base64} -> parses an uploaded
                                                          .docx/.txt/.json interview transcript (in memory, nothing
-                                                         written yet) and returns a preview: speaker labels found
-                                                         (docx/txt) or record count (json) -- see
+                                                         written yet) and returns a preview: speaker labels found,
+                                                         which of the two auto-detected docx/txt formats matched
+                                                         ("format_detected": "timestamped"|"labeled" -- see
+                                                         parse_transcript_turns()), or record count (json) -- see
                                                          scripts/import_interview_transcript.py, the Search & Export
                                                          tab's Import panel
     POST /api/import/transcript/commit                -> {upload_token, ..., target_dataset_id?} -> finishes a
@@ -134,18 +148,30 @@ Endpoints:
                                                          into that dataset instead of creating a new one-interview
                                                          dataset (see query_api.append_to_dataset())
 
-    POST /api/import/reddit/parse                     -> {submissions_filename, submissions_content_base64,
-                                                         comments_filename?, comments_content_base64?} ->
-                                                         parses an uploaded Arctic Shift submissions(+comments)
+    POST /api/import/raw_upload?filename=<name>        -> raw request body (NOT JSON -- the whole point is
+                                                         avoiding a base64-in-JSON copy for a large file) ->
+                                                         {upload_id}. Used ahead of /api/import/reddit/parse so
+                                                         a multi-hundred-MB Arctic Shift comments export gets
+                                                         streamed straight from the File object to the network,
+                                                         rather than built up as a base64 JS string first (see
+                                                         RAW_UPLOADS above for why that OOMs the browser tab).
+    POST /api/import/reddit/parse                     -> {submissions_filename, submissions_upload_id,
+                                                         comments_filename?, comments_upload_id?} -> parses a
+                                                         previously raw_upload'ed Arctic Shift submissions(+comments)
                                                          JSONL export (in memory, nothing written yet) and
                                                          returns a preview: item/turn counts, subreddits found,
                                                          orphaned-comment count -- see scripts/import_reddit.py,
                                                          the Search & Export tab's Import panel
-    POST /api/import/reddit/commit                    -> {upload_token} -> finishes a previously-parsed upload
-                                                         (no extra input needed -- Reddit data has no
-                                                         interviewer/respondent role decision to make), writes it
-                                                         into queries/, and segments it into coding.db immediately,
-                                                         same as /api/import/transcript/commit
+    POST /api/import/reddit/commit                    -> {upload_token, target_dataset_id?} -> finishes a
+                                                         previously-parsed upload (no role-assignment input needed
+                                                         -- Reddit data has no interviewer/respondent decision to
+                                                         make), writes it into queries/, and segments it into
+                                                         coding.db immediately, same as /api/import/transcript/commit.
+                                                         target_dataset_id is optional: if given (an existing
+                                                         dataset registered with kind="reddit_import" -- see
+                                                         GET /api/datasets), the new submission(s) are appended
+                                                         into that dataset instead of creating a new one (see
+                                                         query_api.append_to_dataset())
 
     GET  /api/duplicates/status?dataset=<id>          -> {item_id: {kind: "duplicate", is_canonical,
                                                          canonical_dataset_id, canonical_item_id, size,
@@ -168,6 +194,28 @@ Endpoints:
                                                          override, reverting to whatever the automated run
                                                          says (or "not a duplicate")
 
+    GET  /api/analytics/corpus/summary?field=<f>&value=<v>  -> the six corpus-level scale/density metrics
+                                                         (total_documents, total_segments, total_word_count,
+                                                         vocabulary_size, lexical_diversity, segment-length
+                                                         spread) over the same segment set
+                                                         classifier.build_corpus() trains on -- see
+                                                         corpus_analytics.py. field/value (both optional)
+                                                         restrict to documents where that metadata field
+                                                         equals value (the metadata-breakdown drill-down)
+    GET  /api/analytics/corpus/fields                 -> breakdown fields discovered from the current
+                                                         corpus's document metadata (never hardcoded), each
+                                                         with its detected type (categorical/temporal/
+                                                         quantitative) and value/missing counts -- feeds the
+                                                         Analytics tab's field selector
+    GET  /api/analytics/corpus/breakdown?field=<f>    -> per-value/bin/point distribution of that field
+                                                         (grouped bars for categorical, time-binned for
+                                                         temporal, per-document scatter points for
+                                                         quantitative) -- see corpus_analytics.field_breakdown
+    GET  /api/analytics/corpus/vocab_overlap?field=<f> -> categorical fields only (400 otherwise) --
+                                                         per-value shared-vs-unique vocabulary percentages
+                                                         and each value's top unique terms, using the same
+                                                         preprocessing as classifier.py's TfidfVectorizer
+
 Run:
     python viewer_server.py [port]
 Then open http://127.0.0.1:<port>/ in a browser (default port 8765).
@@ -186,13 +234,26 @@ from urllib.parse import urlparse, parse_qs
 
 import appendix_export
 import classifier
-import coding_store
+import corpus_analytics
+from coding_store import (
+    activity_log,
+    codes as codes_store,
+    dataset_status as dataset_status_store,
+    duplicates,
+    model_runs,
+    review,
+    schema,
+    segments as segments_store,
+    themes,
+)
 import paths as project_paths
 import project_registry
 import query_api
 import scripts.import_interview_transcript as interview_importer
 import scripts.import_reddit as reddit_importer
 import segmentation
+from jobs import JobRegistry
+from routing import ApiError, DownloadResponse, FileResponse, JsonResponse, Router, write_response
 
 HERE = Path(__file__).parent
 DATA_FILE = HERE / "executive_interviews.json"
@@ -206,9 +267,9 @@ EXPORTS_DIR = project_paths.EXPORTS_DIR
 # makes sense per-process. switch_project() reassigns this.
 CURRENT_PROJECT_DIR = project_paths.PROJECT_DIR
 
-CODER_NAME = os.getenv("CODER_NAME", coding_store.DEFAULT_CODER)
+CODER_NAME = os.getenv("CODER_NAME", schema.DEFAULT_CODER)
 
-coding_store.init_db()
+schema.init_db()
 project_registry.ensure_initialized(str(project_paths.PROJECT_DIR))
 
 
@@ -298,7 +359,13 @@ def save_query_registry(entries):
 
 
 def get_dataset(dataset_id):
-    """Return a loaded dataset dict, loading a saved query from disk on first access."""
+    """Return a loaded dataset dict, loading a saved query from disk on first access.
+    Returns None -- same as "doesn't exist" -- for a dataset flagged 'unloaded' in
+    coding_store.dataset_status, so every caller's existing "unknown dataset" 404
+    handling makes it disappear from Browse/Coding/etc. for free."""
+    status = dataset_status_store.get_dataset_status(dataset_id)
+    if status and status["status"] == "unloaded":
+        return None
     with DATASETS_LOCK:
         cached = DATASETS.get(dataset_id)
     if cached:
@@ -325,7 +392,13 @@ def get_dataset(dataset_id):
     return dataset
 
 
-def list_datasets():
+def _all_datasets():
+    """Every known dataset (primary/demo/query-registry entries), each carrying a
+    "status" merged in from coding_store.dataset_status ("active" by default).
+    Includes 'unloaded' ones -- list_datasets() below is the filtered view most of
+    the app actually wants; this is for the Coding tab's Datasets panel, the only
+    place an unloaded dataset can be found and restored."""
+    statuses = dataset_status_store.list_dataset_statuses()
     out = []
     with DATASETS_LOCK:
         primary_ds = DATASETS.get("primary")
@@ -345,85 +418,94 @@ def list_datasets():
             "id": entry["id"], "label": entry["label"], "count": entry["count"],
             "source": "query", "created_at": entry["created_at"], "kind": entry.get("kind"),
         })
+    for d in out:
+        d["status"] = statuses.get(d["id"], {}).get("status", "active")
     return out
 
 
+def list_datasets():
+    """_all_datasets(), minus anything flagged 'unloaded' -- what the top-bar
+    dataset selector, Browse, and Coding offer."""
+    return [d for d in _all_datasets() if d["status"] != "unloaded"]
+
+
+# --- Corpus analytics (Analytics tab) -----------------------------------------------
+#
+# corpus_analytics.py is deliberately pure (only imports coding_store/classifier, never this
+# module) so it stays independent of DATASETS/get_dataset() -- this is the one join it can't
+# do on its own: a segment's dataset_id/item_id to that document's full metadata record
+# (group_name, publish_date, duration_secs, ...), which lives in each dataset's in-memory
+# `index`, not coding.db. Every endpoint below builds this once per request and hands it to
+# corpus_analytics.py's functions as a plain argument.
+
+def _build_item_meta(segment_rows):
+    """{(dataset_id, item_id): index_record} for every dataset_id present in segment_rows.
+    get_dataset() already returns None for an 'unloaded' dataset, but that can't happen here
+    in practice -- segment_rows comes from corpus_analytics.get_corpus_scope(), which already
+    excludes 'excluded'/'unloaded' datasets via classifier.build_corpus()'s own dataset_status
+    check; the .get(...) guard below is just defensive, not a case this should ever hit."""
+    item_meta = {}
+    for dataset_id in {r["dataset_id"] for r in segment_rows}:
+        dataset = get_dataset(dataset_id)
+        for rec in (dataset or {}).get("index", []):
+            item_meta[(dataset_id, str(rec.get("item_id")))] = rec
+    return item_meta
+
+
 # --- Background query/export jobs -------------------------------------------------
+#
+# JOBS and TRAIN_JOBS below are both jobs.JobRegistry instances -- see that module for
+# the shared start/mutate/update/get shape this section and the next one build on, and
+# DEVELOPMENT.md's "Background jobs" convention for why a third job type should also
+# use it rather than hand-rolling its own {job_id: {...}} dict.
 
-JOBS = {}
-JOBS_LOCK = threading.Lock()
+JOBS = JobRegistry()
 
 
-def run_query_job(job_id, kind, source_id, label, company_name, after_dt, before_dt):
-    with JOBS_LOCK:
-        job = JOBS[job_id]
+def run_query_job(job_id, registry, kind, source_id, label, company_name, after_dt, before_dt):
+    def on_page(total, has_next):
+        registry.mutate(job_id, lambda job: job.update(
+            items_fetched=total, pages_fetched=job["pages_fetched"] + 1,
+        ))
 
-    try:
-        def on_page(total, has_next):
-            with JOBS_LOCK:
-                job["items_fetched"] = total
-                job["pages_fetched"] += 1
+    fetch_kwargs = dict(after_dt=after_dt or None, before_dt=before_dt or None, on_page=on_page)
+    if kind == "company":
+        items = query_api.fetch_feed(company_id=source_id, **fetch_kwargs)
+    else:
+        items = query_api.fetch_feed(entity_id=source_id, **fetch_kwargs)
 
-        fetch_kwargs = dict(after_dt=after_dt or None, before_dt=before_dt or None, on_page=on_page)
-        if kind == "company":
-            items = query_api.fetch_feed(company_id=source_id, **fetch_kwargs)
-        else:
-            items = query_api.fetch_feed(entity_id=source_id, **fetch_kwargs)
+    rows = [query_api.build_row(it, company_name) for it in items]
 
-        rows = [query_api.build_row(it, company_name) for it in items]
+    date_bit = ""
+    if after_dt or before_dt:
+        date_bit = f" [{after_dt or '…'} → {before_dt or '…'}]"
+    dataset_label = f"{label}{date_bit} — {len(rows)} interviews"
 
-        created_at = datetime.now(timezone.utc).isoformat()
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        base_name = f"{kind}_{query_api.slugify(label)}_{stamp}"
-        json_path, csv_path = query_api.write_export(QUERIES_DIR, base_name, rows)
+    result = _create_dataset(
+        rows, filename_prefix=kind, registry_kind=kind, label=label, dataset_label=dataset_label,
+        source_id=source_id, segment=False, action_type="query_download",
+        action_details={"kind": kind, "source_id": source_id, "label": label,
+                         "after": after_dt, "before": before_dt},
+    )
 
-        date_bit = ""
-        if after_dt or before_dt:
-            date_bit = f" [{after_dt or '…'} → {before_dt or '…'}]"
-        dataset_label = f"{label}{date_bit} — {len(rows)} interviews"
-        dataset_id = f"q_{uuid.uuid4().hex[:10]}"
-
-        query_api.register_export(
-            QUERIES_DIR,
-            dataset_id=dataset_id,
-            label=dataset_label,
-            kind=kind,
-            source_id=source_id,
-            created_at=created_at,
-            count=len(rows),
-            json_path=json_path,
-            csv_path=csv_path,
-        )
-        coding_store.log_activity(CODER_NAME, "query_download", {
-            "dataset_id": dataset_id, "kind": kind, "source_id": source_id, "label": label,
-            "after": after_dt, "before": before_dt, "count": len(rows),
-        })
-
-        with JOBS_LOCK:
-            job["status"] = "done"
-            job["dataset_id"] = dataset_id
-            job["dataset_label"] = dataset_label
-            job["json_file"] = json_path.name
-            job["csv_file"] = csv_path.name
-    except Exception as exc:
-        with JOBS_LOCK:
-            job["status"] = "error"
-            job["error"] = str(exc)
+    registry.update(
+        job_id, status="done", dataset_id=result["dataset_id"], dataset_label=result["dataset_label"],
+        json_file=result["json_file"], csv_file=result["csv_file"],
+    )
 
 
 # --- Background classifier training jobs (Model tab) --------------------------------
 
-TRAIN_JOBS = {}
-TRAIN_JOBS_LOCK = threading.Lock()
+TRAIN_JOBS = JobRegistry()
 
 
-def run_train_job(job_id):
+def run_train_job(job_id, registry):
     def on_progress(event):
         stage = event["stage"]
         if stage not in ("theme_start", "theme_skipped", "theme_done"):
             return
-        with TRAIN_JOBS_LOCK:
-            job = TRAIN_JOBS[job_id]
+
+        def apply(job):
             job["themes_total"] = event["total"]
             job["current_theme"] = {"theme_id": event["theme_id"], "name": event["name"]}
             if stage == "theme_skipped":
@@ -438,37 +520,33 @@ def run_train_job(job_id):
                     "theme_id": event["theme_id"], "name": event["name"], **event["metrics"],
                 })
 
-    try:
-        summary = classifier.run_training_pass(progress_callback=on_progress)
-        with TRAIN_JOBS_LOCK:
-            job = TRAIN_JOBS[job_id]
-            if summary["error"]:
-                job["status"] = "error"
-                job["error"] = summary["error"]
-                return
-            job["status"] = "done"
-            job["model_version"] = summary["model_version"]
-            job["themes_total"] = summary["themes_total"]
-            job["themes_done"] = summary["themes_total"]
-            # authoritative final lists, in case an incremental update above was missed
-            job["trained"] = [
-                {"theme_id": r["theme_id"], "name": r["name"], **r["metrics"]}
-                for r in summary["results"] if r["status"] == "trained"
-            ]
-            job["skipped"] = [
-                {"theme_id": r["theme_id"], "name": r["name"], "n_pos": r["n_pos"],
-                 "needed": classifier.MIN_POSITIVES_ATTEMPT}
-                for r in summary["results"] if r["status"] == "skipped_insufficient_positives"
-            ]
-            coding_store.log_activity(CODER_NAME, "training_run", {
-                "model_version": job["model_version"],
-                "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in job["trained"]],
-                "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in job["skipped"]],
-            })
-    except Exception as exc:
-        with TRAIN_JOBS_LOCK:
-            TRAIN_JOBS[job_id]["status"] = "error"
-            TRAIN_JOBS[job_id]["error"] = str(exc)
+        registry.mutate(job_id, apply)
+
+    summary = classifier.run_training_pass(progress_callback=on_progress)
+    if summary["error"]:
+        registry.update(job_id, status="error", error=summary["error"])
+        return
+
+    # authoritative final lists, in case an incremental update above was missed
+    trained = [
+        {"theme_id": r["theme_id"], "name": r["name"], **r["metrics"]}
+        for r in summary["results"] if r["status"] == "trained"
+    ]
+    skipped = [
+        {"theme_id": r["theme_id"], "name": r["name"], "n_pos": r["n_pos"],
+         "needed": classifier.MIN_POSITIVES_ATTEMPT}
+        for r in summary["results"] if r["status"] == "skipped_insufficient_positives"
+    ]
+    registry.update(
+        job_id, status="done", model_version=summary["model_version"],
+        themes_total=summary["themes_total"], themes_done=summary["themes_total"],
+        trained=trained, skipped=skipped,
+    )
+    activity_log.log_activity(CODER_NAME, "training_run", {
+        "model_version": summary["model_version"],
+        "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
+        "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
+    })
 
 
 # --- Import (Search & Export tab's Import panel) -------------------------------------
@@ -487,6 +565,21 @@ def run_train_job(job_id):
 PENDING_IMPORTS = {}
 PENDING_IMPORTS_LOCK = threading.Lock()
 
+# RAW_UPLOADS holds decoded-text file uploads between /api/import/raw_upload and a
+# follow-up parse call (currently just /api/import/reddit/parse). Reddit's Arctic Shift
+# comments export routinely reaches hundreds of MB -- base64-encoding that in the browser
+# and wrapping it in a JSON body (the transcript importer's approach, fine for one
+# interview file) blows past a tab's memory budget: a 349 MB file needs a ~349 MB
+# ArrayBuffer, then a ~465 MB base64 string, then another ~465 MB+ copy when
+# JSON.stringify serializes the request body -- several of these alive at once. Posting
+# the File object directly as the request body instead lets the browser stream it to the
+# network without ever materializing it as a JS string, so raw_upload reads it here and
+# hands back a small token for the parse call to reference. Entries are popped (not just
+# read) on use; a stale/abandoned one (upload started, parse never called) is harmless for
+# the same reason PENDING_IMPORTS's are.
+RAW_UPLOADS = {}
+RAW_UPLOADS_LOCK = threading.Lock()
+
 
 def segment_new_dataset(records, dataset_id):
     """Segments a freshly-imported dataset's records and stores them in
@@ -502,8 +595,92 @@ def segment_new_dataset(records, dataset_id):
         for seg in segs:
             seg["dataset_id"] = dataset_id
         all_segments.extend(segs)
-    coding_store.upsert_segments(all_segments)
+    segments_store.upsert_segments(all_segments)
     return len(all_segments)
+
+
+# --- Turning a batch of records into (or into an existing) browsable dataset --------
+#
+# Every producer of a new dataset -- a Search & Export download, a browser-based
+# transcript import, a browser-based Reddit import -- does the same "write it to
+# queries/, register it, maybe segment it, log it" ceremony. These two helpers are
+# that ceremony, once. Callers below differ only in what they pass in: the
+# registry kind, the filename prefix (not always the same as the registry kind --
+# see each call site), whether to segment immediately, and which activity_log
+# action_type/details apply.
+
+def _create_dataset(records, *, filename_prefix, registry_kind, label, dataset_label,
+                     source_id=None, segment=False, action_type, action_details=None):
+    """Writes records as a brand-new dataset (queries/<prefix>_<slug>_<stamp>.{json,csv},
+    registered under a fresh dataset_id) and logs one activity_log entry. segment=True
+    also segments into coding.db immediately (see segment_new_dataset) -- used by the
+    two import paths, not by Search & Export, which still relies on a separate
+    scripts/build_segments.py run. Returns {dataset_id, dataset_label, json_file,
+    csv_file, count, segments_added} -- segments_added is None when segment=False."""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    base_name = f"{filename_prefix}_{query_api.slugify(label)}_{stamp}"
+    json_path, csv_path = query_api.write_export(QUERIES_DIR, base_name, records)
+    dataset_id = f"q_{uuid.uuid4().hex[:10]}"
+    query_api.register_export(
+        QUERIES_DIR,
+        dataset_id=dataset_id,
+        label=dataset_label,
+        kind=registry_kind,
+        source_id=source_id,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        count=len(records),
+        json_path=json_path,
+        csv_path=csv_path,
+    )
+    segments_added = segment_new_dataset(records, dataset_id) if segment else None
+
+    details = {**(action_details or {}), "dataset_id": dataset_id, "count": len(records)}
+    if segment:
+        details["segments_added"] = segments_added
+    activity_log.log_activity(CODER_NAME, action_type, details)
+
+    return {
+        "dataset_id": dataset_id, "dataset_label": dataset_label,
+        "json_file": json_path.name, "csv_file": csv_path.name,
+        "count": len(records), "segments_added": segments_added,
+    }
+
+
+def _append_dataset(records, *, target_dataset_id, expected_kind, wrong_kind_message,
+                     count_noun="interview(s)", action_type, action_details=None):
+    """Adds records into an existing dataset (query_api.append_to_dataset) instead of
+    creating a new one, then segments only the new records and logs one activity_log
+    entry tagged appended=True. Raises ApiError (400) if target_dataset_id is unknown
+    or isn't a dataset of expected_kind -- appending into a live-downloaded dataset
+    would conflate a hand-uploaded/imported batch with a query result. Returns the same
+    shape as _create_dataset(), plus "appended": True."""
+    entry = next((e for e in query_api.load_registry(QUERIES_DIR) if e["id"] == target_dataset_id), None)
+    if entry is None:
+        raise ApiError("unknown target dataset -- it may have been removed", status=400)
+    if entry.get("kind") != expected_kind:
+        raise ApiError(wrong_kind_message, status=400)
+    try:
+        _, updated_entry = query_api.append_to_dataset(
+            QUERIES_DIR, target_dataset_id, records, count_noun=count_noun
+        )
+    except query_api.DatasetValidationError as exc:
+        raise ApiError(str(exc), status=400)
+
+    segments_added = segment_new_dataset(records, target_dataset_id)
+    with DATASETS_LOCK:
+        DATASETS.pop(target_dataset_id, None)  # force a reload from disk next access
+
+    details = {
+        **(action_details or {}), "dataset_id": target_dataset_id, "label": updated_entry["label"],
+        "count": len(records), "segments_added": segments_added, "appended": True,
+    }
+    activity_log.log_activity(CODER_NAME, action_type, details)
+
+    return {
+        "dataset_id": target_dataset_id, "dataset_label": updated_entry["label"],
+        "json_file": updated_entry["json_file"], "csv_file": updated_entry["csv_file"],
+        "count": len(records), "segments_added": segments_added, "appended": True,
+    }
 
 
 # --- In-app project switching -------------------------------------------------------
@@ -520,12 +697,10 @@ def switch_project(new_dir):
     global QUERIES_DIR, EXPORTS_DIR, CURRENT_PROJECT_DIR
     new_dir = Path(new_dir)
 
-    with JOBS_LOCK:
-        if any(j.get("status") == "running" for j in JOBS.values()):
-            return "A download job is still running -- wait for it to finish before switching projects."
-    with TRAIN_JOBS_LOCK:
-        if any(j.get("status") == "running" for j in TRAIN_JOBS.values()):
-            return "A training job is still running -- wait for it to finish before switching projects."
+    if JOBS.has_running():
+        return "A download job is still running -- wait for it to finish before switching projects."
+    if TRAIN_JOBS.has_running():
+        return "A training job is still running -- wait for it to finish before switching projects."
 
     with PROJECT_SWITCH_LOCK:
         try:
@@ -535,7 +710,7 @@ def switch_project(new_dir):
 
         QUERIES_DIR = new_dir / "queries"
         EXPORTS_DIR = new_dir / "exports"
-        coding_store.set_db_path(new_dir / "coding.db")
+        schema.set_db_path(new_dir / "coding.db")
         CURRENT_PROJECT_DIR = new_dir
 
         with DATASETS_LOCK:
@@ -543,7 +718,6 @@ def switch_project(new_dir):
                 del DATASETS[key]
 
         project_registry.register_project(new_dir)
-        coding_store.log_activity(CODER_NAME, "project_switch", {"path": str(new_dir)})
     return None
 
 
@@ -567,793 +741,723 @@ def browse_for_folder():
         return path or None
 
 
-CONTENT_TYPES = {
-    ".html": "text/html; charset=utf-8",
-    ".js": "application/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8",
+ROUTER = Router()
+
+# --- Static files (viewer.html + the plain-<script>-tag JS/CSS it loads) -----------
+
+STATIC_FILES = {
+    "/": "viewer.html",
+    "/index.html": "viewer.html",
+    "/app.js": "app.js",
+    "/styles.css": "styles.css",
+    "/coding.js": "coding.js",
+    "/analytics.js": "analytics.js",
+    "/model.js": "model.js",
+    "/review.js": "review.js",
+    "/appendix.js": "appendix.js",
+    "/projects.js": "projects.js",
+    "/import.js": "import.js",
 }
 
 
-class Handler(BaseHTTPRequestHandler):
-    def _send_json(self, payload, status=200):
-        body = json.dumps(payload).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+def _static_route(filename):
+    def handler(req):
+        return FileResponse(STATIC_DIR / filename)
+    return handler
 
-    def _send_file(self, path):
+
+for _url_path, _filename in STATIC_FILES.items():
+    ROUTER.get(_url_path)(_static_route(_filename))
+
+
+# --- Small domain helpers shared by more than one route below ----------------------
+
+def _require_dataset(dataset_id):
+    dataset = get_dataset(dataset_id)
+    if dataset is None:
+        raise ApiError(f"unknown dataset '{dataset_id}'", status=404)
+    return dataset
+
+
+# --- Browse ---------------------------------------------------------------------
+
+@ROUTER.get("/api/datasets")
+def get_datasets(req):
+    return JsonResponse(list_datasets())
+
+
+@ROUTER.get("/api/datasets/all")
+def get_datasets_all(req):
+    return JsonResponse(_all_datasets())
+
+
+@ROUTER.get("/api/index")
+def get_index(req):
+    dataset = _require_dataset(req.query.get("dataset", "primary"))
+    return JsonResponse(dataset["index"])
+
+
+@ROUTER.get("/api/interview/<id>")
+def get_interview(req):
+    dataset = _require_dataset(req.query.get("dataset", "primary"))
+    try:
+        iid = int(req.path_params["id"])
+    except ValueError:
+        raise ApiError("interview id must be an integer", status=400)
+    rec = dataset["by_id"].get(iid)
+    if rec is None:
+        raise ApiError(f"unknown interview id {iid}", status=404)
+    return JsonResponse(rec)
+
+
+@ROUTER.get("/api/transcript_search")
+def get_transcript_search(req):
+    dataset = _require_dataset(req.query.get("dataset", "primary"))
+    term = (req.query.get("q", "")).strip().lower()
+    if not term:
+        return JsonResponse({"ids": []})
+    ids = [
+        rid for rid, rec in dataset["by_id"].items()
+        if term in (rec.get("transcript_text") or "").lower()
+    ]
+    return JsonResponse({"ids": ids})
+
+
+# --- Search & Export --------------------------------------------------------------
+
+@ROUTER.get("/api/search/companies")
+def get_search_companies(req):
+    keyword = (req.query.get("keyword", "")).strip()
+    if not keyword:
+        return JsonResponse({"results": []})
+    try:
+        results = query_api.search_companies(keyword)
+    except query_api.ApiCredentialsError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
+    return JsonResponse({"results": results})
+
+
+@ROUTER.get("/api/search/entities")
+def get_search_entities(req):
+    keyword = (req.query.get("keyword", "")).strip()
+    if not keyword:
+        return JsonResponse({"results": []})
+    try:
+        results = query_api.search_entities(keyword)
+    except query_api.ApiCredentialsError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
+    return JsonResponse({"results": results})
+
+
+@ROUTER.post("/api/query/start", json_body=True)
+def post_query_start(req):
+    body = req.body
+    kind = body.get("kind")
+    source_id = body.get("id")
+    label = (body.get("label") or "").strip()
+    company_name = (body.get("company_name") or label).strip()
+    after_dt = (body.get("after") or "").strip() or None
+    before_dt = (body.get("before") or "").strip() or None
+
+    if kind not in ("company", "entity") or not source_id or not label:
+        return JsonResponse({"error": "kind ('company'|'entity'), id, and label are required"}, status=400)
+
+    job_id = JOBS.start(
+        {"kind": kind, "label": label, "items_fetched": 0, "pages_fetched": 0},
+        run_query_job, kind, source_id, label, company_name, after_dt, before_dt,
+    )
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/query/status")
+def get_query_status(req):
+    job = JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
+# --- Coding: codebook ---------------------------------------------------------------
+
+@ROUTER.get("/api/codebook/themes")
+def get_codebook_themes(req):
+    include_archived = req.query.get("include_archived", "") == "1"
+    return JsonResponse(themes.list_themes(include_archived=include_archived))
+
+
+@ROUTER.post("/api/codebook/themes", json_body=True)
+def post_codebook_themes(req):
+    body = req.body
+    try:
+        theme = themes.create_theme(
+            name=body.get("name", ""),
+            description=body.get("description", ""),
+            example_words=body.get("example_words", ""),
+            color=body.get("color") or "#6b7fd7",
+            actor=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(theme, status=201)
+
+
+@ROUTER.post("/api/codebook/themes/<theme_id>/update", json_body=True, loaders={"theme_id": themes.get_theme})
+def post_theme_update(req):
+    theme_id = req.path_params["theme_id"]
+    return JsonResponse(themes.update_theme(theme_id, req.body, actor=req.body.get("coder") or CODER_NAME))
+
+
+@ROUTER.post("/api/codebook/themes/<theme_id>/archive", json_body="optional", loaders={"theme_id": themes.get_theme})
+def post_theme_archive(req):
+    theme_id = req.path_params["theme_id"]
+    return JsonResponse(themes.set_theme_status(theme_id, "archived", actor=req.body.get("coder") or CODER_NAME))
+
+
+@ROUTER.post("/api/codebook/themes/<theme_id>/restore", json_body="optional", loaders={"theme_id": themes.get_theme})
+def post_theme_restore(req):
+    theme_id = req.path_params["theme_id"]
+    return JsonResponse(themes.set_theme_status(theme_id, "active", actor=req.body.get("coder") or CODER_NAME))
+
+
+@ROUTER.post("/api/codebook/themes/<theme_id>/merge_into", json_body=True, loaders={"theme_id": themes.get_theme})
+def post_theme_merge_into(req):
+    theme_id = req.path_params["theme_id"]
+    body = req.body
+    target_theme_id = body.get("target_theme_id")
+    target = themes.get_theme(target_theme_id) if target_theme_id else None
+    if target is None:
+        return JsonResponse({"error": "target_theme_id must reference an existing theme"}, status=400)
+    if target["status"] != "active":
+        return JsonResponse({"error": "cannot merge into an archived theme"}, status=400)
+    try:
+        merged = themes.merge_themes(theme_id, target_theme_id, actor=body.get("coder") or CODER_NAME)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(merged)
+
+
+# --- Coding: segments/codes ----------------------------------------------------------
+
+@ROUTER.get("/api/coding/segments")
+def get_coding_segments(req):
+    item_id = (req.query.get("item_id", "")).strip()
+    if not item_id:
+        return JsonResponse({"error": "item_id is required"}, status=400)
+    segments = segments_store.get_segments_for_item(item_id)
+    codes_by_segment = codes_store.get_codes_for_segment_ids([s["segment_id"] for s in segments])
+    for s in segments:
+        s["theme_ids"] = codes_by_segment.get(s["segment_id"], [])
+    return JsonResponse({"item_id": item_id, "segments": segments})
+
+
+@ROUTER.post("/api/coding/codes", json_body=True, required=["segment_id", "theme_id"])
+def post_coding_codes(req):
+    body = req.body
+    codes_store.add_code(
+        body["segment_id"], body["theme_id"], coder=body.get("coder") or CODER_NAME,
+        source=body.get("source") or "manual", note=body.get("note"),
+    )
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/coding/codes/delete", json_body=True, required=["segment_id", "theme_id"])
+def post_coding_codes_delete(req):
+    body = req.body
+    codes_store.remove_code(body["segment_id"], body["theme_id"], coder=body.get("coder") or CODER_NAME)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.get("/api/coding/progress")
+def get_coding_progress(req):
+    return JsonResponse(review.get_progress(dataset_id=req.query.get("dataset")))
+
+
+@ROUTER.get("/api/coding/review_candidates")
+def get_review_candidates(req):
+    theme_ids = [t for t in (req.query.get("theme_ids", "")).split(",") if t]
+    if not theme_ids:
+        return JsonResponse({"error": "theme_ids (comma-separated) is required"}, status=400)
+    try:
+        predicted_limit = int(req.query.get("predicted_limit", "30"))
+    except ValueError:
+        predicted_limit = 30
+    return JsonResponse(review.get_review_candidates(theme_ids, predicted_limit=predicted_limit))
+
+
+@ROUTER.get("/api/coding/model_runs")
+def get_coding_model_runs(req):
+    theme_id = req.query.get("theme_id")
+    if theme_id:
+        return JsonResponse({"theme_id": theme_id, "history": model_runs.list_model_runs(theme_id)})
+    return JsonResponse(model_runs.get_latest_model_runs())
+
+
+# --- Model ---------------------------------------------------------------------------
+
+@ROUTER.post("/api/model/train")
+def post_model_train(req):
+    job_id = TRAIN_JOBS.start(
+        {"themes_total": 0, "themes_done": 0, "current_theme": None,
+         "trained": [], "skipped": [], "model_version": None},
+        run_train_job,
+    )
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/model/train_status")
+def get_model_train_status(req):
+    job = TRAIN_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
+@ROUTER.get("/api/model/interpret")
+def get_model_interpret(req):
+    theme_id = req.query.get("theme_id", "")
+    theme = themes.get_theme(theme_id)
+    if theme is None:
+        return JsonResponse({"error": f"unknown theme '{theme_id}'"}, status=404)
+
+    runs = model_runs.list_model_runs(theme_id)
+    if not runs:
+        progress = review.get_progress()
+        by_theme = progress["by_theme"].get(theme_id, {"name": theme["name"], "count": 0})
+        return JsonResponse({
+            "theme_id": theme_id, "trained": False,
+            "progress": by_theme, "min_positives": classifier.MIN_POSITIVES_ATTEMPT,
+        })
+
+    requested_version = req.query.get("model_version")
+    run = next((r for r in runs if r["model_version"] == requested_version), runs[0]) \
+        if requested_version else runs[0]
+    try:
+        limit = int(req.query.get("limit", "15"))
+    except ValueError:
+        limit = 15
+
+    return JsonResponse({
+        "theme_id": theme_id, "trained": True, "model_version": run["model_version"],
+        "metrics": run, "trust_positives_floor": classifier.TRUST_POSITIVES,
+        "value_prop": model_runs.get_value_prop(theme_id, run["model_version"], run["threshold"]),
+        "top_terms": model_runs.get_top_terms(run["model_version"], theme_id),
+        "exemplars": model_runs.get_top_predictions(theme_id, run["model_version"], limit=limit),
+    })
+
+
+# --- Web Appendix ----------------------------------------------------------------
+
+@ROUTER.get("/api/export/codebook")
+def get_export_codebook(req):
+    paths = activity_log.export_codebook(EXPORTS_DIR)
+    activity_log.log_activity(CODER_NAME, "codebook_export", {"files": [p.name for p in paths]})
+    return JsonResponse({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
+
+
+@ROUTER.get("/api/appendix/log")
+def get_appendix_log(req):
+    return JsonResponse(activity_log.get_appendix_feed(
+        action_type=req.query.get("action_type"), since=req.query.get("since"),
+    ))
+
+
+@ROUTER.post("/api/appendix/filter_snapshot", json_body=True)
+def post_appendix_filter_snapshot(req):
+    activity_log.log_activity(
+        req.body.get("coder") or CODER_NAME, "filter_snapshot", req.body.get("filters") or {},
+    )
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.get("/api/appendix/export")
+def get_appendix_export(req):
+    rows = activity_log.get_appendix_feed()
+    html_body = appendix_export.render_html(rows).encode("utf-8")
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    return DownloadResponse(html_body, f"research_activity_log_{stamp}.html", "text/html; charset=utf-8")
+
+
+# --- Projects ------------------------------------------------------------------------
+
+@ROUTER.get("/api/projects")
+def get_projects(req):
+    return JsonResponse({
+        "projects": project_registry.list_projects(),
+        "active_path": str(CURRENT_PROJECT_DIR),
+    })
+
+
+@ROUTER.post("/api/projects/open", json_body=True)
+def post_projects_open(req):
+    new_path = (req.body.get("path") or "").strip()
+    if not new_path:
+        return JsonResponse({"error": "path is required"}, status=400)
+    error = switch_project(new_path)
+    if error:
+        return JsonResponse({"error": error}, status=400)
+    name = (req.body.get("name") or "").strip()
+    if name:
+        project_registry.register_project(new_path, name=name)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/projects/remove", json_body=True)
+def post_projects_remove(req):
+    try:
+        project_registry.remove_project(req.body.get("path") or "", active_path=CURRENT_PROJECT_DIR)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/projects/browse_folder")
+def post_projects_browse_folder(req):
+    try:
+        chosen = browse_for_folder()
+    except Exception as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
+    return JsonResponse({"path": chosen})
+
+
+# --- Import: interview transcript (Search & Export tab's Import panel) ---------------
+
+@ROUTER.post("/api/import/transcript/parse", json_body=True, required=["filename", "content_base64"])
+def post_import_transcript_parse(req):
+    body = req.body
+    filename = (body.get("filename") or "").strip()
+    content_b64 = body.get("content_base64")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in (".docx", ".txt", ".json"):
+        return JsonResponse({"error": f"unsupported file type '{suffix}' -- use .docx, .txt, or .json"}, status=400)
+    try:
+        raw = base64.b64decode(content_b64, validate=True)
+    except (binascii.Error, ValueError):
+        return JsonResponse({"error": "content_base64 isn't valid base64"}, status=400)
+
+    token = uuid.uuid4().hex
+    if suffix == ".json":
         try:
-            body = path.read_bytes()
-        except FileNotFoundError:
+            records = json.loads(raw.decode("utf-8"))
+            query_api.validate_dataset_records(records, filename, require_item_id=False)
+        except (json.JSONDecodeError, UnicodeDecodeError, query_api.DatasetValidationError) as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        records = interview_importer.normalize_json_records(records)
+        label = (records[0].get("item_title") if records else None) or Path(filename).stem
+        with PENDING_IMPORTS_LOCK:
+            PENDING_IMPORTS[token] = {"kind": "json", "records": records, "filename": filename}
+        return JsonResponse({
+            "upload_token": token, "kind": "json",
+            "n_records": len(records), "label": label,
+        })
+
+    try:
+        lines = interview_importer.extract_lines_from_bytes(raw, suffix)
+    except UnicodeDecodeError:
+        return JsonResponse({"error": f"couldn't decode {filename} as UTF-8 text"}, status=400)
+    except Exception as exc:  # a malformed .docx -- python-docx raises assorted errors
+        return JsonResponse({"error": f"couldn't read {filename}: {exc}"}, status=400)
+    turns, format_name = interview_importer.parse_transcript_turns(lines)
+    if not turns:
+        return JsonResponse({
+            "error": "No turns found -- is this a Word Transcribe-style transcript "
+                     "(\"HH:MM:SS Speaker N\" lines) or a speaker-labeled transcript "
+                     "(\"Speaker: text\" lines, hand-typed or from ChatGPT/Claude)? See "
+                     "IMPORTING_DATA.md for examples of both. If your transcript is neither, "
+                     "convert it to canonical JSON first (see IMPORTING_DATA.md's LLM prompt "
+                     "template) and upload that instead.",
+        }, status=400)
+    turns = interview_importer.bridge_backchannels(turns)
+    labels = sorted({t["speaker_label"] for t in turns if t["speaker_label"]})
+    unlabeled_count = sum(1 for t in turns if t["speaker_label"] is None)
+    with PENDING_IMPORTS_LOCK:
+        PENDING_IMPORTS[token] = {"kind": "transcript", "turns": turns, "filename": filename}
+    return JsonResponse({
+        "upload_token": token, "kind": "transcript",
+        "labels": labels, "unlabeled_count": unlabeled_count, "n_turns": len(turns),
+        "suggested_item_title": Path(filename).stem, "format_detected": format_name,
+    })
+
+
+@ROUTER.post("/api/import/transcript/commit", json_body=True)
+def post_import_transcript_commit(req):
+    body = req.body
+    token = body.get("upload_token")
+    with PENDING_IMPORTS_LOCK:
+        pending = PENDING_IMPORTS.pop(token, None) if token else None
+    if pending is None:
+        return JsonResponse({"error": "unknown or expired upload_token -- re-select the file"}, status=400)
+
+    if pending["kind"] == "reddit":
+        return JsonResponse({"error": "wrong endpoint for this upload_token -- use /api/import/reddit/commit"}, status=400)
+    elif pending["kind"] == "json":
+        records = pending["records"]
+        label = (records[0].get("item_title") if records else None) or Path(pending["filename"]).stem
+    else:
+        turns = pending["turns"]
+        label_roles = body.get("label_roles") or {}
+        unlabeled_role = body.get("unlabeled_role") or "other"
+        interview_importer.assign_roles(turns, label_roles, unlabeled_role)
+
+        person_name = (body.get("person_name") or "").strip()
+        if not person_name:
+            return JsonResponse({"error": "person_name is required"}, status=400)
+        group_name = (body.get("group_name") or "").strip() or None
+        person_title = (body.get("person_title") or "").strip() or None
+        item_title = (body.get("item_title") or "").strip() or Path(pending["filename"]).stem
+        publish_date = (body.get("publish_date") or "").strip() or None
+        item_id = (body.get("item_id") or "").strip() or None
+
+        record = interview_importer.build_record(
+            turns, group_name=group_name, person_name=person_name, person_title=person_title,
+            item_title=item_title, publish_date=publish_date, item_id=item_id,
+        )
+        records = [record]
+        label = item_title
+
+    try:
+        query_api.validate_dataset_records(records, pending["filename"], require_item_id=True)
+    except query_api.DatasetValidationError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    target_dataset_id = (body.get("target_dataset_id") or "").strip() or None
+    if target_dataset_id:
+        result = _append_dataset(
+            records, target_dataset_id=target_dataset_id, expected_kind="interview_import",
+            wrong_kind_message="can only add to an existing interview-transcript dataset, not a live download",
+            action_type="interview_import", action_details={"filename": pending["filename"]},
+        )
+        return JsonResponse(result)
+
+    result = _create_dataset(
+        records, filename_prefix="interview", registry_kind="interview_import", label=label,
+        dataset_label=f"{label} — {len(records)} interview(s)", segment=True,
+        action_type="interview_import", action_details={"filename": pending["filename"], "label": label},
+    )
+    return JsonResponse(result)
+
+
+# --- Import: Reddit / Arctic Shift ----------------------------------------------------
+
+@ROUTER.post("/api/import/raw_upload", raw_body=True)
+def post_import_raw_upload(req):
+    filename = req.query.get("filename", "")
+    try:
+        text = req.raw_body.decode("utf-8")
+    except UnicodeDecodeError:
+        return JsonResponse({"error": f"couldn't decode {filename or 'uploaded file'} as UTF-8 text"}, status=400)
+    upload_id = uuid.uuid4().hex
+    with RAW_UPLOADS_LOCK:
+        RAW_UPLOADS[upload_id] = text
+    return JsonResponse({"upload_id": upload_id, "filename": filename, "size": len(req.raw_body)})
+
+
+@ROUTER.post(
+    "/api/import/reddit/parse", json_body=True,
+    required=["submissions_filename", "submissions_upload_id"],
+)
+def post_import_reddit_parse(req):
+    body = req.body
+    submissions_filename = (body.get("submissions_filename") or "").strip()
+    submissions_upload_id = body.get("submissions_upload_id")
+    comments_filename = (body.get("comments_filename") or "").strip() or None
+    comments_upload_id = body.get("comments_upload_id")
+
+    with RAW_UPLOADS_LOCK:
+        submissions_raw = RAW_UPLOADS.pop(submissions_upload_id, None)
+    if submissions_raw is None:
+        return JsonResponse({"error": "unknown or expired submissions upload -- re-select the file"}, status=400)
+    try:
+        submissions = reddit_importer.parse_jsonl_text(submissions_raw)
+    except json.JSONDecodeError as exc:
+        return JsonResponse({"error": f"{submissions_filename} isn't valid JSONL (one JSON object per line): {exc}"}, status=400)
+    if not submissions:
+        return JsonResponse({"error": f"No submissions found in {submissions_filename}"}, status=400)
+
+    comments = []
+    if comments_upload_id:
+        with RAW_UPLOADS_LOCK:
+            comments_raw = RAW_UPLOADS.pop(comments_upload_id, None)
+        if comments_raw is None:
+            return JsonResponse({"error": "unknown or expired comments upload -- re-select the file"}, status=400)
+        try:
+            comments = reddit_importer.parse_jsonl_text(comments_raw)
+        except json.JSONDecodeError as exc:
+            return JsonResponse({"error": f"{comments_filename or 'comments file'} isn't valid JSONL (one JSON object per line): {exc}"}, status=400)
+
+    records, orphans = reddit_importer.build_records(submissions, comments)
+    try:
+        query_api.validate_dataset_records(records, submissions_filename, require_item_id=True)
+    except query_api.DatasetValidationError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    n_turns, subreddits, label = reddit_importer.summarize_records(records)
+    token = uuid.uuid4().hex
+    with PENDING_IMPORTS_LOCK:
+        PENDING_IMPORTS[token] = {
+            "kind": "reddit", "records": records,
+            "filename": submissions_filename, "label": label,
+        }
+    return JsonResponse({
+        "upload_token": token, "n_records": len(records), "n_turns": n_turns,
+        "subreddits": subreddits, "orphaned_comments": orphans,
+    })
+
+
+@ROUTER.post("/api/import/reddit/commit", json_body=True)
+def post_import_reddit_commit(req):
+    token = req.body.get("upload_token")
+    with PENDING_IMPORTS_LOCK:
+        pending = PENDING_IMPORTS.pop(token, None) if token else None
+    if pending is None or pending["kind"] != "reddit":
+        return JsonResponse({"error": "unknown or expired upload_token -- re-select the file(s)"}, status=400)
+
+    records = pending["records"]
+    label = pending["label"]
+
+    target_dataset_id = (req.body.get("target_dataset_id") or "").strip() or None
+    if target_dataset_id:
+        result = _append_dataset(
+            records, target_dataset_id=target_dataset_id, expected_kind="reddit_import",
+            wrong_kind_message="can only add to an existing Reddit-import dataset, not a live download",
+            count_noun="submission(s)", action_type="reddit_import",
+            action_details={"filename": pending["filename"]},
+        )
+        return JsonResponse(result)
+
+    result = _create_dataset(
+        records, filename_prefix="reddit", registry_kind="reddit_import", label=label,
+        dataset_label=f"r/{label} — {len(records)} submission(s)", segment=True,
+        action_type="reddit_import", action_details={"filename": pending["filename"], "label": label},
+    )
+    return JsonResponse(result)
+
+
+# --- Duplicate detection -------------------------------------------------------------
+
+@ROUTER.get("/api/duplicates/status")
+def get_duplicates_status(req):
+    dataset_id = req.query.get("dataset")
+    if not dataset_id:
+        return JsonResponse({"error": "dataset is required"}, status=400)
+    return JsonResponse(duplicates.get_duplicate_status_for_dataset(dataset_id))
+
+
+@ROUTER.post("/api/duplicates/override", json_body=True)
+def post_duplicates_override(req):
+    body = req.body
+    dataset_id = body.get("dataset_id")
+    item_id = body.get("item_id")
+    action = body.get("action")
+    if not dataset_id or not item_id or action not in ("exclude", "include"):
+        return JsonResponse({"error": "dataset_id, item_id, and action ('exclude'|'include') are required"}, status=400)
+    try:
+        duplicates.add_duplicate_override(
+            dataset_id, item_id, action,
+            canonical_dataset_id=body.get("canonical_dataset_id"),
+            canonical_item_id=body.get("canonical_item_id"),
+            actor=body.get("coder") or CODER_NAME,
+            note=body.get("note"),
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/duplicates/override/remove", json_body=True, required=["dataset_id", "item_id"])
+def post_duplicates_override_remove(req):
+    body = req.body
+    duplicates.remove_duplicate_override(body["dataset_id"], body["item_id"], actor=body.get("coder") or CODER_NAME)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/datasets/status", json_body=True)
+def post_datasets_status(req):
+    body = req.body
+    dataset_id = body.get("dataset_id")
+    status = body.get("status")
+    if not dataset_id or status not in ("active", "excluded", "unloaded"):
+        return JsonResponse(
+            {"error": "dataset_id and status ('active'|'excluded'|'unloaded') are required"}, status=400
+        )
+    if dataset_id not in {d["id"] for d in _all_datasets()}:
+        return JsonResponse({"error": f"unknown dataset '{dataset_id}'"}, status=404)
+    actor = body.get("coder") or CODER_NAME
+    if status == "active":
+        dataset_status_store.clear_dataset_status(dataset_id, actor=actor)
+    else:
+        dataset_status_store.set_dataset_status(dataset_id, status, actor=actor, note=body.get("note"))
+    return JsonResponse({"ok": True, "dataset_id": dataset_id, "status": status})
+
+
+# --- Analytics -------------------------------------------------------------------
+
+@ROUTER.get("/api/analytics/corpus/summary")
+def get_analytics_summary(req):
+    segment_rows, duplicate_run_id, excluded_dataset_ids = corpus_analytics.get_corpus_scope()
+    item_meta = _build_item_meta(segment_rows)
+    summary = corpus_analytics.summary_metrics(
+        segment_rows, item_meta, field=req.query.get("field"), value=req.query.get("value"),
+    )
+    summary["duplicate_run_id"] = duplicate_run_id
+    summary["excluded_dataset_ids"] = sorted(excluded_dataset_ids)
+    return JsonResponse(summary)
+
+
+@ROUTER.get("/api/analytics/corpus/fields")
+def get_analytics_fields(req):
+    segment_rows, _run_id, _excluded = corpus_analytics.get_corpus_scope()
+    item_meta = _build_item_meta(segment_rows)
+    return JsonResponse(corpus_analytics.discover_fields(segment_rows, item_meta))
+
+
+@ROUTER.get("/api/analytics/corpus/breakdown")
+def get_analytics_breakdown(req):
+    field = req.query.get("field", "")
+    segment_rows, _run_id, _excluded = corpus_analytics.get_corpus_scope()
+    item_meta = _build_item_meta(segment_rows)
+    available = {f["field"] for f in corpus_analytics.discover_fields(segment_rows, item_meta)}
+    if field not in available:
+        return JsonResponse({"error": f"unknown or empty breakdown field '{field}'"}, status=400)
+    return JsonResponse(corpus_analytics.field_breakdown(segment_rows, item_meta, field))
+
+
+@ROUTER.get("/api/analytics/corpus/vocab_overlap")
+def get_analytics_vocab_overlap(req):
+    field = req.query.get("field", "")
+    segment_rows, _run_id, _excluded = corpus_analytics.get_corpus_scope()
+    item_meta = _build_item_meta(segment_rows)
+    fields_by_name = {f["field"]: f for f in corpus_analytics.discover_fields(segment_rows, item_meta)}
+    if fields_by_name.get(field, {}).get("type") != "categorical":
+        return JsonResponse({"error": f"'{field}' is not a categorical breakdown field"}, status=400)
+    return JsonResponse(corpus_analytics.vocabulary_overlap(segment_rows, item_meta, field))
+
+
+class Handler(BaseHTTPRequestHandler):
+    """Thin http.server glue: turns a raw request into (method, path, query, headers) for
+    Router.dispatch, then writes back whatever Response it returns. All route logic above
+    lives in plain (Request) -> Response functions, not on this class."""
+
+    def _read_raw_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length)
+
+    def _dispatch(self, method):
+        parsed = urlparse(self.path)
+        response = ROUTER.dispatch(method, parsed.path, parse_qs(parsed.query), self.headers, self._read_raw_body)
+        if response is None:
             self.send_error(404)
             return
-        self.send_response(200)
-        self.send_header("Content-Type", CONTENT_TYPES.get(path.suffix, "application/octet-stream"))
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def _send_download(self, body_bytes, filename, content_type):
-        """Like _send_file, but for generated (not on-disk) content the browser
-        should save rather than render -- the Web Appendix's exported HTML."""
-        self.send_response(200)
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(body_bytes)))
-        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
-        self.end_headers()
-        self.wfile.write(body_bytes)
-
-    def _query(self):
-        return parse_qs(urlparse(self.path).query)
-
-    def _read_json_body(self):
-        length = int(self.headers.get("Content-Length", 0))
-        return json.loads(self.rfile.read(length) or b"{}")
+        write_response(self, response)
 
     def do_GET(self):
-        parsed = urlparse(self.path)
-        path = parsed.path
-        qs = parse_qs(parsed.query)
-
-        if path in ("/", "/index.html"):
-            self._send_file(STATIC_DIR / "viewer.html")
-        elif path == "/app.js":
-            self._send_file(STATIC_DIR / "app.js")
-        elif path == "/styles.css":
-            self._send_file(STATIC_DIR / "styles.css")
-        elif path == "/coding.js":
-            self._send_file(STATIC_DIR / "coding.js")
-        elif path == "/model.js":
-            self._send_file(STATIC_DIR / "model.js")
-        elif path == "/review.js":
-            self._send_file(STATIC_DIR / "review.js")
-        elif path == "/appendix.js":
-            self._send_file(STATIC_DIR / "appendix.js")
-        elif path == "/projects.js":
-            self._send_file(STATIC_DIR / "projects.js")
-        elif path == "/import.js":
-            self._send_file(STATIC_DIR / "import.js")
-
-        elif path == "/api/datasets":
-            self._send_json(list_datasets())
-
-        elif path == "/api/index":
-            dataset_id = qs.get("dataset", ["primary"])[0]
-            dataset = get_dataset(dataset_id)
-            if dataset is None:
-                self._send_json({"error": f"unknown dataset '{dataset_id}'"}, status=404)
-                return
-            self._send_json(dataset["index"])
-
-        elif path.startswith("/api/interview/"):
-            dataset_id = qs.get("dataset", ["primary"])[0]
-            dataset = get_dataset(dataset_id)
-            if dataset is None:
-                self._send_json({"error": f"unknown dataset '{dataset_id}'"}, status=404)
-                return
-            try:
-                iid = int(path.rsplit("/", 1)[-1])
-            except ValueError:
-                self.send_error(400)
-                return
-            rec = dataset["by_id"].get(iid)
-            if rec is None:
-                self.send_error(404)
-                return
-            self._send_json(rec)
-
-        elif path == "/api/transcript_search":
-            dataset_id = qs.get("dataset", ["primary"])[0]
-            term = (qs.get("q", [""])[0]).strip().lower()
-            dataset = get_dataset(dataset_id)
-            if dataset is None:
-                self._send_json({"error": f"unknown dataset '{dataset_id}'"}, status=404)
-                return
-            if not term:
-                self._send_json({"ids": []})
-                return
-            ids = [
-                rid for rid, rec in dataset["by_id"].items()
-                if term in (rec.get("transcript_text") or "").lower()
-            ]
-            self._send_json({"ids": ids})
-
-        elif path == "/api/search/companies":
-            keyword = (qs.get("keyword", [""])[0]).strip()
-            if not keyword:
-                self._send_json({"results": []})
-                return
-            try:
-                results = query_api.search_companies(keyword)
-            except query_api.ApiCredentialsError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            except Exception as exc:
-                self._send_json({"error": str(exc)}, status=502)
-                return
-            self._send_json({"results": results})
-
-        elif path == "/api/search/entities":
-            keyword = (qs.get("keyword", [""])[0]).strip()
-            if not keyword:
-                self._send_json({"results": []})
-                return
-            try:
-                results = query_api.search_entities(keyword)
-            except query_api.ApiCredentialsError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            except Exception as exc:
-                self._send_json({"error": str(exc)}, status=502)
-                return
-            self._send_json({"results": results})
-
-        elif path == "/api/query/status":
-            job_id = qs.get("job_id", [""])[0]
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                job = dict(job) if job else None
-            if job is None:
-                self._send_json({"error": "unknown job_id"}, status=404)
-                return
-            self._send_json(job)
-
-        elif path == "/api/codebook/themes":
-            include_archived = qs.get("include_archived", [""])[0] == "1"
-            self._send_json(coding_store.list_themes(include_archived=include_archived))
-
-        elif path == "/api/export/codebook":
-            paths = coding_store.export_codebook(EXPORTS_DIR)
-            coding_store.log_activity(CODER_NAME, "codebook_export", {"files": [p.name for p in paths]})
-            self._send_json({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
-
-        elif path == "/api/coding/segments":
-            item_id = (qs.get("item_id", [""])[0]).strip()
-            if not item_id:
-                self._send_json({"error": "item_id is required"}, status=400)
-                return
-            segments = coding_store.get_segments_for_item(item_id)
-            codes_by_segment = coding_store.get_codes_for_segment_ids(
-                [s["segment_id"] for s in segments]
-            )
-            for s in segments:
-                s["theme_ids"] = codes_by_segment.get(s["segment_id"], [])
-            self._send_json({"item_id": item_id, "segments": segments})
-
-        elif path == "/api/coding/progress":
-            dataset_id = qs.get("dataset", [None])[0]
-            self._send_json(coding_store.get_progress(dataset_id=dataset_id))
-
-        elif path == "/api/coding/review_candidates":
-            theme_ids = [t for t in (qs.get("theme_ids", [""])[0]).split(",") if t]
-            if not theme_ids:
-                self._send_json({"error": "theme_ids (comma-separated) is required"}, status=400)
-                return
-            try:
-                predicted_limit = int(qs.get("predicted_limit", ["30"])[0])
-            except ValueError:
-                predicted_limit = 30
-            self._send_json(coding_store.get_review_candidates(theme_ids, predicted_limit=predicted_limit))
-
-        elif path == "/api/coding/model_runs":
-            theme_id = qs.get("theme_id", [None])[0]
-            if theme_id:
-                self._send_json({"theme_id": theme_id, "history": coding_store.list_model_runs(theme_id)})
-            else:
-                self._send_json(coding_store.get_latest_model_runs())
-
-        elif path == "/api/model/train_status":
-            job_id = qs.get("job_id", [""])[0]
-            with TRAIN_JOBS_LOCK:
-                job = TRAIN_JOBS.get(job_id)
-                job = dict(job) if job else None
-            if job is None:
-                self._send_json({"error": "unknown job_id"}, status=404)
-                return
-            self._send_json(job)
-
-        elif path == "/api/model/interpret":
-            theme_id = qs.get("theme_id", [""])[0]
-            theme = coding_store.get_theme(theme_id)
-            if theme is None:
-                self._send_json({"error": f"unknown theme '{theme_id}'"}, status=404)
-                return
-
-            runs = coding_store.list_model_runs(theme_id)
-            if not runs:
-                progress = coding_store.get_progress()
-                by_theme = progress["by_theme"].get(theme_id, {"name": theme["name"], "count": 0})
-                self._send_json({
-                    "theme_id": theme_id, "trained": False,
-                    "progress": by_theme, "min_positives": classifier.MIN_POSITIVES_ATTEMPT,
-                })
-                return
-
-            requested_version = qs.get("model_version", [None])[0]
-            run = next((r for r in runs if r["model_version"] == requested_version), runs[0]) \
-                if requested_version else runs[0]
-            try:
-                limit = int(qs.get("limit", ["15"])[0])
-            except ValueError:
-                limit = 15
-
-            self._send_json({
-                "theme_id": theme_id, "trained": True, "model_version": run["model_version"],
-                "metrics": run, "trust_positives_floor": classifier.TRUST_POSITIVES,
-                "value_prop": coding_store.get_value_prop(theme_id, run["model_version"], run["threshold"]),
-                "top_terms": coding_store.get_top_terms(run["model_version"], theme_id),
-                "exemplars": coding_store.get_top_predictions(theme_id, run["model_version"], limit=limit),
-            })
-
-        elif path == "/api/appendix/log":
-            action_type = qs.get("action_type", [None])[0]
-            since = qs.get("since", [None])[0]
-            self._send_json(coding_store.get_appendix_feed(action_type=action_type, since=since))
-
-        elif path == "/api/appendix/export":
-            rows = coding_store.get_appendix_feed()
-            html_body = appendix_export.render_html(rows).encode("utf-8")
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            self._send_download(html_body, f"research_activity_log_{stamp}.html", "text/html; charset=utf-8")
-
-        elif path == "/api/duplicates/status":
-            dataset_id = qs.get("dataset", [None])[0]
-            if not dataset_id:
-                self._send_json({"error": "dataset is required"}, status=400)
-                return
-            self._send_json(coding_store.get_duplicate_status_for_dataset(dataset_id))
-
-        elif path == "/api/projects":
-            self._send_json({
-                "projects": project_registry.list_projects(),
-                "active_path": str(CURRENT_PROJECT_DIR),
-            })
-
-        else:
-            self.send_error(404)
+        self._dispatch("GET")
 
     def do_POST(self):
-        path = urlparse(self.path).path
-
-        if path == "/api/query/start":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-
-            kind = body.get("kind")
-            source_id = body.get("id")
-            label = (body.get("label") or "").strip()
-            company_name = (body.get("company_name") or label).strip()
-            after_dt = (body.get("after") or "").strip() or None
-            before_dt = (body.get("before") or "").strip() or None
-
-            if kind not in ("company", "entity") or not source_id or not label:
-                self._send_json({"error": "kind ('company'|'entity'), id, and label are required"}, status=400)
-                return
-
-            job_id = uuid.uuid4().hex
-            with JOBS_LOCK:
-                JOBS[job_id] = {
-                    "status": "running",
-                    "kind": kind,
-                    "label": label,
-                    "items_fetched": 0,
-                    "pages_fetched": 0,
-                }
-            threading.Thread(
-                target=run_query_job,
-                args=(job_id, kind, source_id, label, company_name, after_dt, before_dt),
-                daemon=True,
-            ).start()
-            self._send_json({"job_id": job_id})
-
-        elif path == "/api/codebook/themes":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            try:
-                theme = coding_store.create_theme(
-                    name=body.get("name", ""),
-                    description=body.get("description", ""),
-                    example_words=body.get("example_words", ""),
-                    color=body.get("color") or "#6b7fd7",
-                    actor=body.get("coder") or CODER_NAME,
-                )
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            self._send_json(theme, status=201)
-
-        elif path.startswith("/api/codebook/themes/") and path.endswith("/update"):
-            theme_id = path[len("/api/codebook/themes/"):-len("/update")].strip("/")
-            if coding_store.get_theme(theme_id) is None:
-                self._send_json({"error": f"unknown theme '{theme_id}'"}, status=404)
-                return
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            self._send_json(coding_store.update_theme(theme_id, body, actor=body.get("coder") or CODER_NAME))
-
-        elif path.startswith("/api/codebook/themes/") and path.endswith("/archive"):
-            theme_id = path[len("/api/codebook/themes/"):-len("/archive")].strip("/")
-            if coding_store.get_theme(theme_id) is None:
-                self._send_json({"error": f"unknown theme '{theme_id}'"}, status=404)
-                return
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                body = {}
-            self._send_json(coding_store.set_theme_status(theme_id, "archived", actor=body.get("coder") or CODER_NAME))
-
-        elif path.startswith("/api/codebook/themes/") and path.endswith("/restore"):
-            theme_id = path[len("/api/codebook/themes/"):-len("/restore")].strip("/")
-            if coding_store.get_theme(theme_id) is None:
-                self._send_json({"error": f"unknown theme '{theme_id}'"}, status=404)
-                return
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                body = {}
-            self._send_json(coding_store.set_theme_status(theme_id, "active", actor=body.get("coder") or CODER_NAME))
-
-        elif path.startswith("/api/codebook/themes/") and path.endswith("/merge_into"):
-            theme_id = path[len("/api/codebook/themes/"):-len("/merge_into")].strip("/")
-            if coding_store.get_theme(theme_id) is None:
-                self._send_json({"error": f"unknown theme '{theme_id}'"}, status=404)
-                return
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            target_theme_id = body.get("target_theme_id")
-            target = coding_store.get_theme(target_theme_id) if target_theme_id else None
-            if target is None:
-                self._send_json({"error": "target_theme_id must reference an existing theme"}, status=400)
-                return
-            if target["status"] != "active":
-                self._send_json({"error": "cannot merge into an archived theme"}, status=400)
-                return
-            try:
-                merged = coding_store.merge_themes(theme_id, target_theme_id, actor=body.get("coder") or CODER_NAME)
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            self._send_json(merged)
-
-        elif path == "/api/coding/codes":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            segment_id = body.get("segment_id")
-            theme_id = body.get("theme_id")
-            if not segment_id or not theme_id:
-                self._send_json({"error": "segment_id and theme_id are required"}, status=400)
-                return
-            coding_store.add_code(
-                segment_id, theme_id, coder=body.get("coder") or CODER_NAME,
-                source=body.get("source") or "manual", note=body.get("note"),
-            )
-            self._send_json({"ok": True})
-
-        elif path == "/api/coding/codes/delete":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            segment_id = body.get("segment_id")
-            theme_id = body.get("theme_id")
-            if not segment_id or not theme_id:
-                self._send_json({"error": "segment_id and theme_id are required"}, status=400)
-                return
-            coding_store.remove_code(segment_id, theme_id, coder=body.get("coder") or CODER_NAME)
-            self._send_json({"ok": True})
-
-        elif path == "/api/model/train":
-            job_id = uuid.uuid4().hex
-            with TRAIN_JOBS_LOCK:
-                TRAIN_JOBS[job_id] = {
-                    "status": "running", "themes_total": 0, "themes_done": 0,
-                    "current_theme": None, "trained": [], "skipped": [], "model_version": None,
-                }
-            threading.Thread(target=run_train_job, args=(job_id,), daemon=True).start()
-            self._send_json({"job_id": job_id})
-
-        elif path == "/api/appendix/filter_snapshot":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            coding_store.log_activity(
-                body.get("coder") or CODER_NAME, "filter_snapshot", body.get("filters") or {},
-            )
-            self._send_json({"ok": True})
-
-        elif path == "/api/projects/open":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            new_path = (body.get("path") or "").strip()
-            if not new_path:
-                self._send_json({"error": "path is required"}, status=400)
-                return
-            error = switch_project(new_path)
-            if error:
-                self._send_json({"error": error}, status=400)
-                return
-            name = (body.get("name") or "").strip()
-            if name:
-                project_registry.register_project(new_path, name=name)
-            self._send_json({"ok": True})
-
-        elif path == "/api/projects/remove":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            try:
-                project_registry.remove_project(body.get("path") or "", active_path=CURRENT_PROJECT_DIR)
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            self._send_json({"ok": True})
-
-        elif path == "/api/projects/browse_folder":
-            try:
-                chosen = browse_for_folder()
-            except Exception as exc:
-                self._send_json({"error": str(exc)}, status=502)
-                return
-            self._send_json({"path": chosen})
-
-        elif path == "/api/import/transcript/parse":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            filename = (body.get("filename") or "").strip()
-            content_b64 = body.get("content_base64")
-            if not filename or not content_b64:
-                self._send_json({"error": "filename and content_base64 are required"}, status=400)
-                return
-            suffix = Path(filename).suffix.lower()
-            if suffix not in (".docx", ".txt", ".json"):
-                self._send_json({"error": f"unsupported file type '{suffix}' -- use .docx, .txt, or .json"}, status=400)
-                return
-            try:
-                raw = base64.b64decode(content_b64, validate=True)
-            except (binascii.Error, ValueError):
-                self._send_json({"error": "content_base64 isn't valid base64"}, status=400)
-                return
-
-            token = uuid.uuid4().hex
-            if suffix == ".json":
-                try:
-                    records = json.loads(raw.decode("utf-8"))
-                    query_api.validate_dataset_records(records, filename, require_item_id=False)
-                except (json.JSONDecodeError, UnicodeDecodeError, query_api.DatasetValidationError) as exc:
-                    self._send_json({"error": str(exc)}, status=400)
-                    return
-                records = interview_importer.normalize_json_records(records)
-                label = (records[0].get("item_title") if records else None) or Path(filename).stem
-                with PENDING_IMPORTS_LOCK:
-                    PENDING_IMPORTS[token] = {"kind": "json", "records": records, "filename": filename}
-                self._send_json({
-                    "upload_token": token, "kind": "json",
-                    "n_records": len(records), "label": label,
-                })
-            else:
-                try:
-                    lines = interview_importer.extract_lines_from_bytes(raw, suffix)
-                except UnicodeDecodeError:
-                    self._send_json({"error": f"couldn't decode {filename} as UTF-8 text"}, status=400)
-                    return
-                except Exception as exc:  # a malformed .docx -- python-docx raises assorted errors
-                    self._send_json({"error": f"couldn't read {filename}: {exc}"}, status=400)
-                    return
-                turns = interview_importer.bridge_backchannels(interview_importer.parse_turns(lines))
-                if not turns:
-                    self._send_json({
-                        "error": "No timestamped turns found -- is this a Word Transcribe-style transcript "
-                                 "(\"HH:MM:SS Speaker N\" lines)? If not, convert it to canonical JSON first "
-                                 "(see IMPORTING_DATA.md's LLM prompt template) and upload that instead.",
-                    }, status=400)
-                    return
-                labels = sorted({t["speaker_label"] for t in turns if t["speaker_label"]})
-                unlabeled_count = sum(1 for t in turns if t["speaker_label"] is None)
-                with PENDING_IMPORTS_LOCK:
-                    PENDING_IMPORTS[token] = {"kind": "transcript", "turns": turns, "filename": filename}
-                self._send_json({
-                    "upload_token": token, "kind": "transcript",
-                    "labels": labels, "unlabeled_count": unlabeled_count, "n_turns": len(turns),
-                    "suggested_item_title": Path(filename).stem,
-                })
-
-        elif path == "/api/import/transcript/commit":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            token = body.get("upload_token")
-            with PENDING_IMPORTS_LOCK:
-                pending = PENDING_IMPORTS.pop(token, None) if token else None
-            if pending is None:
-                self._send_json({"error": "unknown or expired upload_token -- re-select the file"}, status=400)
-                return
-
-            if pending["kind"] == "reddit":
-                self._send_json({"error": "wrong endpoint for this upload_token -- use /api/import/reddit/commit"}, status=400)
-                return
-            elif pending["kind"] == "json":
-                records = pending["records"]
-                label = (records[0].get("item_title") if records else None) or Path(pending["filename"]).stem
-            else:
-                turns = pending["turns"]
-                label_roles = body.get("label_roles") or {}
-                unlabeled_role = body.get("unlabeled_role") or "other"
-                interview_importer.assign_roles(turns, label_roles, unlabeled_role)
-
-                person_name = (body.get("person_name") or "").strip()
-                if not person_name:
-                    self._send_json({"error": "person_name is required"}, status=400)
-                    return
-                group_name = (body.get("group_name") or "").strip() or None
-                person_title = (body.get("person_title") or "").strip() or None
-                item_title = (body.get("item_title") or "").strip() or Path(pending["filename"]).stem
-                publish_date = (body.get("publish_date") or "").strip() or None
-                item_id = (body.get("item_id") or "").strip() or None
-
-                record = interview_importer.build_record(
-                    turns, group_name=group_name, person_name=person_name, person_title=person_title,
-                    item_title=item_title, publish_date=publish_date, item_id=item_id,
-                )
-                records = [record]
-                label = item_title
-
-            try:
-                query_api.validate_dataset_records(records, pending["filename"], require_item_id=True)
-            except query_api.DatasetValidationError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-
-            target_dataset_id = (body.get("target_dataset_id") or "").strip() or None
-            if target_dataset_id:
-                entry = next((e for e in query_api.load_registry(QUERIES_DIR) if e["id"] == target_dataset_id), None)
-                if entry is None:
-                    self._send_json({"error": "unknown target dataset -- it may have been removed"}, status=400)
-                    return
-                if entry.get("kind") != "interview_import":
-                    self._send_json(
-                        {"error": "can only add to an existing interview-transcript dataset, not a live download"},
-                        status=400,
-                    )
-                    return
-                try:
-                    _, updated_entry = query_api.append_to_dataset(QUERIES_DIR, target_dataset_id, records)
-                except query_api.DatasetValidationError as exc:
-                    self._send_json({"error": str(exc)}, status=400)
-                    return
-                segments_added = segment_new_dataset(records, target_dataset_id)
-                with DATASETS_LOCK:
-                    DATASETS.pop(target_dataset_id, None)  # force a reload from disk next access
-                coding_store.log_activity(CODER_NAME, "interview_import", {
-                    "dataset_id": target_dataset_id, "label": updated_entry["label"], "count": len(records),
-                    "filename": pending["filename"], "segments_added": segments_added, "appended": True,
-                })
-                self._send_json({
-                    "dataset_id": target_dataset_id, "dataset_label": updated_entry["label"],
-                    "json_file": updated_entry["json_file"], "csv_file": updated_entry["csv_file"],
-                    "count": len(records), "segments_added": segments_added, "appended": True,
-                })
-                return
-
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            base_name = f"interview_{query_api.slugify(label)}_{stamp}"
-            json_path, csv_path = query_api.write_export(QUERIES_DIR, base_name, records)
-            dataset_id = f"q_{uuid.uuid4().hex[:10]}"
-            dataset_label = f"{label} — {len(records)} interview(s)"
-            query_api.register_export(
-                QUERIES_DIR,
-                dataset_id=dataset_id,
-                label=dataset_label,
-                kind="interview_import",
-                source_id=None,
-                created_at=datetime.now(timezone.utc).isoformat(),
-                count=len(records),
-                json_path=json_path,
-                csv_path=csv_path,
-            )
-            segments_added = segment_new_dataset(records, dataset_id)
-            coding_store.log_activity(CODER_NAME, "interview_import", {
-                "dataset_id": dataset_id, "label": label, "count": len(records),
-                "filename": pending["filename"], "segments_added": segments_added,
-            })
-            self._send_json({
-                "dataset_id": dataset_id, "dataset_label": dataset_label,
-                "json_file": json_path.name, "csv_file": csv_path.name,
-                "count": len(records), "segments_added": segments_added,
-            })
-
-        elif path == "/api/import/reddit/parse":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            submissions_filename = (body.get("submissions_filename") or "").strip()
-            submissions_b64 = body.get("submissions_content_base64")
-            if not submissions_filename or not submissions_b64:
-                self._send_json({"error": "submissions_filename and submissions_content_base64 are required"}, status=400)
-                return
-            comments_filename = (body.get("comments_filename") or "").strip() or None
-            comments_b64 = body.get("comments_content_base64")
-
-            try:
-                submissions_raw = base64.b64decode(submissions_b64, validate=True).decode("utf-8")
-            except (binascii.Error, ValueError, UnicodeDecodeError):
-                self._send_json({"error": f"couldn't decode {submissions_filename} as UTF-8 text"}, status=400)
-                return
-            try:
-                submissions = reddit_importer.parse_jsonl_text(submissions_raw)
-            except json.JSONDecodeError as exc:
-                self._send_json({"error": f"{submissions_filename} isn't valid JSONL (one JSON object per line): {exc}"}, status=400)
-                return
-            if not submissions:
-                self._send_json({"error": f"No submissions found in {submissions_filename}"}, status=400)
-                return
-
-            comments = []
-            if comments_b64:
-                try:
-                    comments_raw = base64.b64decode(comments_b64, validate=True).decode("utf-8")
-                except (binascii.Error, ValueError, UnicodeDecodeError):
-                    self._send_json({"error": f"couldn't decode {comments_filename or 'comments file'} as UTF-8 text"}, status=400)
-                    return
-                try:
-                    comments = reddit_importer.parse_jsonl_text(comments_raw)
-                except json.JSONDecodeError as exc:
-                    self._send_json({"error": f"{comments_filename or 'comments file'} isn't valid JSONL (one JSON object per line): {exc}"}, status=400)
-                    return
-
-            records, orphans = reddit_importer.build_records(submissions, comments)
-            try:
-                query_api.validate_dataset_records(records, submissions_filename, require_item_id=True)
-            except query_api.DatasetValidationError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-
-            n_turns, subreddits, label = reddit_importer.summarize_records(records)
-            token = uuid.uuid4().hex
-            with PENDING_IMPORTS_LOCK:
-                PENDING_IMPORTS[token] = {
-                    "kind": "reddit", "records": records,
-                    "filename": submissions_filename, "label": label,
-                }
-            self._send_json({
-                "upload_token": token, "n_records": len(records), "n_turns": n_turns,
-                "subreddits": subreddits, "orphaned_comments": orphans,
-            })
-
-        elif path == "/api/import/reddit/commit":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            token = body.get("upload_token")
-            with PENDING_IMPORTS_LOCK:
-                pending = PENDING_IMPORTS.pop(token, None) if token else None
-            if pending is None or pending["kind"] != "reddit":
-                self._send_json({"error": "unknown or expired upload_token -- re-select the file(s)"}, status=400)
-                return
-
-            records = pending["records"]
-            label = pending["label"]
-            stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-            base_name = f"reddit_{query_api.slugify(label)}_{stamp}"
-            json_path, csv_path = query_api.write_export(QUERIES_DIR, base_name, records)
-            dataset_id = f"q_{uuid.uuid4().hex[:10]}"
-            dataset_label = f"r/{label} — {len(records)} submission(s)"
-            query_api.register_export(
-                QUERIES_DIR,
-                dataset_id=dataset_id,
-                label=dataset_label,
-                kind="reddit_import",
-                source_id=None,
-                created_at=datetime.now(timezone.utc).isoformat(),
-                count=len(records),
-                json_path=json_path,
-                csv_path=csv_path,
-            )
-            segments_added = segment_new_dataset(records, dataset_id)
-            coding_store.log_activity(CODER_NAME, "reddit_import", {
-                "dataset_id": dataset_id, "label": label, "count": len(records),
-                "filename": pending["filename"], "segments_added": segments_added,
-            })
-            self._send_json({
-                "dataset_id": dataset_id, "dataset_label": dataset_label,
-                "json_file": json_path.name, "csv_file": csv_path.name,
-                "count": len(records), "segments_added": segments_added,
-            })
-
-        elif path == "/api/duplicates/override":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            dataset_id = body.get("dataset_id")
-            item_id = body.get("item_id")
-            action = body.get("action")
-            if not dataset_id or not item_id or action not in ("exclude", "include"):
-                self._send_json({"error": "dataset_id, item_id, and action ('exclude'|'include') are required"}, status=400)
-                return
-            try:
-                coding_store.add_duplicate_override(
-                    dataset_id, item_id, action,
-                    canonical_dataset_id=body.get("canonical_dataset_id"),
-                    canonical_item_id=body.get("canonical_item_id"),
-                    actor=body.get("coder") or CODER_NAME,
-                    note=body.get("note"),
-                )
-            except ValueError as exc:
-                self._send_json({"error": str(exc)}, status=400)
-                return
-            self._send_json({"ok": True})
-
-        elif path == "/api/duplicates/override/remove":
-            try:
-                body = self._read_json_body()
-            except json.JSONDecodeError:
-                self._send_json({"error": "invalid JSON body"}, status=400)
-                return
-            dataset_id = body.get("dataset_id")
-            item_id = body.get("item_id")
-            if not dataset_id or not item_id:
-                self._send_json({"error": "dataset_id and item_id are required"}, status=400)
-                return
-            coding_store.remove_duplicate_override(dataset_id, item_id, actor=body.get("coder") or CODER_NAME)
-            self._send_json({"ok": True})
-
-        else:
-            self.send_error(404)
+        self._dispatch("POST")
 
     def log_message(self, fmt, *args):
         pass  # keep the console quiet

@@ -3,10 +3,19 @@ every other dataset uses (see query_api.EXPORT_FIELDS / IMPORTING_DATA.md).
 
 Two input modes, chosen by file extension:
 
-  .docx / .txt  -- a Word "Transcribe"-style transcript: repeated
-                   "HH:MM:SS[ Speaker Label]" lines, each followed by that
-                   turn's text. This is a deterministic, parseable format --
-                   no LLM needed. You'll be asked (interactively, or via
+  .docx / .txt  -- auto-detected against two deterministic formats (no LLM
+                   needed for either -- see parse_transcript_turns()):
+
+                   1. Word "Transcribe"-style: repeated "HH:MM:SS[ Speaker
+                      Label]" lines, each followed by that turn's text.
+                   2. Speaker-labeled, no timestamp: repeated "Speaker: text"
+                      (optionally "**Speaker:**" markdown-bold) lines/
+                      paragraphs -- covers hand-typed transcripts,
+                      diarization-tool exports, and typical ChatGPT/Claude
+                      "format this as an interview" output alike (see
+                      IMPORTING_DATA.md for the full writeup and examples).
+
+                   Either way you'll be asked (interactively, or via
                    --interviewer/--respondent flags) which speaker label is
                    the interviewer and which is the respondent, so turns can
                    be tagged accordingly: interviewer turns are DISPLAYED for
@@ -19,8 +28,8 @@ Two input modes, chosen by file extension:
 
   .json         -- an already-structured canonical file (e.g. an LLM's
                    output using the prompt template in IMPORTING_DATA.md, for
-                   transcripts that aren't in the timestamp+speaker format
-                   above). Validated and registered directly, no parsing.
+                   a transcript that doesn't match either format above).
+                   Validated and registered directly, no parsing.
 
 Usage:
     python scripts/import_interview_transcript.py transcript.docx
@@ -89,6 +98,97 @@ def parse_turns(lines):
     return [t for t in turns if t["content"]]
 
 
+# Matches a "Speaker: text" line, optionally markdown-bold-wrapped around the label and/or
+# the colon ("**Speaker:** text" or "**Speaker**: text") -- see parse_labeled_turns() below.
+# The label group is non-greedy and capped at 40 chars so it can't run away across a whole
+# line looking for some unrelated colon later in the sentence.
+LABELED_TURN_RE = re.compile(r"^\*{0,2}([A-Za-z][\w .'\-]{0,39}?)\*{0,2}\s*:\*{0,2}\s*(.*)$")
+
+LABEL_MAX_WORDS = 5
+LABEL_MIN_OCCURRENCES = 2
+
+
+def parse_labeled_turns(lines, min_occurrences=LABEL_MIN_OCCURRENCES, max_label_words=LABEL_MAX_WORDS):
+    """Parses a "Speaker: text" (or "**Speaker:** text") transcript -- no
+    timestamps, one turn per line/paragraph, covering hand-typed
+    transcripts, diarization-tool exports, and ChatGPT/Claude's own default
+    "format this as an interview" output alike (see IMPORTING_DATA.md).
+
+    Two passes, mirroring parse_turns()'s own shape:
+
+    1. Candidate pass -- match LABELED_TURN_RE against every line, discard
+       any candidate whose label is more than max_label_words words (a
+       sentence that happens to contain a colon, e.g. "For example: ...",
+       isn't a speaker cue), then keep only labels seen >= min_occurrences
+       times. This recurrence check is the whole false-positive guard: a
+       genuine speaker label repeats throughout the document; an incidental
+       colon in the body text doesn't. Requires >= 2 distinct confirmed
+       labels for the file to qualify as this format at all -- a single
+       recurring prefix (e.g. every line starting "Note: ...") isn't a
+       multi-speaker transcript.
+    2. Turn-building pass -- a line matching a *confirmed* label starts a
+       new turn (content = whatever followed the colon, possibly empty for
+       a label-only line, with its content on the next paragraph(s)). Any
+       other non-blank line -- including a match against an *unconfirmed*
+       label -- is appended to the current turn's content, so a turn's text
+       wrapped across multiple paragraphs is preserved as one turn. Lines
+       before the first confirmed label are skipped (preamble), same as
+       parse_turns().
+
+    Returns [] (not an error) if fewer than 2 labels are confirmed -- same
+    "not this format" contract parse_turns() has, so callers can try one
+    parser then fall back to the other (see parse_transcript_turns())."""
+    candidates = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        m = LABELED_TURN_RE.match(stripped)
+        if m:
+            label = m.group(1).strip()
+            if label and len(label.split()) <= max_label_words:
+                candidates.append((label, m.group(2).strip()))
+                continue
+        candidates.append((None, stripped))
+
+    label_counts = {}
+    for label, _ in candidates:
+        if label:
+            label_counts[label] = label_counts.get(label, 0) + 1
+    confirmed = {label for label, count in label_counts.items() if count >= min_occurrences}
+    if len(confirmed) < 2:
+        return []
+
+    turns = []
+    current = None
+    for label, text in candidates:
+        if label in confirmed:
+            if current is not None:
+                turns.append(current)
+            current = {"timestamp": None, "speaker_label": label, "content": text}
+        elif current is not None:
+            current["content"] = f"{current['content']} {text}".strip()
+    if current is not None:
+        turns.append(current)
+    return [t for t in turns if t["content"]]
+
+
+def parse_transcript_turns(lines):
+    """Tries each supported transcript format in turn and returns
+    (turns, format_name) -- format_name is "timestamped" or "labeled",
+    whichever matched, or turns == [] and format_name is None if neither
+    did. Shared by the CLI's import_docx_or_txt() and viewer_server.py's
+    /api/import/transcript/parse, so the two never drift on which formats
+    are recognized. See IMPORTING_DATA.md for what each format looks like."""
+    turns = parse_turns(lines)
+    if turns:
+        return turns, "timestamped"
+    turns = parse_labeled_turns(lines)
+    if turns:
+        return turns, "labeled"
+    return [], None
+
+
 BACKCHANNEL_MAX_WORDS = 8
 
 
@@ -130,6 +230,16 @@ def bridge_backchannels(turns, max_words=BACKCHANNEL_MAX_WORDS):
        interruption, or simply the transcript's opening/closing turn).
        Nothing is ever dropped, and no two different speakers' words are
        ever concatenated into one turn's content.
+    3. Repositioning a bridged interjection in phase 2 can leave it
+       immediately next to a *later*, non-bridgeable turn from that same
+       interjecting speaker (the flanking merge in phase 2 only looks at
+       what's already in `result`, not at what comes next in `blocks`) --
+       a short "Right, right." interjection bridged out of the middle of
+       one answer, then immediately followed by that same speaker's next
+       real question, is a common shape and would otherwise surface as two
+       separate same-speaker turns back to back. A final pass merges any
+       turns left adjacent with the same speaker, so the output never has
+       two consecutive turns from one speaker.
 
     Runs on parse_turns()'s raw output, before assign_roles() -- purely
     mechanical (turn length/shape + adjacency), no interviewer/subject role
@@ -161,7 +271,14 @@ def bridge_backchannels(turns, max_words=BACKCHANNEL_MAX_WORDS):
         else:
             result.extend(blocks[i:j])
             i = j
-    return result
+
+    merged = []
+    for t in result:
+        if merged and merged[-1]["speaker_label"] == t["speaker_label"]:
+            merged[-1]["content"] = f"{merged[-1]['content']} {t['content']}".strip()
+        else:
+            merged.append(dict(t))
+    return merged
 
 
 def prompt_for_roles(labels, unlabeled_count):
@@ -248,13 +365,15 @@ def build_record(turns, *, group_name, person_name, person_title, item_title, pu
 
 def import_docx_or_txt(path, args):
     lines = extract_lines(path)
-    turns = bridge_backchannels(parse_turns(lines))
+    turns, format_name = parse_transcript_turns(lines)
     if not turns:
-        print("No timestamped turns found -- is this a Word Transcribe-style transcript "
-              "(\"HH:MM:SS Speaker N\" lines)? If not, see IMPORTING_DATA.md's LLM prompt "
-              "template to convert it to canonical JSON instead, then run this script on "
-              "that .json file.")
+        print("No turns found -- is this a Word Transcribe-style transcript (\"HH:MM:SS "
+              "Speaker N\" lines) or a speaker-labeled transcript (\"Speaker: text\" lines, "
+              "hand-typed or from ChatGPT/Claude)? See IMPORTING_DATA.md for examples of both. "
+              "If your transcript is neither, use IMPORTING_DATA.md's LLM prompt template to "
+              "convert it to canonical JSON instead, then run this script on that .json file.")
         sys.exit(1)
+    turns = bridge_backchannels(turns)
 
     labels = sorted({t["speaker_label"] for t in turns if t["speaker_label"]})
     unlabeled_count = sum(1 for t in turns if t["speaker_label"] is None)
@@ -287,7 +406,8 @@ def import_docx_or_txt(path, args):
     n_subject = sum(1 for t in turns if t["speaker_role"] == "subject")
     n_interviewer = sum(1 for t in turns if t["speaker_role"] == "interviewer")
     n_other = sum(1 for t in turns if t["speaker_role"] == "other")
-    print(f"\nParsed {len(turns)} turns: {n_subject} subject, "
+    format_label = "timestamped" if format_name == "timestamped" else "speaker-labeled, no timestamp"
+    print(f"\nDetected format: {format_label}. Parsed {len(turns)} turns: {n_subject} subject, "
           f"{n_interviewer} interviewer, {n_other} other/unresolved.")
 
     return [record], item_title

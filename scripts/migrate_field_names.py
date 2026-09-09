@@ -4,7 +4,7 @@ enhanced_transcript_json) to their canonical, source-agnostic replacements
 (group_name/person_name/person_id/person_title/source_name/item_id/turns)
 in every dataset under queries/, plus demo_dataset.json and
 executive_interviews.json if present -- see IMPORTING_DATA.md for the full
-schema and coding_store.py's schema_version 2 migration for the matching
+schema and coding_store/schema.py's schema_version 2 migration for the matching
 coding.db column renames.
 
 Backs up queries/ first, unconditionally -- these are real, irreplaceable,
@@ -107,7 +107,7 @@ def main():
                 print(f"{extra.name}: migrated {before} -> {after} records")
 
     print("\nDone. Re-run scripts/build_segments.py to resegment against the renamed data,")
-    print("then start the server -- coding_store.init_db() migrates coding.db's schema"
+    print("then start the server -- coding_store.schema.init_db() migrates coding.db's schema"
           " automatically on startup.")
 
 

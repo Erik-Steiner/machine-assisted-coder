@@ -130,7 +130,7 @@ function renderReviewCard(candidate) {
     `<div class="reason-pills">${reasonPillsHtml(candidate)}</div>` +
     `<div class="exemplar-text">${escapeHtml(candidate.text)}</div>` +
     (isInterviewer ? "" : `<div class="segment-chips">${chips}</div>`) +
-    `<button class="btn-secondary review-view-btn">View in Coding</button>`;
+    `<button class="btn-secondary review-view-btn">View in Code</button>`;
 
   div.addEventListener("click", (e) => {
     const chip = e.target.closest(".theme-chip");

@@ -30,6 +30,23 @@ function arrayBufferToBase64(buf) {
   return btoa(binary);
 }
 
+// Posts a File directly as the request body (POST /api/import/raw_upload?filename=...)
+// so the browser streams it to the network instead of materializing it as a JS string --
+// unlike arrayBufferToBase64() above, which is fine for one interview transcript but
+// blows past a tab's memory budget for a multi-hundred-MB Reddit/Arctic Shift export
+// (base64 string + JSON.stringify copy, on top of the original bytes). Used by the
+// Reddit import flow below; returns the upload_id /api/import/reddit/parse expects.
+async function uploadFileRaw(file) {
+  const res = await fetch(`/api/import/raw_upload?filename=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  return data.upload_id;
+}
+
 function resetImportUI() {
   importState.token = null;
   importState.kind = null;
@@ -42,15 +59,18 @@ function resetImportUI() {
   document.getElementById("importTargetDataset").value = "";
 }
 
-// Populates the "Add to" dropdown with existing interview-transcript
-// datasets (kind="interview_import" -- see query_api.append_to_dataset())
-// so a researcher can file a new upload into an existing bucket (e.g. every
-// transcript from one research project) instead of every import creating
-// its own one-interview dataset. Live-download/company datasets aren't
-// offered -- appending into those would conflate a hand-uploaded interview
-// with a live query result.
-async function populateImportTargetOptions() {
-  const select = document.getElementById("importTargetDataset");
+// Populates an "Add to" dropdown with existing datasets of one kind (see
+// query_api.append_to_dataset()) so a researcher can file a new upload into
+// an existing bucket (e.g. every transcript from one research project, or
+// every submission from one subreddit-tracking project) instead of every
+// import creating its own one-item dataset. Shared by both import panels --
+// selectId/kind differ (importTargetDataset/"interview_import" for
+// transcripts, importRedditTargetDataset/"reddit_import" for Reddit) but the
+// logic is identical. Live-download/company datasets are never offered --
+// appending into those would conflate a hand-uploaded/imported batch with a
+// live query result.
+async function populateImportTargetOptions(selectId, kind) {
+  const select = document.getElementById(selectId);
   select.innerHTML = '<option value="">a new dataset</option>';
   let datasets;
   try {
@@ -60,7 +80,7 @@ async function populateImportTargetOptions() {
     return; // not critical -- "a new dataset" still works
   }
   (datasets || [])
-    .filter((d) => d.kind === "interview_import")
+    .filter((d) => d.kind === kind)
     .forEach((d) => {
       const opt = document.createElement("option");
       opt.value = d.id;
@@ -138,15 +158,21 @@ async function handleImportFile(file) {
   importState.token = data.upload_token;
   importState.kind = data.kind;
   importState.filename = file.name;
-  statusEl.textContent = "";
 
   if (data.kind === "json") {
+    statusEl.textContent = "";
     document.getElementById("importJsonSummary").textContent =
       `${data.n_records} record(s) parsed from "${data.label || file.name}". Ready to import.`;
     document.getElementById("importJsonForm").classList.remove("hidden");
   } else {
+    // format_detected: "timestamped" (Word Transcribe-style) or "labeled" ("Speaker: text",
+    // hand-typed or LLM-formatted, no timestamp) -- see parse_transcript_turns() in
+    // scripts/import_interview_transcript.py. Surfaced here so the researcher can confirm
+    // detection worked as expected before assigning roles.
+    statusEl.textContent =
+      data.format_detected === "labeled" ? "Detected format: speaker-labeled transcript (no timestamps)." : "";
     renderImportRolesForm(data);
-    populateImportTargetOptions();
+    populateImportTargetOptions("importTargetDataset", "interview_import");
     document.getElementById("importRolesForm").classList.remove("hidden");
   }
 }
@@ -254,6 +280,7 @@ function resetRedditImportUI() {
   document.getElementById("importRedditPreview").classList.add("hidden");
   document.getElementById("importRedditResult").classList.add("hidden");
   document.getElementById("importRedditStatus").textContent = "";
+  document.getElementById("importRedditTargetDataset").value = "";
 }
 
 async function parseRedditImport() {
@@ -267,22 +294,23 @@ async function parseRedditImport() {
     return;
   }
 
-  statusEl.textContent = "Parsing…";
+  statusEl.textContent = "Uploading…";
   let body;
   try {
     body = {
       submissions_filename: subFile.name,
-      submissions_content_base64: arrayBufferToBase64(await subFile.arrayBuffer()),
+      submissions_upload_id: await uploadFileRaw(subFile),
     };
     if (comFile) {
       body.comments_filename = comFile.name;
-      body.comments_content_base64 = arrayBufferToBase64(await comFile.arrayBuffer());
+      body.comments_upload_id = await uploadFileRaw(comFile);
     }
   } catch (err) {
-    statusEl.textContent = "Couldn't read that file in the browser.";
+    statusEl.textContent = "Couldn't upload that file: " + err.message;
     return;
   }
 
+  statusEl.textContent = "Parsing…";
   let data;
   try {
     const res = await fetch("/api/import/reddit/parse", {
@@ -310,6 +338,7 @@ async function parseRedditImport() {
     summary += ` (${data.orphaned_comments} comment(s) skipped — no matching submission.)`;
   }
   document.getElementById("importRedditSummary").textContent = summary;
+  populateImportTargetOptions("importRedditTargetDataset", "reddit_import");
   document.getElementById("importRedditPreview").classList.remove("hidden");
 }
 
@@ -324,7 +353,10 @@ async function commitRedditImport() {
     const res = await fetch("/api/import/reddit/commit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ upload_token: redditImportState.token }),
+      body: JSON.stringify({
+        upload_token: redditImportState.token,
+        target_dataset_id: document.getElementById("importRedditTargetDataset").value || null,
+      }),
     });
     data = await res.json();
   } catch (err) {
@@ -342,9 +374,11 @@ async function commitRedditImport() {
   document.getElementById("importRedditPreview").classList.add("hidden");
   statusEl.textContent = "";
   document.getElementById("importRedditResult").classList.remove("hidden");
+  const verb = data.appended
+    ? `Added <strong>${data.count}</strong> submission(s) to <strong>${escapeHtml(data.dataset_label)}</strong>`
+    : `Saved <strong>${escapeHtml(data.dataset_label)}</strong>`;
   document.getElementById("importRedditResultText").innerHTML =
-    `Saved <strong>${escapeHtml(data.dataset_label)}</strong> to ` +
-    `<code>queries/${escapeHtml(data.json_file)}</code> and <code>queries/${escapeHtml(data.csv_file)}</code>. ` +
+    `${verb} in <code>queries/${escapeHtml(data.json_file)}</code> and <code>queries/${escapeHtml(data.csv_file)}</code>. ` +
     `${data.segments_added} segment(s) are already in coding.db -- ready to code, no extra step needed.`;
   document.getElementById("importRedditViewDatasetBtn").onclick = () => goToDataset(data.dataset_id, "browse");
   document.getElementById("importRedditStartCodingBtn").onclick = () => goToDataset(data.dataset_id, "coding");

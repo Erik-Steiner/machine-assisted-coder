@@ -67,16 +67,33 @@ If a record does not have a field, use `None` (Python) or `null` (JSON) as its v
 ## File reference
 
 `viewer_server.py`
-This file loads the primary dataset, manages the dataset registry (primary + saved queries), runs Search & Export's background jobs, and serves every endpoint. Change this file when you add, rename, or remove a metadata or content field, when you change the sort order, or when you touch the dataset/job machinery itself.
+This file loads the primary dataset, manages the dataset registry (primary + saved queries), runs Search & Export's background jobs, and registers every endpoint as a `routing.py` route. Change this file when you add, rename, or remove a metadata or content field, when you change the sort order, when you touch the dataset/job machinery itself, or when you add a new endpoint (register it with `@ROUTER.get(...)`/`@ROUTER.post(...)` near the other routes for its tab).
+
+`routing.py`
+The route table `viewer_server.py`'s endpoints register into, plus the shared request-handling adapter every route goes through: JSON body parsing (`json_body=True`, or `"optional"` for a route that should tolerate a missing/invalid body), declarative required-field checks (`required=[...]`), and path-param 404 lookups (`loaders={...}`). A route handler is a plain `(Request) -> Response` function with no dependency on `BaseHTTPRequestHandler` -- `Handler` in `viewer_server.py` is a thin adapter that turns a socket request into a `Router.dispatch()` call and writes back whatever `Response` it returns. Change this file when the *shape* of request handling needs to change (a new kind of body, a new response type); change `viewer_server.py` for a new endpoint using the existing shapes.
 
 `query_api.py`
 This file is the API client for Search & Export: `search_companies`/`search_entities` (keyword search), `fetch_feed` (paginated `get_feed`), and `build_row`/`build_transcript_text` (turning one feed item into an export row). Change this file when the export row shape needs to change, or when the API's parameters change.
+
+`jobs.py`
+A second small seam alongside `routing.py`: `JobRegistry`, the thread-safe `job_id -> status
+dict` registry behind every "kick off a background thread, poll it to completion" flow --
+`viewer_server.py`'s `JOBS` (Search & Export downloads) and `TRAIN_JOBS` (Model training) are
+both instances of it. `start(initial, target, *args)` spawns the worker thread and seeds the
+status dict; `get(job_id)` backs a `GET .../status?job_id=` poll endpoint; `mutate(job_id, fn)`
+lets the worker thread read-then-write a field (an increment, a list append) under the lock,
+with `update(job_id, **fields)` as sugar for outright replacing fields; `has_running()` backs
+`switch_project()`'s guard. A worker function's own exception is caught by `start()` and turned
+into `status="error"` automatically -- it doesn't need its own try/except for that. No
+dependency on anything `viewer_server.py`-specific, same as `routing.py` -- change this file
+when the job-tracking shape itself needs to change; change `viewer_server.py` to add a new job
+*type* using the existing shape. The matching frontend half is `app.js`'s `pollBackgroundJob()`.
 
 `viewer_static/viewer.html`
 This file defines the page layout for both tabs: header (with tab buttons and the dataset dropdown), Browse's filter panel/jump list/metadata box/transcript box, and Search & Export's search box, result columns, and export panel. Change this file when you add a new filter control, a new metadata field, or a new Search & Export control.
 
 `viewer_static/app.js`
-This file holds all frontend logic. Browse logic (fetching a dataset, filtering, navigation, rendering, copy-with-citation) is unchanged in spirit from the single-dataset version, just parameterized by `state.datasetId`. Search & Export logic (keyword search, disambiguation, starting/polling a query job) is a separate, mostly independent chunk at the bottom of the file. Most dataset-specific changes happen in the Browse logic.
+This file holds all frontend logic. Browse logic (fetching a dataset, filtering, navigation, rendering, copy-with-citation) is unchanged in spirit from the single-dataset version, just parameterized by `state.datasetId`. Search & Export logic (keyword search, disambiguation, starting/polling a query job) is a separate, mostly independent chunk at the bottom of the file. Most dataset-specific changes happen in the Browse logic. `pollBackgroundJob(statusUrl, {onRunning, onDone, onError})`, defined near the top alongside `escapeHtml()`, is the shared poll loop behind Search & Export's own job polling and `model.js`'s training-job polling (see `jobs.py`'s `JobRegistry` for its backend half) -- a third polled job type should reuse it rather than writing another recursive `setTimeout` loop.
 
 `loadDataset()` also fetches `/api/duplicates/status` alongside the index and caches it as
 `state.duplicates` (keyed by `item_id`, not the dataset-local numeric `id`) -- empty until
@@ -104,10 +121,20 @@ override can change more than one item's displayed "canonical of N" count.
 `viewer_static/styles.css`
 This file holds the visual style. It needs no change for a new dataset, unless the layout does not fit the new content.
 
-`coding_store.py`
-SQLite storage for the Coding subsystem: segments, the codebook (themes), codes, and
-(later phases) embeddings/predictions/clusters. Change this file when the coding data
-model changes.
+`coding_store/`
+SQLite storage for the Coding subsystem, split by concern rather than one flat module --
+each caller imports the submodule it needs (`from coding_store import themes`):
+`schema.py` (the SQLite schema, connection, and migration -- every other submodule
+depends on this one, it depends on none of them), `segments.py`, `themes.py`, `codes.py`,
+`model_runs.py` (Model tab storage), `review.py` (the Review tab's recode queue and
+coding-progress counts -- depends on `codes.py`/`model_runs.py`), `activity_log.py`
+(Web Appendix: the research-action log, training-run hyperparameters, and the codebook
+export), `duplicates.py`, and `dataset_status.py`. `themes.py`/`duplicates.py`/
+`dataset_status.py` depend on `activity_log.py` (every mutation there is logged); nothing
+depends the other way. Change the submodule that owns the concern you're touching; change
+`schema.py` only for the schema/migration machinery itself (later phases' embeddings/
+predictions/clusters tables already live in `schema.SCHEMA`, unused until a submodule
+reads/writes them).
 
 `segmentation.py`
 Turns one item's `turns` into coding segments. Change this file only deliberately -- see
@@ -134,7 +161,7 @@ orchestration used by both `scripts/train_classifiers.py` and the Model tab's
 background training job -- change this file when the model or feature
 representation changes. `build_corpus()` excludes non-canonical near-duplicate
 segments by default once `scripts/find_duplicates.py` has been run -- see that
-script and `coding_store.py`'s `duplicate_*` tables.
+script and `coding_store/schema.py`'s `duplicate_*` tables.
 
 `scripts/train_classifiers.py`
 Thin CLI wrapper around `classifier.run_training_pass()`. Safe to re-run any
@@ -155,7 +182,7 @@ tags additions `source="recoded"`. Loaded after `model.js`; reuses
 rather than reimplementing segment-card rendering.
 
 `appendix_export.py`
-Renders the Web Appendix tab's activity log (`coding_store.get_appendix_feed()`) into a
+Renders the Web Appendix tab's activity log (`coding_store.activity_log.get_appendix_feed()`) into a
 self-contained HTML file with inline CSS -- no new dependency, opens standalone, and gives
 a PDF for free via the browser's own "Print to PDF".
 
@@ -177,53 +204,115 @@ this app supports more than one `viewer_server.py` process running at once again
 projects, so "active" only makes sense per-process (see `viewer_server.py`'s
 `CURRENT_PROJECT_DIR`/`switch_project()`); a shared "active" field in this file would let one
 process's switch corrupt what a *different* running process's UI reports. `viewer_server.py`
-live-switches a running process's `QUERIES_DIR`/`coding_store.DB_PATH` by reassigning those
-module globals directly (`coding_store.set_db_path()`) -- no restart, works because
-`coding_store.get_conn()` looks up `DB_PATH` at call time, not a captured value.
+live-switches a running process's `QUERIES_DIR`/`coding_store.schema.DB_PATH` by reassigning
+those module globals directly (`coding_store.schema.set_db_path()`) -- no restart, works
+because `coding_store.schema.get_conn()` looks up `DB_PATH` at call time, not a captured value.
 
 `scripts/import_interview_transcript.py`, `scripts/import_reddit.py`
 Import a researcher's own data (interview transcripts, Reddit/Arctic Shift exports) into
 `queries/`, in the same canonical shape every other dataset uses. See
 [IMPORTING_DATA.md](IMPORTING_DATA.md) for the full format and usage. Both scripts' parsing
-(`parse_turns`/`bridge_backchannels`/`assign_roles`/`build_record`/`normalize_json_records` for
-transcripts; `build_records`/`summarize_records` for Reddit) is also called directly by
-`viewer_server.py`'s `/api/import/transcript/*` and `/api/import/reddit/*` endpoints, which back
-the Search & Export tab's **Import your own data** section (`viewer_static/import.js`) -- a
-no-command-line alternative to running either script by hand.
+(`parse_transcript_turns`/`bridge_backchannels`/`assign_roles`/`build_record`/
+`normalize_json_records` for transcripts; `build_records`/`summarize_records` for Reddit) is also
+called directly by `viewer_server.py`'s `/api/import/transcript/*` and `/api/import/reddit/*`
+endpoints, which back the Search & Export tab's **Import your own data** section
+(`viewer_static/import.js`) -- a no-command-line alternative to running either script by hand.
+
+**Two `.docx`/`.txt` transcript formats, one dispatcher.** `parse_transcript_turns(lines)` tries
+`parse_turns()` (the original timestamped-line parser) first, then falls back to
+`parse_labeled_turns()` -- returning `(turns, format_name)` so both the CLI and
+`/api/import/transcript/parse` can tell the researcher which format matched
+(`format_name`/`"format_detected"`; `import.js` surfaces it in the upload status text). Both
+parsers produce the identical turn shape (`{timestamp, speaker_label, content}`), so everything
+downstream -- `bridge_backchannels`, role assignment, `build_record` -- is completely format-
+agnostic and needed zero changes when the second format was added.
+
+`parse_labeled_turns()` handles the "Speaker: text" shape (no timestamp) that covers hand-typed
+transcripts, diarization-tool exports, and ChatGPT/Claude's own default transcript formatting
+alike (see IMPORTING_DATA.md for the researcher-facing writeup and format examples). It never
+tries to identify which tool produced the file -- it detects a *pattern*: `LABELED_TURN_RE`
+matches a short (`<= LABEL_MAX_WORDS`), optionally `**bold**`-wrapped label immediately before a
+colon at the start of a line, and a candidate label only becomes a confirmed speaker (turn
+boundary) once it's recurred `>= LABEL_MIN_OCCURRENCES` times with `>= 2` distinct labels overall
+-- the same signal a human uses to tell a real speaker cue from an incidental colon in the body
+text ("Note: recorded over Zoom."), which only ever appears once and so gets folded into the
+surrounding turn instead of starting a new one. A markdown-bold label wrapped in literal `**`
+needs this text-level handling, but a label pasted into Word *with* formatting kept doesn't --
+`python-docx`'s `paragraph.text` already strips run-level bold, so that case is already plain
+`"Speaker: text"` and needs no special-casing at all (confirmed by inspecting
+`data examples/Interview Self-transcribed.docx`'s paragraph/run structure while building this).
+
+The browser upload path gets the file's raw text into `viewer_server.py` two different ways,
+and the difference matters. The transcript panel base64-encodes the file client-side
+(`import.js`'s `arrayBufferToBase64()`) and sends it as one `content_base64` field in a JSON
+`POST /api/import/transcript/parse` body -- fine for a single interview file, but a
+multi-hundred-MB Arctic Shift comments export blows past a browser tab's memory budget that way
+(the original bytes, a base64 string ~1.33x their size, and another same-size-ish copy when
+`JSON.stringify` serializes the request body, several alive at once -- reproduced as an
+out-of-memory tab crash on a real ~350 MB comments file). So the Reddit panel instead posts each
+file directly as a request body (`import.js`'s `uploadFileRaw()`, `POST
+/api/import/raw_upload?filename=..`) -- the browser streams a `File`/`Blob` body to the network
+without ever materializing it as a JS string -- and `viewer_server.py` stores the decoded text in
+`RAW_UPLOADS`, keyed by an `upload_id` the follow-up `POST /api/import/reddit/parse` call
+references (small JSON body, just the id) instead of carrying the content itself. If the
+transcript panel ever needs to handle files at this scale, it should switch to the same
+`raw_upload` path rather than growing a second base64 special-case.
 
 Every import defaults to creating its own new dataset, but a researcher can instead add the new
-interview(s) into an existing one (`query_api.append_to_dataset()`) -- the transcript panel's
-**Add to** `<select>` (`viewer_static/import.js`'s `populateImportTargetOptions()`, fed by
-`GET /api/datasets`, filtered client-side to `kind === "interview_import"`) or the CLI's
-`--append-to <dataset_id>`. `append_to_dataset()` reads the target's existing
-`queries/*.json`, rejects (`DatasetValidationError`) if any new record's `item_id` already
-exists in it (same collision `validate_dataset_records()` guards against on create -- silently
-allowing it would let the new record's segments overwrite the existing item's in coding.db),
-otherwise rewrites the same `json_file`/`csv_file` with the combined records and updates the
-registry's `count`/`label` (`relabel_with_count()` regenerates the "N interview(s)" suffix).
-`viewer_server.py`'s `/commit` handler then re-segments only the newly-added record(s) (not the
-whole dataset -- the existing ones are already in coding.db) and evicts the target dataset_id
-from the in-memory `DATASETS` cache so the next `get_dataset()` reloads the appended file from
-disk instead of serving the stale cached copy -- the same cache-invalidation idiom
-`switch_project()` uses.
+interview(s)/submission(s) into an existing one (`query_api.append_to_dataset()`) -- both import
+panels' **Add to** `<select>` (`viewer_static/import.js`'s shared `populateImportTargetOptions
+(selectId, kind)`, fed by `GET /api/datasets`, filtered client-side to `kind === "interview_import"`
+for the transcript panel or `"reddit_import"` for the Reddit panel) or, for transcripts only so
+far, the CLI's `--append-to <dataset_id>` (`scripts/import_reddit.py` has no CLI equivalent yet).
+`append_to_dataset()` reads the target's existing `queries/*.json`, rejects
+(`DatasetValidationError`) if any new record's `item_id` already exists in it (same collision
+`validate_dataset_records()` guards against on create -- silently allowing it would let the new
+record's segments overwrite the existing item's in coding.db), otherwise rewrites the same
+`json_file`/`csv_file` with the combined records and updates the registry's `count`/`label`
+(`relabel_with_count()` regenerates the "N `<count_noun>`" suffix -- `"interview(s)"` by default,
+`"submission(s)"` for a Reddit dataset, so appending never mislabels a dataset with the wrong
+noun). `viewer_server.py`'s two commit handlers call `_append_dataset()`, which re-segments only
+the newly-added record(s) (not the whole dataset -- the existing ones are already in coding.db)
+and evicts the target dataset_id from the in-memory `DATASETS` cache so the next `get_dataset()`
+reloads the appended file from disk instead of serving the stale cached copy -- the same
+cache-invalidation idiom `switch_project()` uses.
 
-`bridge_backchannels()` (`import_interview_transcript.py`) runs right after `parse_turns()`, on
-every transcript import path. Word's Transcribe (and similar tools) gives every pause-detected
-fragment its own timestamped turn, so a short backchannel from the other speaker ("Right.",
-"Hmm.") interjected mid-sentence otherwise splits the person actually talking into two
-disconnected turns -- bad raw material for both coding and the classifier's embeddings. It
-merges in two phases: (1) unconditionally coalesce every run of literally-consecutive
-same-speaker turns (no length cap -- `segmentation.py`'s later sentence-aware splitting handles
-cutting the result back down to size); (2) bridge a short, non-question block sandwiched between
-two blocks from the same (different) speaker -- the flanking blocks merge into one continuous
-passage, and the bridged block is kept as its own turn, just repositioned to sit right after
-instead of splitting the passage in two. A block ending in "?" is never treated as bridgeable
-("What about session 0?" is a real topic-changing follow-up, not an acknowledgement) -- this
-was a real false-positive found and fixed during testing on `interview example/`'s sample
-transcript, along with an earlier bug where a short turn's "who do I return to" bookkeeping got
-stuck pointing at the *interjecting* speaker instead of the original one. Nothing is ever
-dropped: every turn from `parse_turns()` still exists somewhere in the output, just reordered
-and/or merged into a same-speaker neighbor's `content`.
+`_create_dataset()`/`_append_dataset()` (both in `viewer_server.py`) are the shared "write it to
+queries/, register it, maybe segment it, log it" ceremony behind every dataset-creating/appending
+endpoint -- a Search & Export download (`run_query_job`), a transcript-import commit, and a
+Reddit-import commit each just build `records`/`label` and call one of the two, rather than
+repeating the write/register/segment/log steps by hand. Change these, not each call site, when
+that ceremony itself needs to change.
+
+`bridge_backchannels()` (`import_interview_transcript.py`) runs right after
+`parse_transcript_turns()`, on every transcript import path (both formats -- see above). Word's
+Transcribe (and similar tools) gives every pause-detected fragment its own timestamped turn, so a
+short backchannel from the other speaker ("Right.", "Hmm.") interjected mid-sentence otherwise
+splits the person actually talking into two disconnected turns -- bad raw material for both
+coding and the classifier's embeddings; a hand-typed or LLM-formatted transcript has the same
+issue on a smaller scale (a transcriber's own "mm-hmm" written mid-answer). It merges in three
+phases: (1) unconditionally coalesce every run of literally-consecutive same-speaker turns (no
+length cap -- `segmentation.py`'s later sentence-aware splitting handles cutting the result back
+down to size); (2) bridge a short, non-question block sandwiched between two blocks from the same
+(different) speaker -- the flanking blocks merge into one continuous passage, and the bridged
+block is kept as its own turn, just repositioned to sit right after instead of splitting the
+passage in two; (3) a final pass merges any turns still left immediately adjacent with the same
+speaker. Phase 3 exists because phase 2's flanking-merge only looks at what's already in its
+`result` list, not at what comes later in the original sequence -- a bridged interjection
+repositioned right before a *later*, non-bridgeable turn from that same interjecting speaker (a
+short "Right, right." pulled out of the middle of an answer, immediately followed by that
+speaker's next real question) landed as two consecutive same-speaker turns instead of one. Found
+by testing against `data examples/Interview Self-transcribed.docx` (the speaker-labeled format's
+own sample) -- present in 8 of that file's 40 pre-phase-3 turns, and also latent in the original
+Word Transcribe sample (`interview example/Interview Transcript.docx`'s post-bridge count
+tightened from 192 to 172 turns once phase 3 was added, word count still exactly preserved). A
+block ending in "?" is never treated as bridgeable ("What about session 0?" is a real
+topic-changing follow-up, not an acknowledgement) -- this was a real false-positive found and
+fixed during earlier testing on `interview example/`'s sample transcript, along with an earlier
+bug where a short turn's "who do I return to" bookkeeping got stuck pointing at the *interjecting*
+speaker instead of the original one. Nothing is ever dropped: every turn from
+`parse_transcript_turns()` still exists somewhere in the output, just reordered and/or merged
+into a same-speaker neighbor's `content`.
 
 `scripts/find_duplicates.py`
 Retroactive audit for near-duplicate items in `queries/*.json` -- the same real-world
@@ -233,10 +322,11 @@ up 12 times in this project's corpus). Blocks candidates by `(person_name, publi
 within a few days)`, scores pairs by whole-document TF-IDF cosine similarity (a fresh
 item-level vectorizer, not `classifier.py`'s segment-level one), and clusters
 above-threshold pairs via union-find. Mark-only: writes clusters + a suggested canonical
-member to `coding_store.py`'s `duplicate_runs`/`duplicate_clusters`/
-`duplicate_cluster_items` tables; never deletes/hides a `queries/*.json` record or
-touches `codes`. The detector isn't perfect -- a separate `duplicate_overrides` table
-(`coding_store.add_duplicate_override()`/`remove_duplicate_override()`) holds researcher
+member to `coding_store/schema.py`'s `duplicate_runs`/`duplicate_clusters`/
+`duplicate_cluster_items` tables (see `coding_store/duplicates.py`); never deletes/hides
+a `queries/*.json` record or touches `codes`. The detector isn't perfect -- a separate
+`duplicate_overrides` table (`duplicates.add_duplicate_override()`/
+`remove_duplicate_override()`) holds researcher
 corrections (both directions: "this isn't a duplicate" and "this is, of that one"),
 deliberately not tied to any one `duplicate_runs` row so a correction survives the next
 re-run instead of being silently recomputed away; `get_duplicate_status_for_dataset()`
@@ -256,8 +346,8 @@ A third tab, Coding, lets a researcher build a codebook of themes and apply them
 speaker-turn segments of each interview. It is a separate subsystem from Browse/Search
 & Export: those stay flat-JSON and in-memory; Coding is backed by a SQLite database,
 `coding.db` (gitignored, like `queries/` -- it's local, regenerable-except-for-the-
-researcher's-actual-codes data, not source). See `coding_store.py` for the schema and
-the reasoning for using SQLite here.
+researcher's-actual-codes data, not source). See the `coding_store` package for the
+schema and the reasoning for using SQLite here.
 
 Setup: after `queries/` has at least one dataset (from `download_script.py` or Search &
 Export), run `python scripts/build_segments.py` once to populate `coding.db` with segments
@@ -296,10 +386,10 @@ code under the source theme is re-pointed to the target theme in place, keeping 
 has an active target code from the same coder gets its now-redundant source code
 soft-deleted instead of duplicated; the source theme is then archived with
 `merged_into` set, not deleted, so a merge is auditable and reversible by hand -- see
-`coding_store.merge_themes()`). There is no hard delete for a theme, by design: codes
-are load-bearing research data.
+`coding_store/themes.py`'s `merge_themes()`). There is no hard delete for a theme, by
+design: codes are load-bearing research data.
 
-`coding_store.SCHEMA` also defines `negatives`, `embeddings`, `cluster_runs`,
+`coding_store/schema.py`'s `SCHEMA` also defines `negatives`, `embeddings`, `cluster_runs`,
 `clusters`, `cluster_segments`, and `consistency_checks` tables. These exist for
 later phases (an explicit-negative-labeling UI, a v2 embeddings-based classifier,
 unsupervised topic clustering, inter-rater consistency checks) and are created by
@@ -320,9 +410,9 @@ nothing it does touches `segments`/`themes`/`codes`.
 Training always retrains every theme with enough coded segments in one pass, sharing
 one TF-IDF vectorizer fit across all of them (fit once for vocabulary consistency and
 efficiency, not per theme) -- there's no per-theme train button. `POST /api/model/train`
-starts a background thread (the `TRAIN_JOBS` dict in `viewer_server.py`, a sibling of
-the pre-existing `JOBS` dict Search & Export's fetch jobs use, kept separate so the two
-can't collide) that calls `classifier.run_training_pass()`; `GET
+starts a background thread (`TRAIN_JOBS`, a `jobs.JobRegistry` instance in `viewer_server.py` --
+see "Background jobs" below -- kept separate from `JOBS`, Search & Export's fetch-job registry, so
+the two can't collide) that calls `classifier.run_training_pass()`; `GET
 /api/model/train_status?job_id=` polls it, same shape as Search & Export's job
 polling. A theme's top predictive terms are computed once, at training time (not
 on-demand), because the fitted model object itself is never persisted -- only its
@@ -337,6 +427,39 @@ duplicating them, calling back into `coding.js` through `codingState`'s
 Browse's dataset, positions on the right interview, and tells the Coding tab which
 segment to scroll to and focus once it loads).
 
+## Analytics subsystem
+
+A separate tab, Analytics, gives the researcher a corpus-level picture of scale and
+density -- document/segment/word counts, vocabulary size, lexical diversity -- before
+any coding or modeling is examined, plus a metadata breakdown (bar/line/scatter,
+auto-detected from the field's shape) and a vocabulary-overlap panel for categorical
+breakdowns. It's read-only, like Model, and touches no schema of its own beyond one
+new helper query (`coding_store.segments.get_segments_by_ids()`).
+
+The corpus this tab measures is deliberately the *exact same* one `classifier.py`
+trains on -- `corpus_analytics.get_corpus_scope()` calls `classifier.build_corpus()`
+directly rather than re-deriving its filters (interviewer turns, sub-5-word
+fragments, near-duplicates, excluded/unloaded datasets), so a researcher can never see
+one segment count on this tab and a different one implied by Model tab's metrics.
+`corpus_analytics.py` is otherwise pure -- it only imports `coding_store.segments`/
+`classifier`, never `viewer_server` -- because the one join it can't do itself (a segment's
+`dataset_id`/`item_id` to that document's full metadata record: `publish_date`,
+`duration_secs`, `view_count`, ...) needs `viewer_server.DATASETS`/`get_dataset()`,
+which live in the web layer. `viewer_server._build_item_meta()` does that join once per
+request and passes the result into `corpus_analytics.py`'s functions as a plain
+`{(dataset_id, item_id): record}` dict.
+
+Breakdown field type (categorical/temporal/quantitative) is detected from the data
+every time, never hardcoded to a fixed field list -- a dataset with metadata fields
+this app has never seen before still gets offered as a breakdown option. Vocabulary
+size/lexical diversity use a plain lowercase+word-token pass (no stopword removal);
+vocabulary overlap deliberately uses the *same* preprocessing as `classifier.py`'s
+TfidfVectorizer (lowercase + `ENGLISH_STOP_WORDS` removed), since mismatched
+preprocessing there would inflate the shared-vocabulary percentage with function
+words. Charts are hand-rolled SVG built the same way the rest of this frontend builds
+HTML (template literals into `innerHTML`) -- no charting library, so the tab keeps
+working with no internet access, same as every other tab.
+
 ## Review subsystem
 
 A fifth tab, Review, is where recoding/refinement happens -- the one place in the
@@ -347,7 +470,7 @@ sharpen (two themes turning out to overlap, say), and there was no way to see
 "every segment coded under theme X" without clicking through interviews one at a
 time.
 
-`coding_store.get_review_candidates(theme_ids, predicted_limit=30)` assembles the
+`coding_store/review.py`'s `get_review_candidates(theme_ids, predicted_limit=30)` assembles the
 queue: every segment currently coded under any of the selected themes, plus (for
 themes with a trained model) each theme's top-scored segments that aren't coded
 under that specific theme yet -- so refining a theme's definition also surfaces
@@ -357,7 +480,7 @@ Each candidate carries a `reasons` list explaining why it's in the queue, which
 "Model-flagged, not yet coded") so the researcher's own past judgment is never
 visually confused with the model's guess.
 
-Recode actions are auditable without any new schema: `coding_store.add_code()`
+Recode actions are auditable without any new schema: `coding_store.codes.add_code()`
 already accepted `source`/`note` parameters (built during Coding, unused until
 now); `review.js` passes `source: "recoded"` when adding a code, so
 `SELECT * FROM codes WHERE source='recoded'` answers "what changed during
@@ -373,9 +496,9 @@ free-form `details_json` blob) and `model_run_params` (one row per training pass
 shared hyperparameters used, since `model_runs`' per-theme metrics say nothing about how
 they were produced).
 
-`coding_store.log_activity(actor, action_type, details)` is called from every mutating
-action that previously had no actor/provenance at all: theme create/update/archive/
-restore/merge (`coding_store.py`'s theme functions each take an `actor` kwarg now),
+`coding_store/activity_log.py`'s `log_activity(actor, action_type, details)` is called from
+every mutating action that previously had no actor/provenance at all: theme create/update/
+archive/restore/merge (`coding_store/themes.py`'s theme functions each take an `actor` kwarg now),
 `viewer_server.py`'s `run_train_job`/`run_query_job`, and `export_codebook`. This is
 deliberately a *new*, cross-cutting table rather than adding actor columns to five
 unrelated tables -- it doesn't replace `codes.coder`/`source`/`note`, which already covers
@@ -387,7 +510,7 @@ deliberate moments that "consume" the current filters -- a citation copy, a comp
 download (`postFilterSnapshot()` in `app.js`) -- not on every filter change, which would
 swamp the log with noise.
 
-`coding_store.get_appendix_feed()` assembles `activity_log` with light joins (theme names
+`coding_store/activity_log.py`'s `get_appendix_feed()` assembles `activity_log` with light joins (theme names
 resolved from ids in `details_json`, `model_run_params` joined onto `training_run` rows)
 for `GET /api/appendix/log`. `GET /api/appendix/export` renders the same feed through
 `appendix_export.py` into a downloadable, self-contained HTML file.
@@ -401,12 +524,13 @@ requires.
 
 `viewer_server.py`'s `switch_project(new_dir)` does the actual work: creates `new_dir` if it's new,
 reassigns the module globals `QUERIES_DIR`/`EXPORTS_DIR` and calls the new
-`coding_store.set_db_path()` (reassigns `coding_store.DB_PATH` and re-runs `init_db()` against it --
-creates a fresh schema for a new project, migrates an existing one), evicts every `DATASETS` cache
-entry except `"primary"`/`"demo"` (those two stay repo-anchored regardless of active project), then
-registers the new path in `project_registry.py`'s list. Guarded by refusing to switch while any
-`JOBS`/`TRAIN_JOBS` entry has `status == "running"` -- those background threads capture
-`QUERIES_DIR`/`coding_store.DB_PATH` by module-level name lookup at the time they run, so switching
+`coding_store.schema.set_db_path()` (reassigns `coding_store.schema.DB_PATH` and re-runs
+`init_db()` against it -- creates a fresh schema for a new project, migrates an existing one),
+evicts every `DATASETS` cache entry except `"primary"`/`"demo"` (those two stay repo-anchored
+regardless of active project), then registers the new path in `project_registry.py`'s list.
+Guarded by refusing to switch while `JOBS.has_running()` or `TRAIN_JOBS.has_running()` is true --
+those background threads capture `QUERIES_DIR`/`coding_store.schema.DB_PATH` by module-level
+name lookup at the time they run, so switching
 underneath one risks it writing into the wrong project; the guard just refuses rather than trying
 to handle that race.
 

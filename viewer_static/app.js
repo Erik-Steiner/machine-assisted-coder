@@ -1,5 +1,6 @@
 const state = {
   datasetId: "primary",
+  datasetStatuses: {}, // dataset_id -> "active"|"excluded", from /api/datasets -- see refreshDatasetList()
   all: [],
   filtered: [],
   pos: 0,
@@ -28,6 +29,34 @@ function escapeHtml(s) {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// --- Shared background-job poll loop -----------------------------------------------
+// Backs every viewer_server.py job-status endpoint (see jobs.py's JobRegistry and
+// DEVELOPMENT.md's "Background jobs" convention) -- Search & Export's query-fetch job
+// below, and model.js's training job. Recursively setTimeouts against statusUrl until
+// the job's status is no longer "running", calling onRunning(job) on each in-progress
+// poll and onDone(job)/onError(job) once. Each job type's payload shape differs (a
+// query job has items_fetched/pages_fetched, a training job has themes_done/
+// current_theme), so this only owns the poll mechanics -- rendering stays with the
+// caller. Returns a handle whose .cancel() stops the loop (mirrors the
+// clearTimeout(stateObj.pollTimer) idiom each caller used before this existed, for a
+// caller that wants to guard against overlapping poll chains).
+function pollBackgroundJob(statusUrl, { onRunning, onDone, onError }, intervalMs = 1000) {
+  const handle = { timer: null, cancel: () => clearTimeout(handle.timer) };
+  async function tick() {
+    const res = await fetch(statusUrl);
+    const job = await res.json();
+    if (job.status === "running") {
+      onRunning(job);
+      handle.timer = setTimeout(tick, intervalMs);
+      return;
+    }
+    if (job.status === "done") onDone(job);
+    else onError(job);
+  }
+  handle.timer = setTimeout(tick, intervalMs);
+  return handle;
 }
 
 // --- Near-duplicate flag (scripts/find_duplicates.py) ------------------------------
@@ -768,12 +797,15 @@ async function loadDataset(datasetId) {
   state.duplicates = await dupRes.json();
   buildFilterOptions();
   applyFilters();
+  renderDatasetStatusHint();
   if (window.onDatasetLoaded) window.onDatasetLoaded();
 }
 
 async function refreshDatasetList(selectId) {
   const res = await fetch("/api/datasets");
   const datasets = await res.json();
+  state.datasetStatuses = {};
+  datasets.forEach((d) => { state.datasetStatuses[d.id] = d.status; });
   const select = document.getElementById("datasetSelect");
   const previous = selectId || select.value || state.datasetId;
   select.innerHTML = "";
@@ -788,7 +820,20 @@ async function refreshDatasetList(selectId) {
   } else if (datasets.length) {
     select.value = datasets[0].id;
   }
+  renderDatasetStatusHint();
   return select.value;
+}
+
+// Small non-blocking hint next to the topbar dataset selector for a dataset flagged
+// "excluded" from classifier training (see coding.js's Datasets panel) -- otherwise
+// that status would be invisible while browsing/coding it, since Browse/Coding
+// don't filter it out at all. "unloaded" datasets never reach this select in the
+// first place (see viewer_server.list_datasets()), so there's nothing to show for them.
+function renderDatasetStatusHint() {
+  const el = document.getElementById("datasetStatusHint");
+  const excluded = state.datasetStatuses[state.datasetId] === "excluded";
+  el.textContent = excluded ? "Excluded from classifier training" : "";
+  el.classList.toggle("hidden", !excluded);
 }
 
 // --- Tabs -----------------------------------------------------------------------
@@ -797,6 +842,8 @@ function switchTab(tab) {
   document.body.dataset.tab = tab;
   document.getElementById("tabBrowseBtn").classList.toggle("active", tab === "browse");
   document.getElementById("tabSearchBtn").classList.toggle("active", tab === "search");
+  const analyticsBtn = document.getElementById("tabAnalyticsBtn");
+  if (analyticsBtn) analyticsBtn.classList.toggle("active", tab === "analytics");
   const codingBtn = document.getElementById("tabCodingBtn");
   if (codingBtn) codingBtn.classList.toggle("active", tab === "coding");
   const modelBtn = document.getElementById("tabModelBtn");
@@ -805,6 +852,7 @@ function switchTab(tab) {
   if (reviewBtn) reviewBtn.classList.toggle("active", tab === "review");
   const appendixBtn = document.getElementById("tabAppendixBtn");
   if (appendixBtn) appendixBtn.classList.toggle("active", tab === "appendix");
+  if (tab === "analytics" && window.onEnterAnalyticsTab) window.onEnterAnalyticsTab();
   if (tab === "coding" && window.onEnterCodingTab) window.onEnterCodingTab();
   if (tab === "model" && window.onEnterModelTab) window.onEnterModelTab();
   if (tab === "review" && window.onEnterReviewTab) window.onEnterReviewTab();
@@ -959,36 +1007,34 @@ async function startExportJob() {
 }
 
 function pollJob() {
-  clearTimeout(searchState.pollTimer);
-  searchState.pollTimer = setTimeout(async () => {
-    const res = await fetch(`/api/query/status?job_id=${encodeURIComponent(searchState.jobId)}`);
-    const job = await res.json();
-
-    if (job.status === "running") {
-      document.getElementById("jobStatus").textContent =
-        `Fetching… ${job.items_fetched} interviews so far (page ${job.pages_fetched})`;
-      pollJob();
-      return;
-    }
-
-    document.getElementById("fetchExportBtn").disabled = false;
-
-    if (job.status === "done") {
-      document.getElementById("jobStatus").textContent = "Done.";
-      document.getElementById("jobResult").classList.remove("hidden");
-      postFilterSnapshot();
-      document.getElementById("jobResultText").innerHTML =
-        `Saved <strong>${escapeHtml(job.dataset_label)}</strong> to ` +
-        `<code>queries/${escapeHtml(job.json_file)}</code> and <code>queries/${escapeHtml(job.csv_file)}</code>.`;
-      document.getElementById("viewDatasetBtn").onclick = async () => {
-        await refreshDatasetList(job.dataset_id);
-        await loadDataset(job.dataset_id);
-        switchTab("browse");
-      };
-    } else if (job.status === "error") {
-      document.getElementById("jobStatus").textContent = "Error: " + job.error;
-    }
-  }, 1000);
+  searchState.pollTimer?.cancel();
+  searchState.pollTimer = pollBackgroundJob(
+    `/api/query/status?job_id=${encodeURIComponent(searchState.jobId)}`,
+    {
+      onRunning: (job) => {
+        document.getElementById("jobStatus").textContent =
+          `Fetching… ${job.items_fetched} interviews so far (page ${job.pages_fetched})`;
+      },
+      onDone: (job) => {
+        document.getElementById("fetchExportBtn").disabled = false;
+        document.getElementById("jobStatus").textContent = "Done.";
+        document.getElementById("jobResult").classList.remove("hidden");
+        postFilterSnapshot();
+        document.getElementById("jobResultText").innerHTML =
+          `Saved <strong>${escapeHtml(job.dataset_label)}</strong> to ` +
+          `<code>queries/${escapeHtml(job.json_file)}</code> and <code>queries/${escapeHtml(job.csv_file)}</code>.`;
+        document.getElementById("viewDatasetBtn").onclick = async () => {
+          await refreshDatasetList(job.dataset_id);
+          await loadDataset(job.dataset_id);
+          switchTab("browse");
+        };
+      },
+      onError: (job) => {
+        document.getElementById("fetchExportBtn").disabled = false;
+        document.getElementById("jobStatus").textContent = "Error: " + job.error;
+      },
+    },
+  );
 }
 
 function bindSearchEvents() {
@@ -1000,6 +1046,8 @@ function bindSearchEvents() {
 
   document.getElementById("tabBrowseBtn").addEventListener("click", () => switchTab("browse"));
   document.getElementById("tabSearchBtn").addEventListener("click", () => switchTab("search"));
+  const analyticsBtn = document.getElementById("tabAnalyticsBtn");
+  if (analyticsBtn) analyticsBtn.addEventListener("click", () => switchTab("analytics"));
   const codingBtn = document.getElementById("tabCodingBtn");
   if (codingBtn) codingBtn.addEventListener("click", () => switchTab("coding"));
   const modelBtn = document.getElementById("tabModelBtn");

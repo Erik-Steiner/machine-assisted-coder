@@ -36,7 +36,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
-import coding_store
+from coding_store import activity_log, dataset_status, duplicates, model_runs, schema, themes
 
 TOP_TERMS_N = 20
 
@@ -65,20 +65,24 @@ CALIBRATION_CV = 3
 MIN_SEGMENT_WORDS = 5
 
 
-def training_params(duplicate_run_id=None):
+def training_params(duplicate_run_id=None, excluded_dataset_ids=None):
     """The hyperparameters actually in force for a training pass, as a plain
-    dict -- persisted once per pass via coding_store.save_model_run_params so
-    the Web Appendix tab can show exactly how a given model_version's
-    predictions were produced. duplicate_run_id (see build_corpus()) records
-    which near-duplicate detection run, if any, shaped the training corpus --
-    None if no scripts/find_duplicates.py run exists yet, or exclusion was
-    explicitly skipped."""
+    dict -- persisted once per pass via coding_store.activity_log's
+    save_model_run_params so the Web Appendix tab can show exactly how a given
+    model_version's predictions were produced. duplicate_run_id (see
+    build_corpus()) records which near-duplicate detection run, if any, shaped
+    the training corpus -- None if no scripts/find_duplicates.py run exists
+    yet, or exclusion was explicitly skipped. excluded_dataset_ids (see
+    build_corpus()) records which whole datasets, if any, were flagged
+    'excluded'/'unloaded' and therefore left out of the corpus -- see
+    coding_store.dataset_status."""
     return {
         "ngram_range": list(NGRAM_RANGE), "max_features": MAX_FEATURES, "min_df": MIN_DF,
         "stop_words": STOP_WORDS, "min_positives_attempt": MIN_POSITIVES_ATTEMPT,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
         "logreg_max_iter": LOGREG_MAX_ITER, "calibration_method": CALIBRATION_METHOD,
         "calibration_cv": CALIBRATION_CV, "duplicate_run_id": duplicate_run_id,
+        "excluded_dataset_ids": sorted(excluded_dataset_ids) if excluded_dataset_ids else [],
     }
 
 
@@ -109,10 +113,22 @@ def build_corpus(exclude_duplicates=True):
     positive), and an 'include' override excludes a segment even if the run
     never flagged it at all, or flagged it canonical (a false negative).
     Overrides apply even with no run yet -- see coding_store's schema
-    comment on duplicate_overrides."""
-    run_id = coding_store.get_latest_duplicate_run_id() if exclude_duplicates else None
-    dup_clause = ""
+    comment on duplicate_overrides.
+
+    Also always excludes every segment belonging to a whole dataset flagged
+    'excluded' or 'unloaded' in coding_store.dataset_status -- a researcher's
+    explicit "this corpus isn't for analysis" call from the Coding tab's
+    Datasets panel, independent of exclude_duplicates. Returns the set of
+    excluded dataset_ids (empty if none flagged) so callers can log it."""
+    run_id = duplicates.get_latest_duplicate_run_id() if exclude_duplicates else None
+    excluded_datasets = dataset_status.excluded_dataset_ids()
+    dataset_clause = ""
     params = [MIN_SEGMENT_WORDS]
+    if excluded_datasets:
+        placeholders = ",".join("?" * len(excluded_datasets))
+        dataset_clause = f" AND s.dataset_id NOT IN ({placeholders})"
+        params.extend(sorted(excluded_datasets))
+    dup_clause = ""
     if exclude_duplicates:
         auto_clause = ""
         if run_id:
@@ -137,17 +153,17 @@ def build_corpus(exclude_duplicates=True):
                 )
                 {auto_clause}
             )"""
-    with coding_store.get_conn() as conn:
+    with schema.get_conn() as conn:
         rows = conn.execute(
             f"""SELECT segment_id, text FROM segments s
                 WHERE (speaker_role IS NULL OR speaker_role != 'interviewer')
-                AND (word_count IS NULL OR word_count >= ?) {dup_clause}
+                AND (word_count IS NULL OR word_count >= ?) {dataset_clause} {dup_clause}
                 ORDER BY segment_id""",
             params,
         ).fetchall()
     segment_ids = [r["segment_id"] for r in rows]
     texts = [r["text"] for r in rows]
-    return segment_ids, texts, run_id
+    return segment_ids, texts, run_id, excluded_datasets
 
 
 def fit_vectorizer(texts):
@@ -161,7 +177,7 @@ def fit_vectorizer(texts):
 def build_labels(theme_id, segment_ids):
     """0/1 label per segment_id: 1 if it has an active code for theme_id (from
     any coder), 0 otherwise. Returns (y, n_pos)."""
-    with coding_store.get_conn() as conn:
+    with schema.get_conn() as conn:
         rows = conn.execute(
             "SELECT DISTINCT segment_id FROM codes WHERE theme_id=? AND deleted_at IS NULL",
             (theme_id,),
@@ -258,16 +274,18 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
         if progress_callback:
             progress_callback(event)
 
-    coding_store.init_db()
-    themes = coding_store.list_themes()
-    if not themes:
+    schema.init_db()
+    theme_list = themes.list_themes()
+    if not theme_list:
         return {"model_version": None, "trained_at": None, "themes_total": 0,
                 "results": [], "error": "No themes in the codebook yet."}
 
     emit({"stage": "corpus"})
-    segment_ids, texts, duplicate_run_id = build_corpus(exclude_duplicates=exclude_duplicates)
+    segment_ids, texts, duplicate_run_id, excluded_dataset_ids = build_corpus(
+        exclude_duplicates=exclude_duplicates
+    )
     if not segment_ids:
-        return {"model_version": None, "trained_at": None, "themes_total": len(themes),
+        return {"model_version": None, "trained_at": None, "themes_total": len(theme_list),
                 "results": [],
                 "error": "No segments in coding.db -- run scripts/build_segments.py first."}
 
@@ -276,11 +294,13 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
 
     model_version = "tfidf_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
-    coding_store.save_model_run_params(model_version, training_params(duplicate_run_id), trained_at)
+    activity_log.save_model_run_params(
+        model_version, training_params(duplicate_run_id, excluded_dataset_ids), trained_at
+    )
 
     results = []
-    for i, theme in enumerate(themes):
-        emit({"stage": "theme_start", "index": i, "total": len(themes),
+    for i, theme in enumerate(theme_list):
+        emit({"stage": "theme_start", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"]})
         y, n_pos = build_labels(theme["theme_id"], segment_ids)
 
@@ -290,25 +310,25 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
                 "theme_id": theme["theme_id"], "name": theme["name"],
                 "status": "skipped_insufficient_positives", "n_pos": n_pos, "metrics": None,
             })
-            emit({"stage": "theme_skipped", "index": i, "total": len(themes),
+            emit({"stage": "theme_skipped", "index": i, "total": len(theme_list),
                   "theme_id": theme["theme_id"], "name": theme["name"], "n_pos": n_pos})
             continue
 
         metrics, model = trained
-        coding_store.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
+        model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
 
         scores = model.predict_proba(X)[:, 1]
-        coding_store.save_predictions(model_version, theme["theme_id"], segment_ids, scores)
+        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores)
 
         top_pos, top_neg = top_terms(model, vectorizer)
-        coding_store.save_top_terms(model_version, theme["theme_id"], top_pos, top_neg)
+        model_runs.save_top_terms(model_version, theme["theme_id"], top_pos, top_neg)
 
         results.append({
             "theme_id": theme["theme_id"], "name": theme["name"],
             "status": "trained", "n_pos": n_pos, "metrics": metrics,
         })
-        emit({"stage": "theme_done", "index": i, "total": len(themes),
+        emit({"stage": "theme_done", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"], "metrics": metrics})
 
     return {"model_version": model_version, "trained_at": trained_at,
-            "themes_total": len(themes), "results": results, "error": None}
+            "themes_total": len(theme_list), "results": results, "error": None}

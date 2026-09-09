@@ -4,7 +4,8 @@
 //
 // Shares app.js's `state` (for "View in Coding" dataset/interview navigation)
 // and coding.js's `codingState` (for the pendingFocusSegmentId hook), and
-// reuses `escapeHtml`/`switchTab` from app.js. Loaded after coding.js.
+// reuses `escapeHtml`/`switchTab`/`pollBackgroundJob` from app.js. Loaded after
+// coding.js.
 
 const modelState = {
   themes: [],
@@ -185,7 +186,7 @@ function renderExemplars(exemplars) {
       codedBadge +
       `</div>` +
       `<div class="exemplar-text">${escapeHtml(ex.text)}</div>` +
-      `<button class="btn-secondary exemplar-view-btn">View in Coding</button>`;
+      `<button class="btn-secondary exemplar-view-btn">View in Code</button>`;
     div.querySelector(".exemplar-view-btn").addEventListener("click", () => viewExemplarInCoding(ex));
     container.appendChild(div);
   });
@@ -223,32 +224,29 @@ async function startTraining() {
 }
 
 function pollTrainJob() {
-  clearTimeout(modelState.trainPollTimer);
-  modelState.trainPollTimer = setTimeout(async () => {
-    const res = await fetch(`/api/model/train_status?job_id=${encodeURIComponent(modelState.trainJobId)}`);
-    const job = await res.json();
-    const statusEl = document.getElementById("modelTrainStatus");
-
-    if (job.status === "running") {
-      const themeText = job.current_theme ? `: ${job.current_theme.name}` : "";
-      statusEl.textContent = `Training theme ${job.themes_done}/${job.themes_total}${themeText}…`;
-      pollTrainJob();
-      return;
-    }
-
-    document.getElementById("trainModelsBtn").disabled = false;
-
-    if (job.status === "done") {
-      const nTrained = job.trained.length;
-      const nSkipped = job.skipped.length;
-      statusEl.textContent = `Done — ${nTrained} theme(s) trained, ${nSkipped} skipped (not enough codes yet).`;
-      loadModelThemes().then(() => {
-        if (modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId);
-      });
-    } else if (job.status === "error") {
-      statusEl.textContent = "Error: " + job.error;
-    }
-  }, 1000);
+  modelState.trainPollTimer?.cancel();
+  modelState.trainPollTimer = pollBackgroundJob(
+    `/api/model/train_status?job_id=${encodeURIComponent(modelState.trainJobId)}`,
+    {
+      onRunning: (job) => {
+        const themeText = job.current_theme ? `: ${job.current_theme.name}` : "";
+        document.getElementById("modelTrainStatus").textContent =
+          `Training theme ${job.themes_done}/${job.themes_total}${themeText}…`;
+      },
+      onDone: (job) => {
+        document.getElementById("trainModelsBtn").disabled = false;
+        document.getElementById("modelTrainStatus").textContent =
+          `Done — ${job.trained.length} theme(s) trained, ${job.skipped.length} skipped (not enough codes yet).`;
+        loadModelThemes().then(() => {
+          if (modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId);
+        });
+      },
+      onError: (job) => {
+        document.getElementById("trainModelsBtn").disabled = false;
+        document.getElementById("modelTrainStatus").textContent = "Error: " + job.error;
+      },
+    },
+  );
 }
 
 // --- Events / init --------------------------------------------------------------------

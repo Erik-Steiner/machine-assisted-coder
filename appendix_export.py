@@ -1,4 +1,4 @@
-"""Renders the Web Appendix tab's activity feed (coding_store.get_appendix_feed())
+"""Renders the Web Appendix tab's activity feed (coding_store.activity_log.get_appendix_feed())
 into one self-contained HTML file: no external CSS/JS/fonts, so it opens
 correctly from disk with no server running. A researcher gets a PDF for free
 via the browser's own "Print to PDF" on the rendered page -- no PDF library

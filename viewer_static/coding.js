@@ -9,6 +9,7 @@
 const codingState = {
   themes: [], // active themes: [{theme_id, name, description, color, code_count}]
   modelRuns: {}, // {theme_id: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at}}
+  datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
   segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text, theme_ids}]
   focusIndex: -1,
@@ -189,6 +190,78 @@ async function archiveTheme(themeId) {
   if (!confirm(`Archive "${theme.name}"? Existing codes are kept, but it won't be offered for new coding.`)) return;
   await fetch(`/api/codebook/themes/${encodeURIComponent(themeId)}/archive`, { method: "POST" });
   await loadThemes();
+}
+
+// --- Datasets (whole-corpus include/exclude/unload) ------------------------------------
+
+const DATASET_STATUS_LABELS = {
+  active: "Active",
+  excluded: "Excluded from analysis",
+  unloaded: "Unloaded",
+};
+
+async function loadDatasetStatuses() {
+  const res = await fetch("/api/datasets/all");
+  codingState.datasets = await res.json();
+  renderDatasetsPanel();
+}
+
+function renderDatasetsPanel() {
+  const container = document.getElementById("datasetsList");
+  container.innerHTML = "";
+  if (!codingState.datasets.length) {
+    container.innerHTML = '<div class="hint">No datasets yet — import or search one in Search / Import.</div>';
+    return;
+  }
+  codingState.datasets.forEach((d) => {
+    container.appendChild(renderDatasetRow(d));
+  });
+}
+
+function renderDatasetRow(d) {
+  const row = document.createElement("div");
+  row.className = "dataset-row";
+  row.dataset.datasetId = d.id;
+  const statusLabel = DATASET_STATUS_LABELS[d.status] || d.status;
+  let actionsHtml;
+  if (d.status === "active") {
+    actionsHtml =
+      `<button class="btn-secondary dataset-exclude-btn" data-id="${escapeHtml(d.id)}">Exclude from analysis</button>` +
+      `<button class="btn-secondary dataset-unload-btn" data-id="${escapeHtml(d.id)}">Unload…</button>`;
+  } else if (d.status === "excluded") {
+    actionsHtml =
+      `<button class="btn-secondary dataset-restore-btn" data-id="${escapeHtml(d.id)}">Include in analysis</button>` +
+      `<button class="btn-secondary dataset-unload-btn" data-id="${escapeHtml(d.id)}">Unload…</button>`;
+  } else {
+    actionsHtml = `<button class="btn-secondary dataset-restore-btn" data-id="${escapeHtml(d.id)}">Restore</button>`;
+  }
+  row.innerHTML =
+    `<div class="dataset-row-main">` +
+    `<span class="dataset-row-label">${escapeHtml(d.label)}</span>` +
+    `<span class="dataset-row-count">${d.count} interview(s)</span>` +
+    `<span class="dataset-status-badge dataset-status-${escapeHtml(d.status)}">${escapeHtml(statusLabel)}</span>` +
+    `<span class="dataset-row-actions">${actionsHtml}</span>` +
+    `</div>`;
+  return row;
+}
+
+async function setDatasetStatus(datasetId, status) {
+  await fetch("/api/datasets/status", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dataset_id: datasetId, status }),
+  });
+  await loadDatasetStatuses();
+  await refreshDatasetList(); // app.js -- keeps the topbar selector in sync
+}
+
+async function unloadDataset(datasetId) {
+  const d = codingState.datasets.find((x) => x.id === datasetId);
+  if (!d) return;
+  if (!confirm(
+    `Unload "${d.label}"? It'll disappear from Browse, Code, and Analyze until you restore it from this panel.`
+  )) return;
+  await setDatasetStatus(datasetId, "unloaded");
 }
 
 // --- Shared segment-chip rendering + code API (reused by review.js) -------------------
@@ -426,6 +499,9 @@ function bindCodingEvents() {
   document.getElementById("toggleCodebook").addEventListener("click", () => {
     document.getElementById("codebookPanel").classList.toggle("hidden");
   });
+  document.getElementById("toggleDatasets").addEventListener("click", () => {
+    document.getElementById("datasetsPanel").classList.toggle("hidden");
+  });
   document.getElementById("codingMinWords").addEventListener("input", (e) => {
     codingState.minWords = Number(e.target.value) || 0;
     if (codingState.focusIndex >= 0 && (codingState.segments[codingState.focusIndex].word_count || 0) < codingState.minWords) {
@@ -466,6 +542,16 @@ function bindCodingEvents() {
     }
   });
 
+  document.getElementById("datasetsList").addEventListener("click", (e) => {
+    if (e.target.classList.contains("dataset-exclude-btn")) {
+      setDatasetStatus(e.target.dataset.id, "excluded");
+    } else if (e.target.classList.contains("dataset-restore-btn")) {
+      setDatasetStatus(e.target.dataset.id, "active");
+    } else if (e.target.classList.contains("dataset-unload-btn")) {
+      unloadDataset(e.target.dataset.id);
+    }
+  });
+
   document.addEventListener("keydown", (e) => {
     if (document.body.dataset.tab !== "coding") return;
     const tag = document.activeElement.tagName;
@@ -492,6 +578,7 @@ function bindCodingEvents() {
 async function initCoding() {
   bindCodingEvents();
   await loadThemes();
+  await loadDatasetStatuses();
 }
 
 initCoding();

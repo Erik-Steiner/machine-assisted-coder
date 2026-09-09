@@ -8,7 +8,7 @@ comparable clusters exist for other frequently-covered speakers too.
 Mark-only: this script never deletes, hides, or archives a queries/*.json
 record, and never touches codes. It writes detected clusters to coding.db
 (duplicate_runs/duplicate_clusters/duplicate_cluster_items -- see
-coding_store.py's schema), which classifier.py's build_corpus() then
+coding_store/schema.py's schema), which classifier.py's build_corpus() then
 consults by default to exclude non-canonical duplicates' segments from the
 training corpus -- protecting against skewed term weighting, inflated
 apparent label support, and cross-validation leakage from replicated
@@ -46,8 +46,8 @@ sys.path.insert(0, str(HERE))
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-import coding_store
 import query_api
+from coding_store import activity_log, duplicates, schema
 from paths import QUERIES_DIR
 
 WINDOW_DAYS_DEFAULT = 3
@@ -257,10 +257,10 @@ def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(errors="replace")
 
-    coding_store.init_db()
+    schema.init_db()
 
     if args.promote_canonical:
-        run_id = coding_store.get_latest_duplicate_run_id()
+        run_id = duplicates.get_latest_duplicate_run_id()
         if run_id is None:
             print("No duplicate detection run exists yet -- run this script without --promote-canonical first.")
             sys.exit(1)
@@ -270,7 +270,7 @@ def main():
                 sys.exit(1)
             dataset_id, item_id = spec.split(":", 1)
             try:
-                coding_store.set_duplicate_cluster_canonical(run_id, dataset_id, item_id)
+                duplicates.set_duplicate_cluster_canonical(run_id, dataset_id, item_id)
                 print(f"{dataset_id}:{item_id} is now the canonical member of its cluster in run {run_id}.")
             except ValueError as exc:
                 print(f"skip {spec}: {exc}")
@@ -312,7 +312,7 @@ def main():
         (items[idx]["dataset_id"], items[idx]["item_id"])
         for members in clusters.values() for idx in members
     ]
-    coded_counts = coding_store.get_active_code_counts(all_pairs)
+    coded_counts = duplicates.get_active_code_counts(all_pairs)
 
     run_id = f"dup_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
     created_at = datetime.now(timezone.utc).isoformat()
@@ -401,8 +401,8 @@ def main():
         "ngram_range": list(NGRAM_RANGE), "min_df": MIN_DF, "stop_words": STOP_WORDS,
         "shingle_size": SHINGLE_SIZE, "n_items_scanned": len(items),
     }
-    coding_store.save_duplicate_run(run_id, created_at, "tfidf_cosine_v1", params, cluster_rows)
-    coding_store.log_activity(coding_store.DEFAULT_CODER, "duplicate_detection_run", {
+    duplicates.save_duplicate_run(run_id, created_at, "tfidf_cosine_v1", params, cluster_rows)
+    activity_log.log_activity(schema.DEFAULT_CODER, "duplicate_detection_run", {
         "run_id": run_id, "n_items_scanned": len(items), "n_clusters": len(cluster_rows),
         "needs_attention": needs_attention_total,
     })
