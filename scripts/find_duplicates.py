@@ -234,77 +234,50 @@ def select_canonical(items, member_idxs, coded_counts):
     return canonical, "tiebreak_id", None
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("dataset_ids", nargs="*",
-                         help="restrict to these dataset ids (default: every dataset in queries/_index.json)")
-    parser.add_argument("--window-days", type=int, default=WINDOW_DAYS_DEFAULT,
-                         help=f"same-person blocking window in days (default {WINDOW_DAYS_DEFAULT})")
-    parser.add_argument("--threshold", type=float, default=THRESHOLD_DEFAULT,
-                         help=f"TF-IDF cosine similarity threshold to cluster a pair (default {THRESHOLD_DEFAULT})")
-    parser.add_argument("--promote-canonical", action="append", default=[], metavar="dataset_id:item_id",
-                         help="make this item the canonical member of its cluster in the latest run "
-                              "(repeatable); skips detection entirely")
-    parser.add_argument("--verbose", action="store_true",
-                         help="also print rejected same-block candidate pairs and their scores")
-    args = parser.parse_args()
+def run_duplicate_scan(dataset_ids=None, window_days=WINDOW_DAYS_DEFAULT,
+                        threshold=THRESHOLD_DEFAULT, progress_callback=None, actor=None):
+    """One full near-duplicate scan: load candidate items, fit one shared
+    item-level TF-IDF vectorizer, block+cluster them, and persist the result
+    as a new duplicate_runs row. progress_callback(event) fires at each stage
+    transition (loading, vectorizing, clustering, cluster_done per cluster) so
+    a caller -- this module's CLI, or a web background job -- can report live
+    progress without duplicating this function. Mirrors
+    classifier.run_training_pass()'s progress_callback shape.
 
-    # source_name/item_title values in queries/*.json can contain characters
-    # outside Windows' default console codepage (cp1252) -- printing one
-    # would otherwise crash this report outright, especially when stdout is
-    # redirected to a file rather than a real terminal. Best-effort report:
-    # replace what can't be displayed rather than lose the whole run.
-    if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(errors="replace")
+    actor defaults to schema.DEFAULT_CODER if not given (the CLI's caller).
+
+    Returns {run_id, n_items_scanned, n_datasets, clusters: [cluster_row, ...],
+    needs_attention_total, coded_flagged_total, params} -- run_id is None only
+    when there was nothing to scan (empty items), in which case clusters is [].
+    """
+    def emit(event):
+        if progress_callback:
+            progress_callback(event)
 
     schema.init_db()
 
-    if args.promote_canonical:
-        run_id = duplicates.get_latest_duplicate_run_id()
-        if run_id is None:
-            print("No duplicate detection run exists yet -- run this script without --promote-canonical first.")
-            sys.exit(1)
-        for spec in args.promote_canonical:
-            if ":" not in spec:
-                print(f"--promote-canonical expects dataset_id:item_id, got {spec!r}")
-                sys.exit(1)
-            dataset_id, item_id = spec.split(":", 1)
-            try:
-                duplicates.set_duplicate_cluster_canonical(run_id, dataset_id, item_id)
-                print(f"{dataset_id}:{item_id} is now the canonical member of its cluster in run {run_id}.")
-            except ValueError as exc:
-                print(f"skip {spec}: {exc}")
-        return
-
-    print("Scanning items...")
-    items = load_items(args.dataset_ids)
+    emit({"stage": "loading"})
+    items = load_items(dataset_ids)
     if not items:
-        print("No scannable items found.")
-        return
+        return {
+            "run_id": None, "n_items_scanned": 0, "n_datasets": 0, "clusters": [],
+            "needs_attention_total": 0, "coded_flagged_total": 0, "params": None,
+            "items": [], "scored_pairs": [],
+        }
     n_datasets = len({it["dataset_id"] for it in items})
-    print(f"{len(items)} scannable item(s) across {n_datasets} dataset(s).")
+    emit({"stage": "loaded", "n_items_scanned": len(items), "n_datasets": n_datasets})
 
-    print(f"Fitting item-level TF-IDF (ngram {NGRAM_RANGE}, min_df={MIN_DF})...")
+    emit({"stage": "vectorizing", "n_items": len(items)})
     vectorizer = TfidfVectorizer(ngram_range=NGRAM_RANGE, stop_words=STOP_WORDS, min_df=MIN_DF)
     X = vectorizer.fit_transform([it["transcript_text"] for it in items])
 
     def sim(i, j):
         return float(cosine_similarity(X[i], X[j])[0, 0])
 
-    pairs = find_candidate_pairs(items, args.window_days)
-    print(f"{len(pairs)} candidate pair(s) within a {args.window_days}-day window per person_name.")
+    pairs = find_candidate_pairs(items, window_days)
 
-    clusters, scored = build_clusters(items, pairs, sim, args.threshold)
-    print(f"\nFound {len(clusters)} cluster(s) (>=2 items) across {len(items)} items.\n")
-
-    if args.verbose:
-        rejected = sorted((s for s in scored if s[2] < args.threshold), key=lambda s: -s[2])
-        if rejected:
-            print(f"-- {len(rejected)} rejected candidate pair(s) below threshold (top 50 by score) --")
-            for i, j, s in rejected[:50]:
-                print(f"  {items[i]['dataset_id']}:{items[i]['item_id']} <-> "
-                      f"{items[j]['dataset_id']}:{items[j]['item_id']}  sim={s:.3f}")
-            print()
+    emit({"stage": "clustering", "n_candidate_pairs": len(pairs)})
+    clusters, scored = build_clusters(items, pairs, sim, threshold)
 
     shingles = [word_shingles(it["transcript_text"]) for it in items]
 
@@ -357,7 +330,7 @@ def main():
                 cluster_coded_flagged += 1
 
         needs_attention = conflict_flag
-        if needs_attention is None and min_sim < args.threshold:
+        if needs_attention is None and min_sim < threshold:
             needs_attention = "low_cohesion"
         if needs_attention is None and cluster_coded_flagged:
             needs_attention = "coded_non_canonical"
@@ -365,7 +338,7 @@ def main():
             needs_attention_total += 1
         coded_flagged_total += cluster_coded_flagged
 
-        cluster_rows.append({
+        cluster_row = {
             "cluster_id": cluster_id,
             "person_name": items[member_idxs[0]]["person_name"],
             "size": len(member_idxs),
@@ -376,41 +349,125 @@ def main():
             "canonical_reason": reason,
             "needs_attention": needs_attention,
             "members": member_rows,
-        })
-
-        dates = sorted(items[idx]["publish_date"] for idx in member_idxs)
-        print(f"[{items[member_idxs[0]]['person_name']}] cluster {cluster_id} of {len(member_idxs)}, "
-              f"{dates[0].isoformat()} to {dates[-1].isoformat()} "
-              f"(min/mean pairwise sim: {min_sim:.2f}/{mean_sim:.2f})")
-        canon_it = items[canonical_idx]
-        print(f"  canonical: {canon_it['dataset_id']}:{canon_it['item_id']} "
-              f"({canon_it['source_name'] or '?'}, {canon_it['word_count']}w, reason={reason})")
-        for m in member_rows:
-            if m["is_canonical"]:
-                continue
-            coded_n = coded_counts.get((m["dataset_id"], m["item_id"]))
-            coded_note = f"  [{coded_n} active code(s)]" if coded_n else ""
-            print(f"    {m['dataset_id']}:{m['item_id']}  {(m['source_name'] or '?'):<24} "
-                  f"{m['word_count']}w  sim={m['similarity_to_canonical']:.3f}{coded_note}")
-        if needs_attention:
-            print(f"  NEEDS ATTENTION: {needs_attention}")
-        print()
+        }
+        cluster_rows.append(cluster_row)
+        emit({"stage": "cluster_done", "index": cluster_id, "total": len(sorted_roots), "cluster": cluster_row})
 
     params = {
-        "window_days": args.window_days, "threshold": args.threshold,
+        "window_days": window_days, "threshold": threshold,
         "ngram_range": list(NGRAM_RANGE), "min_df": MIN_DF, "stop_words": STOP_WORDS,
         "shingle_size": SHINGLE_SIZE, "n_items_scanned": len(items),
     }
     duplicates.save_duplicate_run(run_id, created_at, "tfidf_cosine_v1", params, cluster_rows)
-    activity_log.log_activity(schema.DEFAULT_CODER, "duplicate_detection_run", {
+    activity_log.log_activity(actor or schema.DEFAULT_CODER, "duplicate_detection_run", {
         "run_id": run_id, "n_items_scanned": len(items), "n_clusters": len(cluster_rows),
         "needs_attention": needs_attention_total,
     })
 
-    print(f"{len(cluster_rows)} cluster(s), {needs_attention_total} flagged NEEDS ATTENTION, "
-          f"{coded_flagged_total} non-canonical member(s) with active codes across all clusters.")
-    print(f"Run id: {run_id}")
-    print(f"Query: SELECT * FROM duplicate_clusters WHERE run_id='{run_id}'")
+    return {
+        "run_id": run_id, "n_items_scanned": len(items), "n_datasets": n_datasets,
+        "clusters": cluster_rows, "needs_attention_total": needs_attention_total,
+        "coded_flagged_total": coded_flagged_total, "params": params,
+        # items/scored_pairs: not needed by the web job, only by main()'s --verbose
+        # report below (which pairs, below threshold, would have been rejected).
+        "items": items, "scored_pairs": scored,
+    }
+
+
+def _print_progress(event):
+    stage = event["stage"]
+    if stage == "loading":
+        print("Scanning items...")
+    elif stage == "loaded":
+        print(f"{event['n_items_scanned']} scannable item(s) across {event['n_datasets']} dataset(s).")
+    elif stage == "vectorizing":
+        print(f"Fitting item-level TF-IDF (ngram {NGRAM_RANGE}, min_df={MIN_DF})...")
+    elif stage == "clustering":
+        print(f"{event['n_candidate_pairs']} candidate pair(s) to compare.")
+    elif stage == "cluster_done":
+        c = event["cluster"]
+        members = c["members"]
+        canon = next(m for m in members if m["is_canonical"])
+        dates = sorted(m["publish_date"] or "" for m in members)
+        print(f"[{c['person_name']}] cluster {event['index']} of {event['total']}, size {c['size']}, "
+              f"{dates[0]} to {dates[-1]} "
+              f"(min/mean pairwise sim: {c['min_pairwise_similarity']:.2f}/{c['mean_pairwise_similarity']:.2f})")
+        print(f"  canonical: {canon['dataset_id']}:{canon['item_id']} "
+              f"({canon['source_name'] or '?'}, {canon['word_count']}w, reason={c['canonical_reason']})")
+        for m in members:
+            if m["is_canonical"]:
+                continue
+            print(f"    {m['dataset_id']}:{m['item_id']}  {(m['source_name'] or '?'):<24} "
+                  f"{m['word_count']}w  sim={m['similarity_to_canonical']:.3f}")
+        if c["needs_attention"]:
+            print(f"  NEEDS ATTENTION: {c['needs_attention']}")
+        print()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("dataset_ids", nargs="*",
+                         help="restrict to these dataset ids (default: every dataset in queries/_index.json)")
+    parser.add_argument("--window-days", type=int, default=WINDOW_DAYS_DEFAULT,
+                         help=f"same-person blocking window in days (default {WINDOW_DAYS_DEFAULT})")
+    parser.add_argument("--threshold", type=float, default=THRESHOLD_DEFAULT,
+                         help=f"TF-IDF cosine similarity threshold to cluster a pair (default {THRESHOLD_DEFAULT})")
+    parser.add_argument("--promote-canonical", action="append", default=[], metavar="dataset_id:item_id",
+                         help="make this item the canonical member of its cluster in the latest run "
+                              "(repeatable); skips detection entirely")
+    parser.add_argument("--verbose", action="store_true",
+                         help="also print rejected same-block candidate pairs and their scores")
+    args = parser.parse_args()
+
+    # source_name/item_title values in queries/*.json can contain characters
+    # outside Windows' default console codepage (cp1252) -- printing one
+    # would otherwise crash this report outright, especially when stdout is
+    # redirected to a file rather than a real terminal. Best-effort report:
+    # replace what can't be displayed rather than lose the whole run.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(errors="replace")
+
+    schema.init_db()
+
+    if args.promote_canonical:
+        run_id = duplicates.get_latest_duplicate_run_id()
+        if run_id is None:
+            print("No duplicate detection run exists yet -- run this script without --promote-canonical first.")
+            sys.exit(1)
+        for spec in args.promote_canonical:
+            if ":" not in spec:
+                print(f"--promote-canonical expects dataset_id:item_id, got {spec!r}")
+                sys.exit(1)
+            dataset_id, item_id = spec.split(":", 1)
+            try:
+                duplicates.set_duplicate_cluster_canonical(run_id, dataset_id, item_id)
+                print(f"{dataset_id}:{item_id} is now the canonical member of its cluster in run {run_id}.")
+            except ValueError as exc:
+                print(f"skip {spec}: {exc}")
+        return
+
+    summary = run_duplicate_scan(
+        dataset_ids=args.dataset_ids, window_days=args.window_days,
+        threshold=args.threshold, progress_callback=_print_progress,
+    )
+    if summary["run_id"] is None:
+        print("No scannable items found.")
+        return
+
+    if args.verbose:
+        items, scored = summary["items"], summary["scored_pairs"]
+        rejected = sorted((s for s in scored if s[2] < args.threshold), key=lambda s: -s[2])
+        if rejected:
+            print(f"-- {len(rejected)} rejected candidate pair(s) below threshold (top 50 by score) --")
+            for i, j, s in rejected[:50]:
+                print(f"  {items[i]['dataset_id']}:{items[i]['item_id']} <-> "
+                      f"{items[j]['dataset_id']}:{items[j]['item_id']}  sim={s:.3f}")
+            print()
+
+    print(f"{len(summary['clusters'])} cluster(s), {summary['needs_attention_total']} flagged NEEDS ATTENTION, "
+          f"{summary['coded_flagged_total']} non-canonical member(s) with active codes across all clusters.")
+    print(f"Run id: {summary['run_id']}")
+    print(f"Query: SELECT * FROM duplicate_clusters WHERE run_id='{summary['run_id']}'")
     print("\nscripts/train_classifiers.py will now exclude non-canonical duplicates' segments "
           "from training by default. Pass --include-duplicates to opt out for one run.")
 

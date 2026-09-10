@@ -2,7 +2,7 @@
 transcripts, Reddit/forum threads, or other researcher-supplied text --
 see IMPORTING_DATA.md).
 
-Six tabs, one server:
+Seven tabs, one server:
 
   Browse tab       — reads whichever dataset is selected and lets you page
                       through it. Every dataset lives in queries/, one JSON +
@@ -51,6 +51,10 @@ Six tabs, one server:
                       model top-scores for them but that aren't coded yet.
                       Recode actions are tagged source='recoded' so they're
                       distinguishable later from first-pass manual coding.
+  Analytics         — read-only corpus-level scale/density stats
+                      (corpus_analytics.py) over the exact same segment set
+                      classifier.py trains on, plus a metadata breakdown and
+                      vocabulary-overlap view. No schema of its own.
   Web Appendix      — a chronological log of research actions (theme CRUD,
                       training runs with their hyperparameters, downloads,
                       codebook exports, and Browse filter snapshots taken at
@@ -101,6 +105,14 @@ Endpoints:
     GET  /api/coding/segments?item_id=<id>           -> ordered segments + their codes
     POST /api/coding/codes                           -> apply a code to a segment
     POST /api/coding/codes/delete                    -> remove a code from a segment
+    POST /api/coding/segment_datasets                -> {dataset_ids?: [...]} -> kick off a background
+                                                         job that segments the given datasets into
+                                                         coding.db (or, if dataset_ids is omitted, every
+                                                         dataset with zero segments so far) -- the in-app
+                                                         equivalent of scripts/build_segments.py, except
+                                                         it can also reach "primary"/"demo" (see
+                                                         segment_new_dataset()/run_segment_job())
+    GET  /api/coding/segment_status?job_id=..        -> poll a segment_datasets job's progress/result
     GET  /api/coding/progress?dataset=<id>           -> coding counts by theme/group
     GET  /api/coding/model_runs                      -> latest classifier metrics per theme
     GET  /api/coding/model_runs?theme_id=<id>        -> full model_runs history for one theme
@@ -173,6 +185,11 @@ Endpoints:
                                                          into that dataset instead of creating a new one (see
                                                          query_api.append_to_dataset())
 
+    POST /api/duplicates/scan                         -> {dataset_ids?: [...]} -> kick off a background
+                                                         near-duplicate detection run (or, if dataset_ids
+                                                         is omitted, every dataset in queries/_index.json)
+                                                         -- the in-app equivalent of scripts/find_duplicates.py
+    GET  /api/duplicates/scan_status?job_id=..        -> poll a duplicates/scan job's progress/result
     GET  /api/duplicates/status?dataset=<id>          -> {item_id: {kind: "duplicate", is_canonical,
                                                          canonical_dataset_id, canonical_item_id, size,
                                                          needs_attention, source: "auto"|"manual"}
@@ -227,6 +244,7 @@ import os
 import sys
 import threading
 import uuid
+import webbrowser
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -249,6 +267,7 @@ from coding_store import (
 import paths as project_paths
 import project_registry
 import query_api
+import scripts.find_duplicates as duplicate_scanner
 import scripts.import_interview_transcript as interview_importer
 import scripts.import_reddit as reddit_importer
 import segmentation
@@ -420,6 +439,7 @@ def _all_datasets():
         })
     for d in out:
         d["status"] = statuses.get(d["id"], {}).get("status", "active")
+        d["segment_count"] = segments_store.count_segments(dataset_id=d["id"])
     return out
 
 
@@ -547,6 +567,102 @@ def run_train_job(job_id, registry):
         "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
         "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
     })
+
+
+# --- Background segmentation jobs (Coding tab's Datasets panel) ---------------------
+#
+# The in-app equivalent of scripts/build_segments.py -- but that script only reads
+# queries/_index.json, so it can never reach "primary"/"demo" (they're loaded straight
+# from DATA_FILE/DEMO_FILE at startup, never registered there). This is also why it
+# can't reuse get_dataset(dataset_id)["by_id"].values(): build_dataset() already pops
+# "turns" off every cached record (not used by the viewer), so segmentation.
+# segment_interview() -- which needs turns -- would silently produce zero segments.
+# Records have to be read fresh from disk per dataset kind instead, same three sources
+# list_datasets()/build_dataset() already know about.
+
+SEGMENT_JOBS = JobRegistry()
+
+
+def _load_dataset_records_with_turns(dataset_id):
+    """Like get_dataset(), but returns the raw records straight off disk -- with
+    `turns` intact -- instead of the cached, turns-stripped copies get_dataset()
+    hands every other caller. Returns None if the dataset can't be found or read."""
+    if dataset_id == "primary":
+        path = DATA_FILE
+    elif dataset_id == "demo":
+        path = DEMO_FILE
+    else:
+        entry = next((e for e in load_query_registry() if e["id"] == dataset_id), None)
+        if entry is None:
+            return None
+        path = QUERIES_DIR / entry["json_file"]
+    if not path.exists():
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            records = json.load(f)
+        query_api.validate_dataset_records(records, path.name)
+    except (json.JSONDecodeError, query_api.DatasetValidationError) as exc:
+        print(f"Dataset '{dataset_id}' failed to load for segmenting: {exc}")
+        return None
+    return records
+
+
+def run_segment_job(job_id, registry, dataset_ids):
+    """Segments every dataset in dataset_ids into coding.db (segment_new_dataset()'s
+    upsert is idempotent, so re-running this on an already-segmented dataset is safe
+    and just a no-op refresh). dataset_ids=None means every dataset list_datasets()
+    currently reports zero segments for -- the "close the gap" default a plain
+    "Segment everything" button uses."""
+    if not dataset_ids:
+        dataset_ids = [d["id"] for d in list_datasets() if d["segment_count"] == 0]
+
+    registry.update(job_id, datasets_total=len(dataset_ids))
+
+    results = []
+    for i, dataset_id in enumerate(dataset_ids):
+        registry.mutate(job_id, lambda job: job.update(current_dataset=dataset_id, datasets_done=i))
+        records = _load_dataset_records_with_turns(dataset_id)
+        if records is None:
+            results.append({"dataset_id": dataset_id, "status": "skipped", "reason": "couldn't read dataset"})
+            continue
+        segments_added = segment_new_dataset(records, dataset_id)
+        results.append({"dataset_id": dataset_id, "status": "done", "segments_added": segments_added})
+
+    total_segments = sum(r.get("segments_added", 0) for r in results)
+    registry.update(
+        job_id, status="done", datasets_done=len(dataset_ids), current_dataset=None,
+        results=results, segments_added_total=total_segments,
+    )
+    activity_log.log_activity(CODER_NAME, "segments_built", {
+        "dataset_ids": dataset_ids, "segments_added_total": total_segments,
+    })
+
+
+# --- Background duplicate-scan jobs (Coding tab's Datasets panel) -------------------
+
+DUPLICATE_JOBS = JobRegistry()
+
+
+def run_duplicate_job(job_id, registry, dataset_ids):
+    def on_progress(event):
+        stage = event["stage"]
+        if stage == "loaded":
+            registry.update(job_id, n_items_scanned=event["n_items_scanned"], n_datasets=event["n_datasets"])
+        elif stage == "clustering":
+            registry.update(job_id, n_candidate_pairs=event["n_candidate_pairs"])
+        elif stage == "cluster_done":
+            registry.update(job_id, clusters_done=event["index"], clusters_total=event["total"])
+
+    summary = duplicate_scanner.run_duplicate_scan(
+        dataset_ids=dataset_ids, progress_callback=on_progress, actor=CODER_NAME,
+    )
+    registry.update(
+        job_id, status="done", run_id=summary["run_id"],
+        n_items_scanned=summary["n_items_scanned"], n_clusters=len(summary["clusters"]),
+        needs_attention_total=summary["needs_attention_total"],
+        coded_flagged_total=summary["coded_flagged_total"],
+    )
 
 
 # --- Import (Search & Export tab's Import panel) -------------------------------------
@@ -971,6 +1087,25 @@ def post_coding_codes_delete(req):
     return JsonResponse({"ok": True})
 
 
+@ROUTER.post("/api/coding/segment_datasets", json_body="optional")
+def post_coding_segment_datasets(req):
+    dataset_ids = req.body.get("dataset_ids") or None
+    job_id = SEGMENT_JOBS.start(
+        {"datasets_total": 0, "datasets_done": 0, "current_dataset": None,
+         "results": [], "segments_added_total": 0},
+        run_segment_job, dataset_ids,
+    )
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/coding/segment_status")
+def get_coding_segment_status(req):
+    job = SEGMENT_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
 @ROUTER.get("/api/coding/progress")
 def get_coding_progress(req):
     return JsonResponse(review.get_progress(dataset_id=req.query.get("dataset")))
@@ -1346,6 +1481,25 @@ def get_duplicates_status(req):
     return JsonResponse(duplicates.get_duplicate_status_for_dataset(dataset_id))
 
 
+@ROUTER.post("/api/duplicates/scan", json_body="optional")
+def post_duplicates_scan(req):
+    dataset_ids = req.body.get("dataset_ids") or None
+    job_id = DUPLICATE_JOBS.start(
+        {"n_items_scanned": 0, "n_datasets": 0, "n_candidate_pairs": 0,
+         "clusters_done": 0, "clusters_total": 0, "run_id": None},
+        run_duplicate_job, dataset_ids,
+    )
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/duplicates/scan_status")
+def get_duplicates_scan_status(req):
+    job = DUPLICATE_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
 @ROUTER.post("/api/duplicates/override", json_body=True)
 def post_duplicates_override(req):
     body = req.body
@@ -1463,10 +1617,46 @@ class Handler(BaseHTTPRequestHandler):
         pass  # keep the console quiet
 
 
+MAX_PORT_ATTEMPTS = 5  # tried in order: the requested port, then the next 4 -- lets
+                        # start.bat's launch just work if a prior run's server (or
+                        # anything else) is still holding the default port, instead
+                        # of crashing with an unexplained address-in-use error.
+
+# HTTPServer (and so ThreadingHTTPServer) sets allow_reuse_address = True by default,
+# which sets SO_REUSEADDR on the listening socket. On Windows, unlike Linux, that
+# flag lets a second process bind onto a port another process is still actively
+# LISTENING on -- confirmed on this machine: with it left at the default, the retry
+# loop below never saw an OSError at all when the port was already taken, it just
+# silently bound "successfully" alongside the other listener, and which process
+# actually received a given connection was undefined. Disabling it is what makes an
+# occupied port actually raise OSError, which is the whole point of the loop below.
+ThreadingHTTPServer.allow_reuse_address = False
+
+
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    requested_port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
+
+    server = None
+    tried = []
+    for port in range(requested_port, requested_port + MAX_PORT_ATTEMPTS):
+        tried.append(port)
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+            break
+        except OSError:
+            continue
+
+    if server is None:
+        print(
+            f"Couldn't bind to any port in {tried[0]}-{tried[-1]} -- "
+            f"something else on this machine is already using all of them. "
+            f"Close whatever that is, or run with an explicit free port: "
+            f"python viewer_server.py <port>"
+        )
+        sys.exit(1)
+
     print(f"Serving at http://127.0.0.1:{port}/  (Ctrl+C to stop)")
+    webbrowser.open(f"http://127.0.0.1:{port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

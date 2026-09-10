@@ -50,6 +50,8 @@ schema, not something to rename.
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
+| Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
+| App setup / installer                   | `install.bat`, `start.bat`, `viewer_server.py`'s `main()` (port retry, `webbrowser.open()`) |
 | Any endpoint                            | `viewer_server.py`'s module docstring — it's the complete, authoritative endpoint list |
 
 ## Hard rules
@@ -103,6 +105,21 @@ schema, not something to rename.
     as active. "Which project is active" is always per-process state
     (`viewer_server.CURRENT_PROJECT_DIR`); the registry only ever holds the shared *list* of
     known project folders. This was a real bug caught during development, not a hypothetical.
+11. **Never exercise, verify, smoke-test, or otherwise write through the app against the
+    default project (this repo's own root) or any project a researcher has actually opened —
+    not even a read-only-looking check, and not even "just this once" while verifying something
+    else.** The researcher's real `coding.db`/`queries/` hold irreplaceable research data,
+    per rule 6. Set `PROJECT_DIR` to a dedicated test project before starting
+    `viewer_server.py` for any of that — `%LOCALAPPDATA%\InterviewViewer\test-project` on
+    Windows is this repo's standing convention for it (create it if it doesn't exist yet; safe
+    to reuse and to leave test data in, since nothing there is real). A throwaway temp
+    directory is an acceptable substitute for a single one-off check, but prefer the standing
+    test project so test runs stay easy to find and audit later. This applies to every agent
+    working in this repo, not just the one that originally wrote a given feature — say so
+    explicitly in any task handed to a subagent, since a subagent scoped to "verify your own
+    change" has no way to know this rule unless told. This was a real incident, not a
+    hypothetical: a subagent verifying unrelated work once wrote test themes (create/archive/
+    merge) straight into the researcher's real `coding.db` because nobody had told it not to.
 
 ## Conventions worth matching
 

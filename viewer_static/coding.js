@@ -235,14 +235,115 @@ function renderDatasetRow(d) {
   } else {
     actionsHtml = `<button class="btn-secondary dataset-restore-btn" data-id="${escapeHtml(d.id)}">Restore</button>`;
   }
+  const segmentHtml = d.segment_count > 0
+    ? `<span class="dataset-row-segments">${d.segment_count} segment(s)</span>`
+    : `<span class="dataset-row-segments dataset-row-unsegmented">not segmented</span>` +
+      `<button class="btn-secondary dataset-segment-btn" data-id="${escapeHtml(d.id)}">Segment</button>`;
   row.innerHTML =
     `<div class="dataset-row-main">` +
     `<span class="dataset-row-label">${escapeHtml(d.label)}</span>` +
     `<span class="dataset-row-count">${d.count} interview(s)</span>` +
+    segmentHtml +
     `<span class="dataset-status-badge dataset-status-${escapeHtml(d.status)}">${escapeHtml(statusLabel)}</span>` +
     `<span class="dataset-row-actions">${actionsHtml}</span>` +
     `</div>`;
   return row;
+}
+
+// --- Segmenting datasets (the in-app equivalent of scripts/build_segments.py) --------
+
+function pollSegmentJob(jobId, statusElId) {
+  const statusEl = document.getElementById(statusElId);
+  document.getElementById("segmentAllBtn").disabled = true;
+  pollBackgroundJob(
+    `/api/coding/segment_status?job_id=${encodeURIComponent(jobId)}`,
+    {
+      onRunning: (job) => {
+        const current = job.current_dataset ? `: ${job.current_dataset}` : "";
+        statusEl.textContent = `Segmenting ${job.datasets_done}/${job.datasets_total}${current}…`;
+      },
+      onDone: (job) => {
+        document.getElementById("segmentAllBtn").disabled = false;
+        statusEl.textContent = `Done — ${job.segments_added_total} segment(s) added across ${job.datasets_done} dataset(s).`;
+        loadDatasetStatuses();
+      },
+      onError: (job) => {
+        document.getElementById("segmentAllBtn").disabled = false;
+        statusEl.textContent = "Error: " + job.error;
+      },
+    },
+  );
+}
+
+async function segmentDatasets(datasetIds) {
+  const statusEl = document.getElementById("segmentJobStatus");
+  statusEl.textContent = "Starting…";
+  const res = await fetch("/api/coding/segment_datasets", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(datasetIds ? { dataset_ids: datasetIds } : {}),
+  });
+  const data = await res.json();
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    return;
+  }
+  pollSegmentJob(data.job_id, "segmentJobStatus");
+}
+
+// --- Scanning for near-duplicate transcripts (the in-app equivalent of
+// scripts/find_duplicates.py) -----------------------------------------------------
+
+async function scanForDuplicates() {
+  const btn = document.getElementById("scanDuplicatesBtn");
+  const statusEl = document.getElementById("duplicateScanStatus");
+  btn.disabled = true;
+  statusEl.textContent = "Starting…";
+
+  let data;
+  try {
+    const res = await fetch("/api/duplicates/scan", { method: "POST" });
+    data = await res.json();
+  } catch (err) {
+    statusEl.textContent = "Request failed — is the server running?";
+    btn.disabled = false;
+    return;
+  }
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    btn.disabled = false;
+    return;
+  }
+
+  pollBackgroundJob(
+    `/api/duplicates/scan_status?job_id=${encodeURIComponent(data.job_id)}`,
+    {
+      onRunning: (job) => {
+        if (job.clusters_total) {
+          statusEl.textContent = `Comparing… cluster ${job.clusters_done}/${job.clusters_total}`;
+        } else if (job.n_items_scanned) {
+          statusEl.textContent = `Comparing ${job.n_items_scanned} item(s) across ${job.n_datasets} dataset(s)…`;
+        } else {
+          statusEl.textContent = "Scanning items…";
+        }
+      },
+      onDone: (job) => {
+        btn.disabled = false;
+        if (!job.run_id) {
+          statusEl.textContent = "Done — no scannable items found (need person_name/publish_date/transcript_text).";
+          return;
+        }
+        statusEl.textContent =
+          `Done — ${job.n_clusters} cluster(s) found across ${job.n_items_scanned} item(s), ` +
+          `${job.needs_attention_total} flagged for review.`;
+        refreshDuplicateStatus(); // app.js -- refreshes the current dataset's duplicate flags
+      },
+      onError: (job) => {
+        btn.disabled = false;
+        statusEl.textContent = "Error: " + job.error;
+      },
+    },
+  );
 }
 
 async function setDatasetStatus(datasetId, status) {
@@ -333,7 +434,7 @@ function renderSegments() {
   const container = document.getElementById("segmentContent");
   container.innerHTML = "";
   if (!codingState.segments.length) {
-    container.innerHTML = "<em>No segments found for this interview — run scripts/build_segments.py to include it.</em>";
+    container.innerHTML = "<em>No segments found for this interview — open <strong>Datasets</strong> above and click <strong>Segment</strong> next to its dataset.</em>";
     return;
   }
   const visible = visibleSegmentIndices();
@@ -549,8 +650,13 @@ function bindCodingEvents() {
       setDatasetStatus(e.target.dataset.id, "active");
     } else if (e.target.classList.contains("dataset-unload-btn")) {
       unloadDataset(e.target.dataset.id);
+    } else if (e.target.classList.contains("dataset-segment-btn")) {
+      segmentDatasets([e.target.dataset.id]);
     }
   });
+
+  document.getElementById("segmentAllBtn").addEventListener("click", () => segmentDatasets(null));
+  document.getElementById("scanDuplicatesBtn").addEventListener("click", scanForDuplicates);
 
   document.addEventListener("keydown", (e) => {
     if (document.body.dataset.tab !== "coding") return;

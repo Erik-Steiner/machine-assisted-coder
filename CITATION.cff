@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software in your research, please cite it as below."
-title: "Executive Interview Viewer"
+title: "Machine Assisted Coder"
 type: software
 authors:
   - family-names: "Steiner"
@@ -8,5 +8,4 @@ authors:
 license: MIT
 version: 0.1.0
 date-released: "2026-08-28"
-# Update this to your repo's actual GitHub URL once published.
-repository-code: "https://github.com/your-username/your-repo-name"
+repository-code: "https://github.com/Erik-Steiner/machine-assisted-coder"

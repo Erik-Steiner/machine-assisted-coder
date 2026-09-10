@@ -321,15 +321,14 @@ The in-app **Import your own data** panels (interview transcript, Reddit/Arctic 
 the dataset into `coding.db` automatically as part of Import -- it's ready for the Coding tab
 immediately, no extra step. Every other path (Search & Export's live download, `download_script.py`,
 or running an import script directly from the command line) only writes to `queries/`; before a
-dataset from one of those shows up in the Coding tab, run:
-
-```
-python scripts/build_segments.py
-```
-
-With no arguments this picks up every dataset currently in `queries/_index.json` (idempotent —
-safe to re-run any time, and harmless to run even on a dataset the in-app panel already
-segmented). See `README.md` for the full setup walkthrough.
+dataset from one of those shows up in the Coding tab, open the Coding tab, expand **Datasets**,
+and click **Segment** next to it (or **Segment everything** to catch every un-segmented dataset
+at once) -- see `viewer_server.py`'s `run_segment_job()`. `python scripts/build_segments.py` does
+the same thing from the command line if you prefer it, with one difference: the in-app button can
+also segment the bundled `demo`/`primary` datasets, which this script structurally cannot reach
+(it only reads `queries/_index.json`, and those two are never registered there). Both are
+idempotent -- safe to re-run any time, and harmless to run on an already-segmented dataset. See
+`README.md` for the full setup walkthrough.
 
 ## Finding near-duplicate interviews
 
@@ -342,6 +341,13 @@ Left alone, this skews `classifier.py`'s training corpus: a near-identical passa
 several "different" items inflates its term weighting and its apparent label support, and can leak
 across cross-validation folds (a duplicate's twin sitting in the "held-out" fold isn't really held
 out).
+
+The easiest way to run a scan: open the Coding tab, expand **Datasets**, and click **Scan for
+duplicates**. It runs the same detection logic as the command line below (`run_duplicate_scan()`
+in `scripts/find_duplicates.py`, shared by both), with a progress bar instead of console output.
+The command line remains available for scripted use, and for `--promote-canonical`, which has no
+in-app button of its own (the in-app "Mark as duplicate"/"Not a duplicate" correction controls
+cover the everyday case):
 
 ```
 python scripts/find_duplicates.py                       # scan every dataset in queries/_index.json

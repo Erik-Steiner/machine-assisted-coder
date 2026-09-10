@@ -152,6 +152,17 @@
       <p class="hint">Decide which corpora are relevant for analysis. "Exclude" keeps a dataset fully
         browsable/codeable but leaves it out of classifier training. "Unload" hides it everywhere
         (Browse, Code, Analyze) without deleting anything -- restorable here any time.</p>
+      <p class="hint">A dataset needs to be segmented before it shows up in Code/Train/Review/Analyze.
+        Search &amp; Export downloads and CLI imports need this step; browser-based imports already
+        did it for you.</p>
+      <div class="export-row">
+        <button id="segmentAllBtn" class="btn-secondary">Segment everything</button>
+        <span id="segmentJobStatus" class="hint"></span>
+      </div>
+      <div class="export-row">
+        <button id="scanDuplicatesBtn" class="btn-secondary">Scan for duplicates</button>
+        <span id="duplicateScanStatus" class="hint"></span>
+      </div>
       <div id="datasetsList"></div>
     </div>
 

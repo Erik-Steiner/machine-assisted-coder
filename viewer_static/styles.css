@@ -775,6 +775,8 @@ button.btn-secondary {
 }
 .dataset-status-excluded { color: #b8863f; border-color: #b8863f; }
 .dataset-status-unloaded { color: var(--text-dim); }
+.dataset-row-segments { color: var(--text-dim); font-size: 12px; flex-shrink: 0; }
+.dataset-row-unsegmented { color: #b8863f; }
 .dataset-row-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .dataset-row-actions button { padding: 3px 8px; font-size: 12px; }
 

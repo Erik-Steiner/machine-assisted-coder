@@ -1,16 +1,17 @@
-# Development and Production Guide: Interview Viewer Dashboard
+# Development and Production Guide: Machine Assisted Coder
 
 ## Purpose
 
 This dashboard shows one record at a time from a large JSON data file. A researcher moves through records in order, filters by metadata, and copies text with a citation tag. This guide explains how the dashboard works. Use it to build the same dashboard for a different dataset.
 
-The app has grown four more tabs since the design below was written -- Coding, Model, Review, and
-Web Appendix, covered in their own sections further down. The core pattern this file describes
-(light index + full detail, no build step, no framework) still applies to Browse/Search &
-Export; Coding/Model/Review/Web Appendix are a separate subsystem layered on top, backed by
-SQLite instead of flat JSON. `viewer_server.py`'s module docstring is the authoritative, complete
-endpoint list for all six tabs -- the numbered list just below is Browse/Search & Export only,
-kept here because this section doubles as the adaptation guide those two tabs are built around.
+The app has grown five more tabs since the design below was written -- Coding, Model, Review,
+Analytics, and Web Appendix, covered in their own sections further down. The core pattern this
+file describes (light index + full detail, no build step, no framework) still applies to
+Browse/Search & Export; Coding/Model/Review/Analytics/Web Appendix are a separate subsystem
+layered on top, backed by SQLite instead of flat JSON. `viewer_server.py`'s module docstring is
+the authoritative, complete endpoint list for all seven tabs -- the numbered list just below is
+Browse/Search & Export only, kept here because this section doubles as the adaptation guide
+those two tabs are built around.
 
 The data model itself is source-agnostic (interview transcripts, Reddit threads, or any other
 speaker-turn text) -- see [IMPORTING_DATA.md](IMPORTING_DATA.md) for the canonical record schema
@@ -78,8 +79,11 @@ This file is the API client for Search & Export: `search_companies`/`search_enti
 `jobs.py`
 A second small seam alongside `routing.py`: `JobRegistry`, the thread-safe `job_id -> status
 dict` registry behind every "kick off a background thread, poll it to completion" flow --
-`viewer_server.py`'s `JOBS` (Search & Export downloads) and `TRAIN_JOBS` (Model training) are
-both instances of it. `start(initial, target, *args)` spawns the worker thread and seeds the
+`viewer_server.py`'s `JOBS` (Search & Export downloads), `TRAIN_JOBS` (Model training),
+`SEGMENT_JOBS` (segmenting a dataset into `coding.db` -- see `run_segment_job()`, the Coding
+tab's Datasets panel), and `DUPLICATE_JOBS` (a near-duplicate scan -- see `run_duplicate_job()`,
+also the Datasets panel) are all instances of it. `start(initial, target, *args)` spawns the
+worker thread and seeds the
 status dict; `get(job_id)` backs a `GET .../status?job_id=` poll endpoint; `mutate(job_id, fn)`
 lets the worker thread read-then-write a field (an increment, a list append) under the lock,
 with `update(job_id, **fields)` as sugar for outright replacing fields; `has_running()` backs
@@ -143,12 +147,15 @@ existing codes.
 
 `scripts/build_segments.py`
 One-off/idempotent precompute script: reads `queries/*.json` and populates
-`coding.db`'s `segments` table. Run it after fetching new interviews for a dataset
-that feeds the Coding tab. With no argv it auto-discovers every dataset currently
+`coding.db`'s `segments` table. With no argv it auto-discovers every dataset currently
 registered in `queries/_index.json` (via `query_api.load_registry`) and segments all of
 them -- no hardcoded dataset ids, so this works unmodified against whatever a machine's
 `queries/` holds. Pass specific dataset ids as argv, e.g.
-`python scripts/build_segments.py q_abc123 q_def456`, to segment only a subset.
+`python scripts/build_segments.py q_abc123 q_def456`, to segment only a subset. Scripted/batch
+use only now -- a researcher using the app itself should use the Coding tab's Datasets panel's
+"Segment" controls instead (`viewer_server.py`'s `run_segment_job()`), which can also reach
+`primary`/`demo`, the two datasets this script structurally cannot (they're never registered in
+`queries/_index.json`).
 
 `viewer_static/coding.js`
 Frontend logic for the Coding tab: codebook management, segment rendering, code
@@ -189,6 +196,22 @@ a PDF for free via the browser's own "Print to PDF".
 `viewer_static/appendix.js`
 Frontend logic for the Web Appendix tab: fetches and renders the activity log, and the
 "Download appendix"/"Download codebook" buttons. Loaded after `review.js`.
+
+`install.bat`, `start.bat`
+Windows-only setup/launch scripts, the primary way a non-developer researcher gets this app
+running -- see the README's "Setting this up" section. `install.bat` detects Python (`py -3`,
+falling back to `python`), creates a virtual environment, and installs `requirements.txt` into
+it; `start.bat` runs the server from that environment and lets `viewer_server.py`'s own
+`webbrowser.open()` call (in `main()`) open the browser once the port is actually bound, rather
+than polling. Both deliberately put the virtual environment outside this project folder, at
+`%LOCALAPPDATA%\InterviewViewer\venv` -- a venv sitting inside a cloud-synced folder (Dropbox,
+OneDrive, ...) fights that sync client's own file locks during install, confirmed on this
+machine as a real, repeatable failure, not a hypothetical one. `viewer_server.py`'s `main()`
+also retries the next few ports on `OSError` if the requested one is taken -- note that
+`ThreadingHTTPServer`/`HTTPServer` default to `allow_reuse_address = True`, which on Windows
+lets a second process silently bind onto a port another process is still listening on instead of
+raising `OSError`; `main()` sets it back to `False` so a genuinely occupied port actually
+triggers the retry instead of two processes quietly fighting over the same port.
 
 `paths.py`
 The shared `queries/`/`coding.db`/`exports/` locations for whichever project is active *at
@@ -318,10 +341,17 @@ into a same-speaker neighbor's `content`.
 Retroactive audit for near-duplicate items in `queries/*.json` -- the same real-world
 speech independently re-transcribed by several outlets, each landing under its own
 `item_id` (confirmed, not hypothetical: one executive's speech at a single event showed
-up 12 times in this project's corpus). Blocks candidates by `(person_name, publish_date
-within a few days)`, scores pairs by whole-document TF-IDF cosine similarity (a fresh
-item-level vectorizer, not `classifier.py`'s segment-level one), and clusters
-above-threshold pairs via union-find. Mark-only: writes clusters + a suggested canonical
+up 12 times in this project's corpus). The actual scan is `run_duplicate_scan()` (`dataset_ids`,
+`window_days`, `threshold`, `progress_callback`) -- this module's own `main()` is a thin
+argparse + print wrapper around it, same shape as `classifier.run_training_pass()` /
+`scripts/train_classifiers.py`. `viewer_server.py`'s `DUPLICATE_JOBS`/`run_duplicate_job()`
+(the Coding tab's Datasets panel "Scan for duplicates" button) call the same function, so the
+CLI and the in-app control always run identical detection logic. `--promote-canonical` stays
+CLI-only -- the in-app correction UI (mark/unmark as duplicate) already covers that need day to
+day. Blocks candidates by `(person_name, publish_date within a few days)`, scores pairs by
+whole-document TF-IDF cosine similarity (a fresh item-level vectorizer, not `classifier.py`'s
+segment-level one), and clusters above-threshold pairs via union-find. Mark-only: writes
+clusters + a suggested canonical
 member to `coding_store/schema.py`'s `duplicate_runs`/`duplicate_clusters`/
 `duplicate_cluster_items` tables (see `coding_store/duplicates.py`); never deletes/hides
 a `queries/*.json` record or touches `codes`. The detector isn't perfect -- a separate
@@ -342,7 +372,7 @@ item_id/turns). Not needed on a fresh clone.
 
 ## Coding subsystem
 
-A third tab, Coding, lets a researcher build a codebook of themes and apply them to
+The Coding tab lets a researcher build a codebook of themes and apply them to
 speaker-turn segments of each interview. It is a separate subsystem from Browse/Search
 & Export: those stay flat-JSON and in-memory; Coding is backed by a SQLite database,
 `coding.db` (gitignored, like `queries/` -- it's local, regenerable-except-for-the-
@@ -400,7 +430,7 @@ a call site before relying on one.
 
 ## Model subsystem
 
-A fourth tab, Model, trains and monitors the per-theme classifiers built on top of
+The Model tab trains and monitors the per-theme classifiers built on top of
 the codebook -- read-only monitoring and interpretability, not an editing surface
 (no accept/reject-into-codebook actions; that would be a future active-learning
 step). It's additive to the Coding subsystem's `coding.db`: three more tables
@@ -462,7 +492,7 @@ working with no internet access, same as every other tab.
 
 ## Review subsystem
 
-A fifth tab, Review, is where recoding/refinement happens -- the one place in the
+The Review tab is where recoding/refinement happens -- the one place in the
 app besides Coding itself where codes actually change. It exists because Coding's
 per-interview navigation makes a deliberate re-triage pass across many interviews
 impractical: qualitative coding routinely needs revisiting as theme boundaries
@@ -489,7 +519,7 @@ enough history on its own -- no separate audit table needed.
 
 ## Web Appendix subsystem
 
-A sixth tab, Web Appendix, is a chronological log of research actions -- meant to be
+The Web Appendix tab is a chronological log of research actions -- meant to be
 citable methodological provenance a researcher can attach to a manuscript. It's backed by
 two more `coding.db` tables: `activity_log` (append-only: timestamp, actor, action_type, a
 free-form `details_json` blob) and `model_run_params` (one row per training pass, the
@@ -572,6 +602,7 @@ This dashboard is built for one researcher on one machine, not for public or mul
 ## Known limits
 
 - The server holds every dataset it has loaded in memory, in two forms: the raw record list and the index. Datasets load lazily (on first request) and stay cached for the life of the process, so browsing many large query exports in one session adds up. Before you run the server, confirm your machine has enough RAM.
+- `coding.db` is a plain SQLite file, and SQLite was not built to be shared across machines through a cloud-sync client (Dropbox, OneDrive, Google Drive). If your project folder lives in one of those, do not have two people coding into the same `coding.db` from two different machines at the same time -- confirmed on this machine that a `.venv` sitting in a synced folder alone was enough to hit real, repeatable file-lock errors during setup (see `install.bat`'s comments); a live SQLite write conflict during sync is a real, untested risk, not a hypothetical one. If more than one person needs to code at once, have them share one running server (one machine, reached over the local network) instead of each running their own against a synced copy of the database.
 - The server runs as a single process. `ThreadingHTTPServer` handles concurrent requests, but all requests share one in-memory copy of the data. Query/export jobs run in background threads so they don't block Browse, but two jobs running at once share the same rate-limited API key.
 - `queries/` grows without bound — nothing deletes old exports automatically. Clean it out by hand if it gets large.
 - The frontend has no automated tests. Test changes by hand in a browser.
@@ -586,5 +617,5 @@ This dashboard is built for one researcher on one machine, not for public or mul
 5. After a change, start the server and load the page in a real browser. Check the browser console for errors before you report the change as complete.
 
 See [CLAUDE.md](CLAUDE.md) at the repo root for the full, current version of this list
-(it covers all six tabs and is kept as the canonical fast-reference; the five points above
+(it covers every tab and is kept as the canonical fast-reference; the five points above
 are the original Browse/Search & Export-era version, left here for this section's history).
