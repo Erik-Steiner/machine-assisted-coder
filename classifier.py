@@ -2,7 +2,7 @@
 fit once on the full segment corpus) + one-vs-rest LogisticRegression per
 theme, calibrated so scores are usable as probabilities for ranking a review
 queue. See scripts/train_classifiers.py for the CLI entry point and
-DEVELOPMENT.md's Coding subsystem section for the overall design.
+docs/DEVELOPMENT.md's Coding subsystem section for the overall design.
 
 v1 baseline only: TF-IDF, not embeddings (a v2 swap to sentence-transformer
 embeddings is Phase 4, once the pipeline below is proven). Codes from any
@@ -59,7 +59,7 @@ CALIBRATION_CV = 3
 # Segments excluded from build_corpus() below -- and therefore from training,
 # predictions, and top-term coefficients entirely -- but never hidden from
 # Browse/Coding. speaker_role='interviewer' keeps an interview's questions
-# out of topic modeling (see IMPORTING_DATA.md); MIN_SEGMENT_WORDS drops
+# out of topic modeling (see docs/IMPORTING_DATA.md); MIN_SEGMENT_WORDS drops
 # fragments too short to carry meaningful topic signal (motivated by Reddit
 # threads, where a real share of comments are one-liners like "This.").
 MIN_SEGMENT_WORDS = 5

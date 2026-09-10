@@ -6,10 +6,10 @@ constants rather than hardcoding its own `HERE / "queries"`-style path, so
 there's one place to look and no risk of two files quietly disagreeing about
 where "the project" lives.
 
-demo_dataset.json and executive_interviews.json (the legacy primary dataset)
+data/demo_dataset.json and executive_interviews.json (the legacy primary dataset)
 are deliberately NOT anchored here -- they're bundled/app-level convenience
 files shipped with the repo itself, not a project's own research data, so
-they stay relative to this file's own location regardless of PROJECT_DIR.
+they stay relative to viewer_server.py's own location regardless of PROJECT_DIR.
 """
 import os
 from pathlib import Path

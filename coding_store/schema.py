@@ -5,7 +5,7 @@ model_runs.py, activity_log.py, duplicates.py, and dataset_status.py all
 import this one, never each other's storage primitives.
 
 This is the only persistent database in the app -- Browse/Search & Export
-stay flat-JSON and in-memory, per DEVELOPMENT.md. Scoped deliberately to
+stay flat-JSON and in-memory, per docs/DEVELOPMENT.md. Scoped deliberately to
 coding/ML data only, because that's a point-mutation, joinable workload that
 flat JSON handles poorly at tens-of-thousands-of-segments scale.
 """
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 -- that existing tables can't attribute an actor to at all (theme CRUD,
 -- training runs, downloads, filter snapshots). Deliberately separate from
 -- codes.coder/source/note, which already covers per-code provenance well --
--- see coding.js/review.js and DEVELOPMENT.md's Coding subsystem section.
+-- see coding.js/review.js and docs/DEVELOPMENT.md's Coding subsystem section.
 CREATE TABLE IF NOT EXISTS activity_log (
     log_id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TEXT NOT NULL,

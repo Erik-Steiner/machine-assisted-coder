@@ -14,7 +14,7 @@ reply) is what the Coding tab uses to render the thread indented. Siblings
 speaker_role is left null for every Reddit turn: Reddit has no
 interviewer/subject structure, so every turn -- submission and comments
 alike -- is ordinary codable/trainable content by default (see
-IMPORTING_DATA.md; the speaker_role exclusion is opt-in per source, not
+docs/IMPORTING_DATA.md; the speaker_role exclusion is opt-in per source, not
 something Reddit data needs).
 
 Usage:

@@ -17,6 +17,6 @@ duplicates/dataset_status/activity_log together:
   dataset_status.py -- whole-dataset include/exclude/unload state.
 
 This is the only persistent database in the app -- Browse/Search & Export
-stay flat-JSON and in-memory, per DEVELOPMENT.md. See DEVELOPMENT.md for the
+stay flat-JSON and in-memory, per docs/DEVELOPMENT.md. See docs/DEVELOPMENT.md for the
 full reasoning behind this split.
 """

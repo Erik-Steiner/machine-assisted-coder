@@ -33,7 +33,7 @@ function escapeHtml(s) {
 
 // --- Shared background-job poll loop -----------------------------------------------
 // Backs every viewer_server.py job-status endpoint (see jobs.py's JobRegistry and
-// DEVELOPMENT.md's "Background jobs" convention) -- Search & Export's query-fetch job
+// docs/DEVELOPMENT.md's "Background jobs" convention) -- Search & Export's query-fetch job
 // below, and model.js's training job. Recursively setTimeouts against statusUrl until
 // the job's status is no longer "running", calling onRunning(job) on each in-progress
 // poll and onDone(job)/onError(job) once. Each job type's payload shape differs (a

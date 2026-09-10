@@ -7,7 +7,7 @@ classifier training -- each need "kick off a background thread, track its
 progress under a job_id, let the frontend poll a status endpoint until it's
 done." Before this module, each one hand-rolled its own {job_id: {...}} dict
 plus threading.Lock plus GET .../status?job_id= handler, and the two copies
-had already drifted (see DEVELOPMENT.md's "Background jobs" convention,
+had already drifted (see docs/DEVELOPMENT.md's "Background jobs" convention,
 which used to just describe the shape to repeat by hand for the next job
 type). JobRegistry is that shape, once.
 """

@@ -1,11 +1,11 @@
-"""One-off: builds demo_dataset.json, a small real sample of interview
+"""One-off: builds data/demo_dataset.json, a small real sample of interview
 transcripts bundled with the repo so a fresh clone has something to browse
 immediately, with no API key or download required.
 
 Samples N records (default 10, fixed seed for reproducibility) from an
 already-downloaded queries/*.json dataset and writes them, unmodified, to
-demo_dataset.json at the repo root -- viewer_server.py loads that file at
-startup as an extra "demo" dataset, alongside "primary".
+data/demo_dataset.json -- viewer_server.py loads that file at startup as an
+extra "demo" dataset, alongside "primary".
 
 This is real transcript data (not fabricated), sourced from the same
 ceointerviews.ai API every researcher's own downloads use. Confirm the
@@ -29,7 +29,7 @@ sys.path.insert(0, str(HERE))
 import query_api
 from paths import QUERIES_DIR
 
-DEMO_FILE = HERE / "demo_dataset.json"
+DEMO_FILE = HERE / "data" / "demo_dataset.json"
 DEFAULT_SEED = 42
 
 

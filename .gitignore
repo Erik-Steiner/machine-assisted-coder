@@ -1,7 +1,7 @@
 # secrets - never commit
 .env
 
-# your own default company list for download_script.py (see companies.example.txt)
+# your own default company list for download_script.py (see templates/companies.example.txt)
 companies.txt
 
 # generated data artifacts (large; regenerate with download_script.py)

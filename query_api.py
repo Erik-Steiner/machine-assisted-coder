@@ -128,7 +128,7 @@ def build_row(item, company_name):
     response shape into the app's canonical record schema, the same job
     scripts/import_interview_transcript.py and scripts/import_reddit.py do for
     their own sources. item_id is cast to str -- the canonical schema treats
-    every source's item id as a string (see IMPORTING_DATA.md), since ids from
+    every source's item id as a string (see docs/IMPORTING_DATA.md), since ids from
     other sources (Reddit submission ids, etc.) aren't numeric."""
     extra = item.get("extra") or {}
     return {
@@ -173,7 +173,7 @@ class DatasetValidationError(ValueError):
 
 def validate_dataset_records(records, source_label, require_item_id=False):
     """Structural check for a dataset loaded from JSON (either a researcher's own
-    file, or one of ours). DEVELOPMENT.md's data contract for Browse is deliberately
+    file, or one of ours). docs/DEVELOPMENT.md's data contract for Browse is deliberately
     loose -- any flat array of objects works -- so this only rejects shapes that
     would otherwise fail confusingly deep inside build_dataset()/segment_interview()
     (a non-list top level, or non-object entries), plus one field-specific check:

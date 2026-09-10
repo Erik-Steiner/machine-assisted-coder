@@ -2,7 +2,7 @@
 short same-speaker fragments forward, split long turns at sentence
 boundaries, target ~120 words per segment. Source-agnostic -- works the same
 whether `turns` came from an interview transcript, a Reddit thread, or any
-other importer, as long as each turn has `content` (see IMPORTING_DATA.md
+other importer, as long as each turn has `content` (see docs/IMPORTING_DATA.md
 for the canonical shape).
 
 Calibrated against a measured sample of the OpenAI export (38,452 raw

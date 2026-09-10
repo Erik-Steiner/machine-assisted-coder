@@ -7,7 +7,7 @@ get your own data into it.
 
 ## The canonical record schema
 
-Every dataset in `queries/` (or `demo_dataset.json` / `executive_interviews.json`) is a JSON file
+Every dataset in `queries/` (or `data/demo_dataset.json` / `executive_interviews.json`) is a JSON file
 holding a flat array of objects shaped like this:
 
 ```json

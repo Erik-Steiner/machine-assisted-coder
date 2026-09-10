@@ -2,8 +2,8 @@
 names (company/executive/entity_id/title/channel_name/feed_item_id/
 enhanced_transcript_json) to their canonical, source-agnostic replacements
 (group_name/person_name/person_id/person_title/source_name/item_id/turns)
-in every dataset under queries/, plus demo_dataset.json and
-executive_interviews.json if present -- see IMPORTING_DATA.md for the full
+in every dataset under queries/, plus data/demo_dataset.json and
+executive_interviews.json if present -- see docs/IMPORTING_DATA.md for the full
 schema and coding_store/schema.py's schema_version 2 migration for the matching
 coding.db column renames.
 
@@ -27,7 +27,7 @@ sys.path.insert(0, str(HERE))
 import query_api
 from paths import QUERIES_DIR
 
-DEMO_FILE = HERE / "demo_dataset.json"
+DEMO_FILE = HERE / "data" / "demo_dataset.json"
 LEGACY_PRIMARY_FILE = HERE / "executive_interviews.json"
 
 FIELD_RENAMES = {

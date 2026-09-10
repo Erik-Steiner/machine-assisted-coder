@@ -1,6 +1,6 @@
 """Local server for the qualitative-coding research webapp (interview
 transcripts, Reddit/forum threads, or other researcher-supplied text --
-see IMPORTING_DATA.md).
+see docs/IMPORTING_DATA.md).
 
 Seven tabs, one server:
 
@@ -13,7 +13,7 @@ Seven tabs, one server:
                       (If executive_interviews.json still exists at the repo
                       root from an older setup, it's also loaded at startup
                       as a one-off "primary" dataset, for backwards
-                      compatibility. If demo_dataset.json exists -- a small
+                      compatibility. If data/demo_dataset.json exists -- a small
                       real sample bundled with the repo, see
                       scripts/make_demo_dataset.py -- it's loaded the same
                       way as a "demo" dataset, so a fresh clone has
@@ -29,7 +29,7 @@ Seven tabs, one server:
                       /api/import/reddit/* endpoints below,
                       scripts/import_interview_transcript.py and
                       scripts/import_reddit.py (the logic both share with
-                      their CLI counterparts), and IMPORTING_DATA.md.
+                      their CLI counterparts), and docs/IMPORTING_DATA.md.
   Coding            — a researcher builds a codebook of themes and codes
                       speaker-turn segments (precomputed by
                       scripts/build_segments.py from each item's `turns`)
@@ -38,7 +38,7 @@ Seven tabs, one server:
                       the coding_store package. Data can come from the live API
                       (Search & Export) or from scripts/import_*.py for
                       interview transcripts and Reddit/Arctic Shift data --
-                      see IMPORTING_DATA.md.
+                      see docs/IMPORTING_DATA.md.
   Model             — train/retrain a TF-IDF + logistic-regression classifier
                       per codebook theme (classifier.py), then monitor and
                       interpret it: metrics and their history across runs,
@@ -276,7 +276,7 @@ from routing import ApiError, DownloadResponse, FileResponse, JsonResponse, Rout
 
 HERE = Path(__file__).parent
 DATA_FILE = HERE / "executive_interviews.json"
-DEMO_FILE = HERE / "demo_dataset.json"
+DEMO_FILE = HERE / "data" / "demo_dataset.json"
 STATIC_DIR = HERE / "viewer_static"
 QUERIES_DIR = project_paths.QUERIES_DIR
 EXPORTS_DIR = project_paths.EXPORTS_DIR
@@ -476,7 +476,7 @@ def _build_item_meta(segment_rows):
 #
 # JOBS and TRAIN_JOBS below are both jobs.JobRegistry instances -- see that module for
 # the shared start/mutate/update/get shape this section and the next one build on, and
-# DEVELOPMENT.md's "Background jobs" convention for why a third job type should also
+# docs/DEVELOPMENT.md's "Background jobs" convention for why a third job type should also
 # use it rather than hand-rolling its own {job_id: {...}} dict.
 
 JOBS = JobRegistry()
@@ -808,7 +808,7 @@ def switch_project(new_dir):
     """Live-switches the running server's active project (queries/coding.db/
     exports/) to new_dir, without a restart. Returns None on success, or an
     error string. See project_registry.py for the recent-projects list this
-    backs, and paths.py for why demo_dataset.json/executive_interviews.json
+    backs, and paths.py for why data/demo_dataset.json/executive_interviews.json
     are untouched here -- they're repo-level, not project-specific."""
     global QUERIES_DIR, EXPORTS_DIR, CURRENT_PROJECT_DIR
     new_dir = Path(new_dir)
@@ -1301,8 +1301,8 @@ def post_import_transcript_parse(req):
             "error": "No turns found -- is this a Word Transcribe-style transcript "
                      "(\"HH:MM:SS Speaker N\" lines) or a speaker-labeled transcript "
                      "(\"Speaker: text\" lines, hand-typed or from ChatGPT/Claude)? See "
-                     "IMPORTING_DATA.md for examples of both. If your transcript is neither, "
-                     "convert it to canonical JSON first (see IMPORTING_DATA.md's LLM prompt "
+                     "docs/IMPORTING_DATA.md for examples of both. If your transcript is neither, "
+                     "convert it to canonical JSON first (see docs/IMPORTING_DATA.md's LLM prompt "
                      "template) and upload that instead.",
         }, status=400)
     turns = interview_importer.bridge_backchannels(turns)

@@ -2,7 +2,7 @@
 
 A local research tool for browsing, importing, and qualitatively coding a corpus of text —
 interview transcripts, Reddit/forum threads, or any other speaker-turn data (see
-[IMPORTING_DATA.md](IMPORTING_DATA.md) for bringing in your own). It has seven tabs:
+[IMPORTING_DATA.md](docs/IMPORTING_DATA.md) for bringing in your own). It has seven tabs:
 
 - **Browse** — shows one item at a time with its metadata (group, person, date, views, etc.),
   lets you step forward and backward through items in chronological order, filter down to a
@@ -39,7 +39,7 @@ It's built to be simple: Python scripts serve and process the data, and plain HT
 display it. No frameworks, no build tools — just the packages in `requirements.txt`.
 
 If you're a developer (or an AI coding agent) working on this codebase, read
-[DEVELOPMENT.md](DEVELOPMENT.md) for the technical architecture and conventions, and
+[DEVELOPMENT.md](docs/DEVELOPMENT.md) for the technical architecture and conventions, and
 [CLAUDE.md](CLAUDE.md) for a fast-orientation summary and hard rules to follow.
 
 ## What's in this repo
@@ -56,12 +56,13 @@ If you're a developer (or an AI coding agent) working on this codebase, read
 
 **Browse / Search & Export (flat JSON datasets, in-memory)**
 - `download_script.py` — bulk-downloads transcripts for one or more companies you name (as
-  command-line arguments, or listed in your own `companies.txt` — see `companies.example.txt`)
+  command-line arguments, or listed in your own `companies.txt` — see
+  `templates/companies.example.txt`)
   from the source API, one export per company, saved into `queries/`. This is how you build your
   starting datasets if you have ceointerviews.ai credentials.
 - `scripts/import_interview_transcript.py`, `scripts/import_reddit.py` — import your own data
   (interview transcripts, Reddit/Arctic Shift exports) instead, with no ceointerviews.ai account
-  needed — see [IMPORTING_DATA.md](IMPORTING_DATA.md). The Search / Import tab's upload panels
+  needed — see [IMPORTING_DATA.md](docs/IMPORTING_DATA.md). The Search / Import tab's upload panels
   do the same thing with no command line at all.
 - `query_api.py` — the shared API client for ceointerviews.ai (keyword search, paginated feed
   fetch, row building) and the shared `queries/` export format (JSON + CSV + registry, and the
@@ -85,7 +86,7 @@ If you're a developer (or an AI coding agent) working on this codebase, read
   **Segment** controls instead — no command line, and it can also segment the bundled sample.
 - `coding_store/` — a package, not one file: SQLite access split by concern (`schema.py`,
   `segments.py`, `themes.py`, `codes.py`, `model_runs.py`, `review.py`, `activity_log.py`,
-  `duplicates.py`, `dataset_status.py`) — see [DEVELOPMENT.md](DEVELOPMENT.md) for the full
+  `duplicates.py`, `dataset_status.py`) — see [DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full
   breakdown.
 - `classifier.py` — the TF-IDF + logistic-regression classifier and its shared training pass.
 - `scripts/train_classifiers.py` — CLI wrapper to train/retrain from the command line instead
@@ -96,7 +97,7 @@ If you're a developer (or an AI coding agent) working on this codebase, read
 - `corpus_analytics.py` — the Analytics tab's scale/density stats and metadata/vocabulary-overlap
   breakdowns, computed over the exact corpus `classifier.py` trains on.
 - `scripts/make_demo_dataset.py` — one-off script that samples a small real dataset down to
-  `demo_dataset.json`, the bundled sample described above. You don't need to run this yourself
+  `data/demo_dataset.json`, the bundled sample described above. You don't need to run this yourself
   unless you want to regenerate or replace the bundled sample.
 - `scripts/migrate_field_names.py` — a one-time schema-rename migration; you won't need to run
   this on a fresh clone, only if you're upgrading a pre-existing `queries/`/`coding.db` from an
@@ -115,7 +116,7 @@ The actual data is **not** included in this repo — it's large, and you generat
   root, `viewer_server.py` still loads it at startup as a `primary` dataset, for backwards
   compatibility, but nothing in this repo generates it anymore — new setups should just use
   `queries/`.
-- `demo_dataset.json` — a small (10-interview) real sample bundled with the repo (see
+- `data/demo_dataset.json` — a small (10-interview) real sample bundled with the repo (see
   `scripts/make_demo_dataset.py`), loaded at startup as a `demo` dataset so you can try Browse
   before setting up an API key or downloading anything of your own.
 - `coding.db` — the Coding/Model/Review SQLite database (segments, codebook, codes, classifier
@@ -166,7 +167,7 @@ for now. Everywhere else, or if you just prefer doing it yourself:
 
 Bring your own interview transcripts or Reddit/Arctic Shift data in through the **Search /
 Import** tab's upload panels — no command line needed — or via `scripts/import_interview_transcript.py`/
-`scripts/import_reddit.py` if you prefer the CLI. See [IMPORTING_DATA.md](IMPORTING_DATA.md) for
+`scripts/import_reddit.py` if you prefer the CLI. See [IMPORTING_DATA.md](docs/IMPORTING_DATA.md) for
 the accepted formats and the canonical data shape (and what to do if your data matches neither
 importer's expected format).
 
@@ -194,7 +195,7 @@ the meantime. The steps below are for when you do have working credentials:
 2. Run `python download_script.py "Company Name" "Another Company"` to bulk-download every
    matched company's executives' transcripts into `queries/`. If a name matches more than one
    company, the script prints the candidates and their `company_id` so you can rerun with the
-   exact name you meant. Copy `companies.example.txt` to `companies.txt` (one name per line,
+   exact name you meant. Copy `templates/companies.example.txt` to `companies.txt` (one name per line,
    gitignored) and run with no arguments to avoid retyping the list every time. This can take a
    while for a lot of data — the script prints progress and checkpoints partial results, so it's
    safe to let it run in the background.
@@ -209,7 +210,7 @@ If more than one person codes in the same `coding.db` (e.g. a research assistant
 otherwise everyone is recorded as `"researcher"` and codes from different people become
 indistinguishable later. **Do this on one shared machine, not by having each person run their own
 server against a copy of `coding.db` synced through Dropbox/OneDrive/Google Drive/etc. — see
-"Known limits" in [DEVELOPMENT.md](DEVELOPMENT.md) for why that risks corrupting the database.**
+"Known limits" in [DEVELOPMENT.md](docs/DEVELOPMENT.md) for why that risks corrupting the database.**
 
 ### Running a second, independent project from this same clone
 
@@ -285,7 +286,7 @@ banner saying so, and the steps below won't return results until it's restored. 
 5. The progress line under the codebook panel shows how many segments are coded overall and
    which themes still need more codes before a classifier can be trained on them (25 minimum).
 6. If your data has interviewer/moderator turns (tagged `speaker_role: "interviewer"` — see
-   [IMPORTING_DATA.md](IMPORTING_DATA.md)), they display for context but don't get theme chips —
+   [IMPORTING_DATA.md](docs/IMPORTING_DATA.md)), they display for context but don't get theme chips —
    they're excluded from coding and from the classifier's training corpus by default. Threaded
    data (Reddit) renders indented by reply depth. Use the **Min words** field to hide short
    segments (e.g. one-word Reddit comments) that aren't worth coding — this only hides them from

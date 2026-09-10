@@ -216,9 +216,9 @@ triggers the retry instead of two processes quietly fighting over the same port.
 `paths.py`
 The shared `queries/`/`coding.db`/`exports/` locations for whichever project is active *at
 process startup* (`PROJECT_DIR`, defaults to the repo root). Imported by every script/module
-that touches those locations. `demo_dataset.json`/`executive_interviews.json` deliberately
-stay anchored to the repo root instead (bundled convenience files, not a project's own
-research data).
+that touches those locations. `data/demo_dataset.json`/`executive_interviews.json` deliberately
+stay anchored to `viewer_server.py`'s own location instead (bundled convenience files, not a
+project's own research data).
 
 `project_registry.py`
 The known-projects list backing the in-app **Project** picker (`projects_registry.json` at
@@ -616,6 +616,6 @@ This dashboard is built for one researcher on one machine, not for public or mul
 4. Unless the user asks for a frontend framework or a build step, do not add one. The point of this pattern is that any agent can read and edit the whole frontend directly.
 5. After a change, start the server and load the page in a real browser. Check the browser console for errors before you report the change as complete.
 
-See [CLAUDE.md](CLAUDE.md) at the repo root for the full, current version of this list
+See [CLAUDE.md](../CLAUDE.md) at the repo root for the full, current version of this list
 (it covers every tab and is kept as the canonical fast-reference; the five points above
 are the original Browse/Search & Export-era version, left here for this section's history).

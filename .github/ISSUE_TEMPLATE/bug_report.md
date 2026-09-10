@@ -20,4 +20,4 @@ terminal running `python viewer_server.py`.
 **Dataset shape (if relevant)**
 Are you using the bundled demo dataset, your own downloaded data, or your own linked-in JSON
 file? If your own file, does it match the data contract in
-[DEVELOPMENT.md](../../DEVELOPMENT.md#data-contract)?
+[DEVELOPMENT.md](../../docs/DEVELOPMENT.md#data-contract)?

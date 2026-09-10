@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Project-level guidance for Claude Code agents working in this repo. Read this first; it's the
-fast-orientation layer. [DEVELOPMENT.md](DEVELOPMENT.md) has the full technical detail and is
+fast-orientation layer. [DEVELOPMENT.md](docs/DEVELOPMENT.md) has the full technical detail and is
 the place to go before changing anything non-trivial. [README.md](README.md) is the human
 setup/usage guide.
 
@@ -13,7 +13,7 @@ it. Seven tabs, one server (`viewer_server.py`):
 
 - **Browse / Search & Export** — flat JSON datasets held in memory. Search & Export fetches new
   ones from the live ceointerviews.ai API via `query_api.py`; other sources come in via
-  `scripts/import_*.py` (see [IMPORTING_DATA.md](IMPORTING_DATA.md)).
+  `scripts/import_*.py` (see [IMPORTING_DATA.md](docs/IMPORTING_DATA.md)).
 - **Analytics** — read-only corpus-level scale/density stats (`corpus_analytics.py`) over the
   same segment set `classifier.py` trains on, plus a metadata breakdown and vocabulary-overlap
   view. No schema of its own.
@@ -30,7 +30,7 @@ rather than duplicating navigation logic. This is deliberate — see "Hard rules
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
 `item_id`/`turns`, not `company`/`executive`/`feed_item_id`/`enhanced_transcript_json`) — see
-[IMPORTING_DATA.md](IMPORTING_DATA.md) for the full schema. Search & Export's own UI/API code is
+[IMPORTING_DATA.md](docs/IMPORTING_DATA.md) for the full schema. Search & Export's own UI/API code is
 the one exception, since it legitimately still speaks ceointerviews.ai's own vocabulary
 (`company_id`, `entity_id`, etc.) — a different, source-specific concept from the canonical
 schema, not something to rename.
@@ -41,7 +41,7 @@ schema, not something to rename.
 |-----------------------------------------|------------------------------------------------------|
 | Browse filters/rendering/citation       | `viewer_static/app.js`, `viewer_server.py`           |
 | Search & Export / bulk download         | `query_api.py`, `download_script.py`                 |
-| Importing a new data source             | [IMPORTING_DATA.md](IMPORTING_DATA.md), `query_api.py`'s `EXPORT_FIELDS`/`validate_dataset_records`, `scripts/import_*.py` |
+| Importing a new data source             | [IMPORTING_DATA.md](docs/IMPORTING_DATA.md), `query_api.py`'s `EXPORT_FIELDS`/`validate_dataset_records`, `scripts/import_*.py` |
 | Coding tab UI/keyboard shortcuts        | `viewer_static/coding.js`                            |
 | Codebook / segments / codes data model  | `coding_store/schema.py` (schema), `coding_store/themes.py`, `coding_store/codes.py`, `segmentation.py` |
 | Classifier training or metrics          | `classifier.py`, `scripts/train_classifiers.py`      |
@@ -56,7 +56,7 @@ schema, not something to rename.
 
 ## Hard rules
 
-1. **Code is ground truth, not the docs.** If DEVELOPMENT.md/README.md and the code disagree,
+1. **Code is ground truth, not the docs.** If docs/DEVELOPMENT.md/README.md and the code disagree,
    the code wins — fix the docs, don't assume the docs describe intended-but-unbuilt behavior.
 2. **No build step, no framework, unless the user explicitly asks for one.** The entire point
    of this frontend's design is that any agent can open a `.js` file and read it in one pass.
@@ -83,7 +83,7 @@ schema, not something to rename.
    explicit sign-off.
 7. **Match field names exactly between server and frontend.** A mismatch between the index
    payload's keys and a frontend filter's field name fails silently (empty filter list), not
-   loudly. Grep both sides after renaming a field — see [IMPORTING_DATA.md](IMPORTING_DATA.md)
+   loudly. Grep both sides after renaming a field — see [IMPORTING_DATA.md](docs/IMPORTING_DATA.md)
    for the canonical schema every dataset and every layer of the app is expected to share.
 8. **No automated test suite exists**, with one deliberate, narrow exception: `tests/` holds
    `unittest`-based regression tests for `import_interview_transcript.py`'s pure line-parsing

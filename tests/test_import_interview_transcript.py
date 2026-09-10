@@ -60,7 +60,7 @@ class ParseLabeledTurnsTests(unittest.TestCase):
         # short, non-question interjection ("L: Right, right.") sandwiched
         # inside X's answer, immediately followed by that same interjecting
         # speaker's next real turn -- the case bridge_backchannels()'s third
-        # (consolidation) phase was added for. See DEVELOPMENT.md.
+        # (consolidation) phase was added for. See docs/DEVELOPMENT.md.
         lines = [
             "L: And was that a relief or was it kind of unsettling?",
             "X: Both, honestly. At first it was a relief, but then—",

@@ -15,7 +15,7 @@ Run:
 
 With no arguments, reads company names (one per line, blank lines and
 '#'-prefixed lines ignored) from companies.txt next to this script, if
-present -- see companies.example.txt for the format.
+present -- see templates/companies.example.txt for the format.
 """
 import sys
 import uuid
@@ -105,7 +105,7 @@ def main():
     if not names:
         print('Usage: python download_script.py "Company Name" ["Another Company" ...]')
         print(f"(or list company names, one per line, in {COMPANIES_FILE.name} -- "
-              f"see companies.example.txt)")
+              f"see templates/companies.example.txt)")
         sys.exit(1)
 
     total = 0

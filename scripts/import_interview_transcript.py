@@ -1,5 +1,5 @@
 """Imports an interview transcript into queries/, in the same JSON+CSV shape
-every other dataset uses (see query_api.EXPORT_FIELDS / IMPORTING_DATA.md).
+every other dataset uses (see query_api.EXPORT_FIELDS / docs/IMPORTING_DATA.md).
 
 Two input modes, chosen by file extension:
 
@@ -13,7 +13,7 @@ Two input modes, chosen by file extension:
                       paragraphs -- covers hand-typed transcripts,
                       diarization-tool exports, and typical ChatGPT/Claude
                       "format this as an interview" output alike (see
-                      IMPORTING_DATA.md for the full writeup and examples).
+                      docs/IMPORTING_DATA.md for the full writeup and examples).
 
                    Either way you'll be asked (interactively, or via
                    --interviewer/--respondent flags) which speaker label is
@@ -27,7 +27,7 @@ Two input modes, chosen by file extension:
                    exclusion -- decide those case-by-case in the Coding tab.
 
   .json         -- an already-structured canonical file (e.g. an LLM's
-                   output using the prompt template in IMPORTING_DATA.md, for
+                   output using the prompt template in docs/IMPORTING_DATA.md, for
                    a transcript that doesn't match either format above).
                    Validated and registered directly, no parsing.
 
@@ -112,7 +112,7 @@ def parse_labeled_turns(lines, min_occurrences=LABEL_MIN_OCCURRENCES, max_label_
     """Parses a "Speaker: text" (or "**Speaker:** text") transcript -- no
     timestamps, one turn per line/paragraph, covering hand-typed
     transcripts, diarization-tool exports, and ChatGPT/Claude's own default
-    "format this as an interview" output alike (see IMPORTING_DATA.md).
+    "format this as an interview" output alike (see docs/IMPORTING_DATA.md).
 
     Two passes, mirroring parse_turns()'s own shape:
 
@@ -179,7 +179,7 @@ def parse_transcript_turns(lines):
     whichever matched, or turns == [] and format_name is None if neither
     did. Shared by the CLI's import_docx_or_txt() and viewer_server.py's
     /api/import/transcript/parse, so the two never drift on which formats
-    are recognized. See IMPORTING_DATA.md for what each format looks like."""
+    are recognized. See docs/IMPORTING_DATA.md for what each format looks like."""
     turns = parse_turns(lines)
     if turns:
         return turns, "timestamped"
@@ -369,8 +369,8 @@ def import_docx_or_txt(path, args):
     if not turns:
         print("No turns found -- is this a Word Transcribe-style transcript (\"HH:MM:SS "
               "Speaker N\" lines) or a speaker-labeled transcript (\"Speaker: text\" lines, "
-              "hand-typed or from ChatGPT/Claude)? See IMPORTING_DATA.md for examples of both. "
-              "If your transcript is neither, use IMPORTING_DATA.md's LLM prompt template to "
+              "hand-typed or from ChatGPT/Claude)? See docs/IMPORTING_DATA.md for examples of both. "
+              "If your transcript is neither, use docs/IMPORTING_DATA.md's LLM prompt template to "
               "convert it to canonical JSON instead, then run this script on that .json file.")
         sys.exit(1)
     turns = bridge_backchannels(turns)
