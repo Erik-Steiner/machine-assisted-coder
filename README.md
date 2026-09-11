@@ -341,7 +341,11 @@ beyond your own machine:
 - The server only binds to `127.0.0.1` (localhost) and has no login/authentication on any
   endpoint. That's fine as long as it stays local; if you ever need to reach it from another
   machine, put a reverse proxy with its own authentication in front of it rather than changing
-  the bind address.
+  the bind address. With no login, the one thing the server does check on every state-changing
+  request is that it actually came from its own page (`routing.py`'s `Router.dispatch()` rejects
+  a cross-origin `Origin` header) — this stops a malicious page open in another browser tab from
+  silently changing your data, but it is not a substitute for a real login if you ever do expose
+  this beyond your own machine.
 - `.env` (your API key), `coding.db` (your codebook and codes), and everything under `queries/`
   (downloaded transcripts) are all excluded from git via `.gitignore` and never committed. Treat
   them as sensitive research data — subject to whatever data-use agreement or IRB approval covers

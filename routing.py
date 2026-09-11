@@ -19,6 +19,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
+from urllib.parse import urlparse
 
 
 class ApiError(Exception):
@@ -101,6 +102,22 @@ class _Route:
         return params
 
 
+_LOCAL_ORIGIN_HOSTS = ("127.0.0.1", "localhost")
+
+
+def _is_local_origin(origin):
+    """True if `origin`'s host is 127.0.0.1 or localhost, at any port -- this app's own
+    page, regardless of which port main() ended up binding to (see its retry loop).
+    A cross-origin attacker's Origin header can never be this: browsers set it
+    truthfully on every state-changing cross-origin request and no page can spoof it,
+    which is what makes it a real defense against CSRF, not just an obstacle -- see
+    Router.dispatch()'s use of this below for the actual threat it closes."""
+    try:
+        return urlparse(origin).hostname in _LOCAL_ORIGIN_HOSTS
+    except ValueError:
+        return False
+
+
 class Router:
     """A route table: register handlers with @router.get(pattern)/@router.post(pattern),
     then call router.dispatch(...) once per request. Patterns use <name> for a single
@@ -128,7 +145,22 @@ class Router:
     def dispatch(self, method, path, raw_query, headers, read_raw_body):
         """Finds the matching route and runs the shared parse/validate/load steps before
         calling its handler. Returns a Response, or None if no route matched (caller sends
-        a bare 404 -- these are API routes, a missing one isn't a JSON-shaped situation)."""
+        a bare 404 -- these are API routes, a missing one isn't a JSON-shaped situation).
+
+        CSRF guard: this app has no login (by design, for a local single-researcher
+        tool -- see README.md's Security section), which also means it has nothing else
+        stopping a malicious page open in another browser tab from POSTing here blind --
+        CORS blocks that page from reading the response, but never blocks the request
+        from being sent. Reject a POST whose Origin header is present and isn't this
+        app's own page; if Origin is absent entirely (curl, a script, any non-browser
+        client), let it through untouched -- there's no browser enforcing same-origin
+        for those callers to bypass in the first place, so blocking them here would only
+        break legitimate local tooling without stopping anything real."""
+        if method == "POST":
+            origin = headers.get("Origin")
+            if origin and not _is_local_origin(origin):
+                return JsonResponse({"error": "cross-origin POST rejected"}, status=403)
+
         for route in self._routes:
             if route.method != method:
                 continue
