@@ -197,21 +197,29 @@ a PDF for free via the browser's own "Print to PDF".
 Frontend logic for the Web Appendix tab: fetches and renders the activity log, and the
 "Download appendix"/"Download codebook" buttons. Loaded after `review.js`.
 
-`install.bat`, `start.bat`
-Windows-only setup/launch scripts, the primary way a non-developer researcher gets this app
-running -- see the README's "Setting this up" section. `install.bat` detects Python (`py -3`,
-falling back to `python`), creates a virtual environment, and installs `requirements.txt` into
-it; `start.bat` runs the server from that environment and lets `viewer_server.py`'s own
-`webbrowser.open()` call (in `main()`) open the browser once the port is actually bound, rather
-than polling. Both deliberately put the virtual environment outside this project folder, at
-`%LOCALAPPDATA%\InterviewViewer\venv` -- a venv sitting inside a cloud-synced folder (Dropbox,
-OneDrive, ...) fights that sync client's own file locks during install, confirmed on this
-machine as a real, repeatable failure, not a hypothetical one. `viewer_server.py`'s `main()`
-also retries the next few ports on `OSError` if the requested one is taken -- note that
-`ThreadingHTTPServer`/`HTTPServer` default to `allow_reuse_address = True`, which on Windows
-lets a second process silently bind onto a port another process is still listening on instead of
-raising `OSError`; `main()` sets it back to `False` so a genuinely occupied port actually
-triggers the retry instead of two processes quietly fighting over the same port.
+`install.bat`, `start.bat`, `install.command`, `start.command`
+Setup/launch scripts, the primary way a non-developer researcher gets this app running -- see
+the README's "Setting this up" section. The `.bat` pair is Windows, the `.command` pair is
+macOS (double-clickable from Finder); each pair mirrors the other's steps and reasoning exactly,
+so a change to one side's logic should be mirrored on the other. `install.bat` detects Python
+(`py -3`, falling back to `python`); `install.command` detects it via `python3` (falling back to
+`python` if it reports itself as Python 3). Either installer creates a virtual environment and
+installs `requirements.txt` into it; the matching `start.*` script runs the server from that
+environment and lets `viewer_server.py`'s own `webbrowser.open()` call (in `main()`) open the
+browser once the port is actually bound, rather than polling. Both pairs deliberately put the
+virtual environment outside this project folder -- `%LOCALAPPDATA%\InterviewViewer\venv` on
+Windows, `~/Library/Application Support/InterviewViewer/venv` on macOS -- because a venv sitting
+inside a cloud-synced folder (Dropbox, OneDrive, ...) fights that sync client's own file locks
+during install, confirmed on a Windows machine as a real, repeatable failure, not a hypothetical
+one. `install.command`/`start.command` are committed with the executable bit set and are pinned
+to LF line endings via `.gitattributes` (`*.command text eol=lf`) -- a CRLF shebang line breaks
+bash's interpreter parsing on macOS, which a Windows clone's `core.autocrlf` would otherwise
+silently introduce. `viewer_server.py`'s `main()` also retries the next few ports on `OSError`
+if the requested one is taken -- note that `ThreadingHTTPServer`/`HTTPServer` default to
+`allow_reuse_address = True`, which on Windows lets a second process silently bind onto a port
+another process is still listening on instead of raising `OSError`; `main()` sets it back to
+`False` so a genuinely occupied port actually triggers the retry instead of two processes
+quietly fighting over the same port.
 
 `paths.py`
 The shared `queries/`/`coding.db`/`exports/` locations for whichever project is active *at

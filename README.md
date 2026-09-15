@@ -46,9 +46,12 @@ If you're a developer (or an AI coding agent) working on this codebase, read
 
 **Getting the app running**
 - `install.bat`, `start.bat` — Windows one-click setup and daily launch. See "Setting this up"
-  below; this is the path most researchers should use.
+  below; this is the path most Windows researchers should use.
+- `install.command`, `start.command` — the same one-click setup and daily launch for macOS.
+  Double-click either one in Finder; see "Setting this up" below.
 - `requirements.txt` — the Python packages the server and scripts need (`requests`, `pandas`,
-  `python-dotenv`, `scikit-learn`, `numpy`, `python-docx`). `install.bat` installs these for you;
+  `python-dotenv`, `scikit-learn`, `numpy`, `python-docx`). `install.bat`/`install.command`
+  install these for you;
   `pandas` is also used by demo notebooks some researchers keep in a local, untracked `Examples/`
   folder, not something a fresh clone comes with.
 - `.env.example` — a template for the ceointerviews.ai API credentials (and the optional
@@ -130,36 +133,52 @@ This repo ships with a small real sample (10 interviews) so you can try Browse i
 before you have your own API key or data. Getting your own research data in, and making it
 codeable, is covered in "Get your data in" below.
 
-### Quick start (Windows)
+### Quick start (Windows or macOS)
 
 1. Get the code: clone this repo, or copy the files onto the new machine.
-2. Double-click **`install.bat`**. It finds Python (installing it yourself first is only needed
-   if this step tells you to), creates a private Python environment for the app outside this
-   project folder, and installs everything the app needs into it. Safe to run more than once.
-3. Double-click **`start.bat`** any time you want to use the app. It opens your browser to the
-   dashboard automatically once the server is ready; closing the window stops the app.
+2. Double-click the setup script for your system:
+   - Windows: **`install.bat`**
+   - macOS: **`install.command`** (if Finder warns the file is from an unidentified developer,
+     right-click it and choose **Open** once to confirm — see "macOS wants to block the setup
+     script" below)
+
+   Either one finds Python (installing it yourself first is only needed if this step tells you
+   to), creates a private Python environment for the app outside this project folder, and
+   installs everything the app needs into it. Safe to run more than once.
+3. Double-click the matching launch script any time you want to use the app:
+   - Windows: **`start.bat`**
+   - macOS: **`start.command`**
+
+   It opens your browser to the dashboard automatically once the server is ready; closing the
+   window stops the app.
 
 That covers Browse against the bundled sample with zero further setup. Continue to "Get your
 data in" below for your own research data, and for the Coding/Model/Review tabs.
 
-### Setting up by hand (macOS/Linux, or if you'd rather not use the `.bat` files)
+### Setting up by hand (Linux, or if you'd rather not use the one-click scripts)
 
-There's no one-click installer for macOS/Linux yet — `install.bat`/`start.bat` are Windows-only
-for now. Everywhere else, or if you just prefer doing it yourself:
+There's no one-click installer for Linux yet. Everywhere else, or if you just prefer doing it
+yourself:
 
 1. Get the code: clone this repo, or copy the files onto the new machine.
-2. Install Python 3.9 or newer if you don't have it — check with `python --version`, or download
+2. Install Python 3.9 or newer if you don't have it — check with `python3 --version`, or download
    it from [python.org](https://www.python.org/downloads/).
 3. From the project folder, run `pip install -r requirements.txt`. This is everything the app
    needs: `requests`, `python-dotenv` (for downloading/exporting data), `scikit-learn`/`numpy`
    (the Model tab's classifier), `python-docx` (reading `.docx` transcripts), and `pandas` (only
    used by demo notebooks some researchers keep in a local `Examples/` folder — not something a
    fresh clone comes with). Consider doing this inside a virtual environment
-   (`python -m venv .venv`) so these packages stay separate from anything else on your machine.
-4. Run `python viewer_server.py`, then open the address it prints (`http://127.0.0.1:8765/` by
+   (`python3 -m venv .venv`) so these packages stay separate from anything else on your machine.
+4. Run `python3 viewer_server.py`, then open the address it prints (`http://127.0.0.1:8765/` by
    default) in your browser. `Ctrl+C` in that terminal stops the server. If port 8765 is already
    in use, the server automatically tries the next few ports and tells you which one it landed
-   on — or run `python viewer_server.py 9000` to request a specific one yourself.
+   on — or run `python3 viewer_server.py 9000` to request a specific one yourself.
+
+**macOS wants to block the setup script.** Gatekeeper flags any script downloaded or cloned from
+the internet the first time you try to run it, even a plain shell script like `install.command`.
+Right-click (or Control-click) the file in Finder and choose **Open**, then confirm **Open** in
+the dialog that follows — this is a one-time step per script. Double-clicking normally after that
+works as expected.
 
 ## Get your data in
 
@@ -366,9 +385,9 @@ Your `.env` file is missing, misnamed, or not in the same folder as the script. 
 "Search the live API" above. You don't need this at all if you're bringing in your own data.
 
 **Browser shows "This site can't be reached"**
-Make sure the app is still running (the `start.bat`/terminal window is still open), and that
-you're using the exact address it printed (including the port number) — the port can change
-from the default 8765 if something else was already using it.
+Make sure the app is still running (the `start.bat`/`start.command`/terminal window is still
+open), and that you're using the exact address it printed (including the port number) — the port
+can change from the default 8765 if something else was already using it.
 
 **Dashboard loads but says "No interviews match the current filters"**
 Click **Reset filters** in the filter panel.

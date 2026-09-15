@@ -1,0 +1,6 @@
+# .command files must always check out with LF line endings, never CRLF -- a CRLF
+# shebang line ("#!/bin/bash\r") breaks bash's interpreter parsing on macOS with a
+# "bad interpreter" error. Without this, a Windows machine's core.autocrlf=true
+# would silently convert install.command/start.command to CRLF on checkout and
+# break them for every macOS researcher who clones the repo there.
+*.command text eol=lf

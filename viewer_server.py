@@ -1618,9 +1618,9 @@ class Handler(BaseHTTPRequestHandler):
 
 
 MAX_PORT_ATTEMPTS = 5  # tried in order: the requested port, then the next 4 -- lets
-                        # start.bat's launch just work if a prior run's server (or
-                        # anything else) is still holding the default port, instead
-                        # of crashing with an unexplained address-in-use error.
+                        # start.bat/start.command's launch just work if a prior run's
+                        # server (or anything else) is still holding the default port,
+                        # instead of crashing with an unexplained address-in-use error.
 
 # HTTPServer (and so ThreadingHTTPServer) sets allow_reuse_address = True by default,
 # which sets SO_REUSEADDR on the listening socket. On Windows, unlike Linux, that

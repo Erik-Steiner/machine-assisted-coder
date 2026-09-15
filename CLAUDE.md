@@ -51,7 +51,7 @@ schema, not something to rename.
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
 | Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
-| App setup / installer                   | `install.bat`, `start.bat`, `viewer_server.py`'s `main()` (port retry, `webbrowser.open()`) |
+| App setup / installer                   | `install.bat`/`start.bat` (Windows), `install.command`/`start.command` (macOS), `viewer_server.py`'s `main()` (port retry, `webbrowser.open()`) |
 | Any endpoint                            | `viewer_server.py`'s module docstring — it's the complete, authoritative endpoint list |
 
 ## Hard rules
