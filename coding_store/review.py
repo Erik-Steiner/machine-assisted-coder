@@ -78,7 +78,12 @@ def get_review_candidates(theme_ids, predicted_limit=30):
     return list(candidates.values())
 
 
-def get_progress(dataset_id=None):
+def get_progress(dataset_id=None, scheme_id=None):
+    """scheme_id, when given, scopes coded_segments/by_theme to codes whose
+    theme belongs to that scheme -- so the Coding tab's progress bar reports
+    progress within the active scheme rather than conflating two independent
+    codebooks' counts into one number. total_segments/by_group stay
+    scheme-agnostic (they describe the corpus, not any one codebook)."""
     with schema.get_conn() as conn:
         seg_filter = "WHERE dataset_id=?" if dataset_id else ""
         seg_params = (dataset_id,) if dataset_id else ()
@@ -86,23 +91,41 @@ def get_progress(dataset_id=None):
             f"SELECT COUNT(*) AS n FROM segments {seg_filter}", seg_params
         ).fetchone()["n"]
 
-        coded_filter = "WHERE s.dataset_id=?" if dataset_id else ""
+        coded_where = ["c.deleted_at IS NULL"]
+        coded_params = []
+        if dataset_id:
+            coded_where.append("s.dataset_id=?")
+            coded_params.append(dataset_id)
+        if scheme_id:
+            coded_where.append(
+                "c.theme_id IN (SELECT theme_id FROM themes WHERE scheme_id=?)"
+            )
+            coded_params.append(scheme_id)
+        coded_clause = " AND ".join(coded_where)
         coded_segments = conn.execute(
             f"""SELECT COUNT(DISTINCT c.segment_id) AS n
                 FROM codes c JOIN segments s ON s.segment_id = c.segment_id
-                {coded_filter} {"AND" if coded_filter else "WHERE"} c.deleted_at IS NULL""",
-            seg_params,
+                WHERE {coded_clause}""",
+            coded_params,
         ).fetchone()["n"]
 
-        theme_filter = "WHERE s.dataset_id=?" if dataset_id else ""
+        theme_where = ["c.deleted_at IS NULL"]
+        theme_params = []
+        if dataset_id:
+            theme_where.append("s.dataset_id=?")
+            theme_params.append(dataset_id)
+        if scheme_id:
+            theme_where.append("t.scheme_id=?")
+            theme_params.append(scheme_id)
+        theme_clause = " AND ".join(theme_where)
         by_theme_rows = conn.execute(
             f"""SELECT c.theme_id, t.name, COUNT(*) AS n
                 FROM codes c
                 JOIN segments s ON s.segment_id = c.segment_id
                 LEFT JOIN themes t ON t.theme_id = c.theme_id
-                {theme_filter} {"AND" if theme_filter else "WHERE"} c.deleted_at IS NULL
+                WHERE {theme_clause}
                 GROUP BY c.theme_id""",
-            seg_params,
+            theme_params,
         ).fetchall()
 
         group_filter = "WHERE dataset_id=?" if dataset_id else ""

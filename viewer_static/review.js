@@ -12,18 +12,34 @@
 
 const reviewState = {
   themes: [],
+  loadedSchemeId: null, // last scheme these themes/checkboxes were loaded for
   selectedThemeIds: new Set(),
   candidates: [],
   minWords: 0, // live "min word count" filter, same idea as coding.js's -- hides, never deletes
 };
 
 async function loadReviewThemes() {
-  const res = await fetch("/api/codebook/themes");
+  // codingState.activeSchemeId (Coding tab's scheme switcher) is read-only here.
+  // A scheme switch clears the theme-id selection -- reviewing theme_ids from a
+  // scheme that's no longer active would silently mix codebooks in the queue.
+  if (reviewState.loadedSchemeId !== codingState.activeSchemeId) {
+    reviewState.selectedThemeIds = new Set();
+    reviewState.loadedSchemeId = codingState.activeSchemeId;
+  }
+  const schemePart = codingState.activeSchemeId
+    ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+  const res = await fetch(`/api/codebook/themes${schemePart}`);
   reviewState.themes = await res.json();
   renderReviewThemeCheckboxes();
-  if (reviewState.selectedThemeIds.size) {
-    loadReviewCandidates();
-  }
+  renderReviewSchemeLabel();
+  loadReviewCandidates(); // clears the queue itself when nothing's selected
+}
+
+function renderReviewSchemeLabel() {
+  const el = document.getElementById("reviewSchemeLabel");
+  if (!el) return;
+  const scheme = (codingState.schemes || []).find((s) => s.scheme_id === codingState.activeSchemeId);
+  el.textContent = scheme ? `Scheme: ${scheme.name}` : "";
 }
 
 function renderReviewThemeCheckboxes() {

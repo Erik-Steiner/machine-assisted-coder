@@ -2,6 +2,17 @@
 edit, archive/restore, merge). Depends on activity_log (every mutation here
 is logged) but not on codes.py beyond raw SQL against the codes table for
 merge_themes()'s re-pointing.
+
+Every theme belongs to exactly one scheme (see schemes.py) -- theme_id is
+namespaced as f"{scheme_id}__{slugified name}" so two schemes can each have a
+theme named the same thing with zero collision, while theme_id itself stays a
+single globally-unique TEXT primary key that codes/negatives/predictions/
+model_runs/model_top_terms can keep referencing exactly as before (no schema
+change needed in any of those tables -- scoping is transitive through
+theme_id). Within a scheme, a theme may optionally have a parent_theme_id,
+forming a hierarchy from broad themes down to specific emic sub-codes;
+depth is a cached indentation level recomputed whenever parent_theme_id
+changes, not a source of truth.
 """
 import re
 import unicodedata
@@ -15,14 +26,17 @@ def _slugify(text):
     return text or "theme"
 
 
-def list_themes(include_archived=False):
+def list_themes(include_archived=False, scheme_id=None):
+    where = ["status='active'"] if not include_archived else []
+    params = []
+    if scheme_id is not None:
+        where.append("scheme_id=?")
+        params.append(scheme_id)
+    clause = f"WHERE {' AND '.join(where)}" if where else ""
     with schema.get_conn() as conn:
-        if include_archived:
-            rows = conn.execute("SELECT * FROM themes ORDER BY name").fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT * FROM themes WHERE status='active' ORDER BY name"
-            ).fetchall()
+        rows = conn.execute(
+            f"SELECT * FROM themes {clause} ORDER BY depth, sort_order, name", params
+        ).fetchall()
         themes = [dict(r) for r in rows]
         counts = conn.execute(
             """SELECT theme_id, COUNT(*) AS n FROM codes
@@ -34,11 +48,24 @@ def list_themes(include_archived=False):
     return themes
 
 
-def create_theme(name, description="", example_words="", color="#6b7fd7", actor=schema.DEFAULT_CODER):
+def create_theme(name, description="", example_words="", color="#6b7fd7",
+                  scheme_id=None, parent_theme_id=None, actor=schema.DEFAULT_CODER):
     name = name.strip()
     if not name:
         raise ValueError("theme name is required")
-    base_id = _slugify(name)
+    if not scheme_id:
+        raise ValueError("scheme_id is required")
+
+    parent = None
+    if parent_theme_id:
+        parent = get_theme(parent_theme_id)
+        if parent is None:
+            raise ValueError("parent theme does not exist")
+        if parent["scheme_id"] != scheme_id:
+            raise ValueError("parent theme must belong to the same scheme")
+    depth = (parent["depth"] + 1) if parent else 0
+
+    base_id = f"{scheme_id}__{_slugify(name)}"
     now = schema._now()
     with schema.get_conn() as conn:
         theme_id = base_id
@@ -50,11 +77,16 @@ def create_theme(name, description="", example_words="", color="#6b7fd7", actor=
             theme_id = f"{base_id}_{suffix}"
         conn.execute(
             """INSERT INTO themes (theme_id, name, description, example_words, color,
-                                    status, created_at, updated_at)
-               VALUES (?,?,?,?,?, 'active', ?, ?)""",
-            (theme_id, name, description, example_words, color, now, now),
+                                    status, scheme_id, parent_theme_id, depth, sort_order,
+                                    created_at, updated_at)
+               VALUES (?,?,?,?,?, 'active', ?,?,?,0, ?, ?)""",
+            (theme_id, name, description, example_words, color,
+             scheme_id, parent_theme_id, depth, now, now),
         )
-    activity_log.log_activity(actor, "theme_create", {"theme_id": theme_id, "name": name, "description": description})
+    activity_log.log_activity(actor, "theme_create", {
+        "theme_id": theme_id, "name": name, "description": description,
+        "scheme_id": scheme_id, "parent_theme_id": parent_theme_id,
+    })
     return get_theme(theme_id)
 
 
@@ -66,11 +98,56 @@ def get_theme(theme_id):
     return dict(row) if row else None
 
 
+def _descendant_ids(conn, theme_id, scheme_id):
+    """theme_id's descendants within its own scheme, walked breadth-first from
+    the flat per-scheme theme list -- codebooks here are small (tens/low
+    hundreds of themes), so this is cheap without needing a recursive CTE."""
+    rows = conn.execute(
+        "SELECT theme_id, parent_theme_id FROM themes WHERE scheme_id=?", (scheme_id,)
+    ).fetchall()
+    children_by_parent = {}
+    for r in rows:
+        children_by_parent.setdefault(r["parent_theme_id"], []).append(r["theme_id"])
+    out = []
+    frontier = [theme_id]
+    while frontier:
+        current = frontier.pop()
+        for child_id in children_by_parent.get(current, []):
+            out.append(child_id)
+            frontier.append(child_id)
+    return out
+
+
 def update_theme(theme_id, fields, actor=schema.DEFAULT_CODER):
-    allowed = {"name", "description", "example_words", "color"}
+    allowed = {"name", "description", "example_words", "color", "parent_theme_id", "sort_order"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_theme(theme_id)
+
+    theme = get_theme(theme_id)
+    if theme is None:
+        raise ValueError("theme does not exist")
+
+    reparenting = "parent_theme_id" in updates
+    new_depth = None
+    if reparenting:
+        new_parent_id = updates["parent_theme_id"]
+        if new_parent_id:
+            if new_parent_id == theme_id:
+                raise ValueError("a theme cannot be its own parent")
+            new_parent = get_theme(new_parent_id)
+            if new_parent is None:
+                raise ValueError("parent theme does not exist")
+            if new_parent["scheme_id"] != theme["scheme_id"]:
+                raise ValueError("parent theme must belong to the same scheme")
+            with schema.get_conn() as conn:
+                if new_parent_id in _descendant_ids(conn, theme_id, theme["scheme_id"]):
+                    raise ValueError("cannot move a theme under its own descendant")
+            new_depth = new_parent["depth"] + 1
+        else:
+            new_depth = 0
+        updates["depth"] = new_depth
+
     updates["updated_at"] = schema._now()
     set_clause = ", ".join(f"{k}=?" for k in updates)
     with schema.get_conn() as conn:
@@ -78,6 +155,16 @@ def update_theme(theme_id, fields, actor=schema.DEFAULT_CODER):
             f"UPDATE themes SET {set_clause} WHERE theme_id=?",
             (*updates.values(), theme_id),
         )
+        if reparenting:
+            # depth is a cache, not source of truth -- cascade the shift down
+            # to every descendant so their indentation stays consistent.
+            shift = new_depth - theme["depth"]
+            if shift:
+                for descendant_id in _descendant_ids(conn, theme_id, theme["scheme_id"]):
+                    conn.execute(
+                        "UPDATE themes SET depth = depth + ? WHERE theme_id=?",
+                        (shift, descendant_id),
+                    )
     activity_log.log_activity(actor, "theme_update", {"theme_id": theme_id,
                                           "fields": {k: v for k, v in updates.items() if k != "updated_at"}})
     return get_theme(theme_id)
@@ -107,8 +194,12 @@ def merge_themes(source_theme_id, target_theme_id, actor=schema.DEFAULT_CODER):
     """
     if source_theme_id == target_theme_id:
         raise ValueError("cannot merge a theme into itself")
-    if get_theme(source_theme_id) is None or get_theme(target_theme_id) is None:
+    source_theme = get_theme(source_theme_id)
+    target_theme = get_theme(target_theme_id)
+    if source_theme is None or target_theme is None:
         raise ValueError("both themes must exist")
+    if source_theme["scheme_id"] != target_theme["scheme_id"]:
+        raise ValueError("cannot merge themes across different schemes")
 
     now = schema._now()
     with schema.get_conn() as conn:

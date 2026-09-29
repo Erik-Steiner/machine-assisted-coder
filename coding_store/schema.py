@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS segments (
 CREATE INDEX IF NOT EXISTS idx_segments_feed_item ON segments(item_id);
 CREATE INDEX IF NOT EXISTS idx_segments_dataset ON segments(dataset_id);
 
+CREATE TABLE IF NOT EXISTS schemes (
+    scheme_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS themes (
     theme_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -281,7 +290,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def _now():
@@ -346,6 +355,39 @@ def _migrate(conn):
         conn.execute("ALTER TABLE segments ADD COLUMN speaker_role TEXT")
     if "depth" not in seg_cols:
         conn.execute("ALTER TABLE segments ADD COLUMN depth INTEGER")
+
+    # schema_version 3: multiple independent coding schemes + hierarchical
+    # (parent/child) themes within a scheme. theme_id itself is NOT rewritten
+    # for pre-existing themes -- only themes created after this migration get
+    # the scheme-prefixed theme_id shape (see themes.create_theme()) -- so no
+    # codes/predictions/model_runs/model_top_terms row anywhere needs to
+    # change at all. See docs/DEVELOPMENT.md's Coding subsystem section.
+    theme_cols = {row["name"] for row in conn.execute("PRAGMA table_info(themes)")}
+    if "scheme_id" not in theme_cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN scheme_id TEXT")
+    if "parent_theme_id" not in theme_cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN parent_theme_id TEXT")
+    if "depth" not in theme_cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN depth INTEGER NOT NULL DEFAULT 0")
+    if "sort_order" not in theme_cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+
+    # Backfill: every pre-v3 theme (scheme_id IS NULL) is assigned to one
+    # default scheme created here, so an existing coding.db upgrades with
+    # zero data loss and zero manual action.
+    orphaned = conn.execute(
+        "SELECT COUNT(*) AS n FROM themes WHERE scheme_id IS NULL"
+    ).fetchone()["n"]
+    if orphaned:
+        now = _now()
+        conn.execute(
+            """INSERT OR IGNORE INTO schemes (scheme_id, name, description, status, created_at, updated_at)
+               VALUES ('default', 'Default scheme',
+                       'Auto-created during the v3 migration to hold every theme that existed before multi-scheme support.',
+                       'active', ?, ?)""",
+            (now, now),
+        )
+        conn.execute("UPDATE themes SET scheme_id='default' WHERE scheme_id IS NULL")
 
 
 def _stamp_schema_version(conn):

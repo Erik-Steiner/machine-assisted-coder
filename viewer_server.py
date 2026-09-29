@@ -95,12 +95,24 @@ Endpoints:
            index payload, so this is how the frontend's "Interview contains"
            filter works without loading every transcript into the browser.
 
-    GET  /api/codebook/themes                       -> list codebook themes
-    POST /api/codebook/themes                       -> create a theme
-    POST /api/codebook/themes/<id>/update            -> edit a theme's fields
+    GET  /api/schemes                                -> list coding schemes (independent codebooks)
+    POST /api/schemes                                -> create a scheme
+    POST /api/schemes/<id>/update                    -> edit a scheme's fields
+    POST /api/schemes/<id>/archive                   -> soft-hide a scheme
+    POST /api/schemes/<id>/restore                   -> un-archive a scheme
+
+    GET  /api/codebook/themes?scheme_id=<id>         -> list one scheme's themes (flat, with
+                                                         parent_theme_id/depth for the frontend to
+                                                         render as a tree)
+    POST /api/codebook/themes                        -> create a theme (scheme_id required,
+                                                         parent_theme_id optional -- a hierarchical
+                                                         sub-code under another theme in the same scheme)
+    POST /api/codebook/themes/<id>/update            -> edit a theme's fields (name/description/
+                                                         example_words/color/parent_theme_id/sort_order)
     POST /api/codebook/themes/<id>/archive           -> soft-hide a theme
     POST /api/codebook/themes/<id>/restore           -> un-archive a theme
-    POST /api/codebook/themes/<id>/merge_into         -> merge a theme's codes into another, archive it
+    POST /api/codebook/themes/<id>/merge_into         -> merge a theme's codes into another theme in
+                                                         the same scheme, archive it
 
     GET  /api/coding/segments?item_id=<id>           -> ordered segments + their codes
     POST /api/coding/codes                           -> apply a code to a segment
@@ -113,7 +125,8 @@ Endpoints:
                                                          it can also reach "primary"/"demo" (see
                                                          segment_new_dataset()/run_segment_job())
     GET  /api/coding/segment_status?job_id=..        -> poll a segment_datasets job's progress/result
-    GET  /api/coding/progress?dataset=<id>           -> coding counts by theme/group
+    GET  /api/coding/progress?dataset=<id>&scheme_id=<id>  -> coding counts by theme/group, optionally
+                                                         scoped to one scheme's themes
     GET  /api/coding/model_runs                      -> latest classifier metrics per theme
     GET  /api/coding/model_runs?theme_id=<id>        -> full model_runs history for one theme
     GET  /api/coding/review_candidates?theme_ids=<a,b>&predicted_limit=<30>
@@ -127,8 +140,10 @@ Endpoints:
                                                          value-prop stat for a theme's latest model
                                                          (see classifier.py / scripts/train_classifiers.py)
 
-    GET  /api/export/codebook                        -> writes themes/codes/model_runs to exports/
-                                                         as JSON+CSV (backup / publication supplement)
+    GET  /api/export/codebook?scheme_id=<id>          -> writes schemes/themes/codes/model_runs to
+                                                         exports/ as JSON+CSV (backup / publication
+                                                         supplement); scheme_id optionally limits the
+                                                         themes/codes export to one scheme
     GET  /api/appendix/log?action_type=<t>&since=<ts>  -> the assembled research-action log
     POST /api/appendix/filter_snapshot                -> log the current Browse filter state
     GET  /api/appendix/export                        -> download the log as a self-contained HTML file
@@ -261,6 +276,7 @@ from coding_store import (
     model_runs,
     review,
     schema,
+    schemes,
     segments as segments_store,
     themes,
 )
@@ -997,15 +1013,56 @@ def get_query_status(req):
     return JsonResponse(job)
 
 
+# --- Coding: schemes (independent codebooks) ------------------------------------------
+
+@ROUTER.get("/api/schemes")
+def get_schemes(req):
+    include_archived = req.query.get("include_archived", "") == "1"
+    return JsonResponse(schemes.list_schemes(include_archived=include_archived))
+
+
+@ROUTER.post("/api/schemes", json_body=True, required=["name"])
+def post_schemes(req):
+    body = req.body
+    try:
+        scheme = schemes.create_scheme(
+            name=body["name"], description=body.get("description", ""),
+            actor=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(scheme, status=201)
+
+
+@ROUTER.post("/api/schemes/<scheme_id>/update", json_body=True, loaders={"scheme_id": schemes.get_scheme})
+def post_scheme_update(req):
+    scheme_id = req.path_params["scheme_id"]
+    return JsonResponse(schemes.update_scheme(scheme_id, req.body, actor=req.body.get("coder") or CODER_NAME))
+
+
+@ROUTER.post("/api/schemes/<scheme_id>/archive", json_body="optional", loaders={"scheme_id": schemes.get_scheme})
+def post_scheme_archive(req):
+    scheme_id = req.path_params["scheme_id"]
+    return JsonResponse(schemes.set_scheme_status(scheme_id, "archived", actor=req.body.get("coder") or CODER_NAME))
+
+
+@ROUTER.post("/api/schemes/<scheme_id>/restore", json_body="optional", loaders={"scheme_id": schemes.get_scheme})
+def post_scheme_restore(req):
+    scheme_id = req.path_params["scheme_id"]
+    return JsonResponse(schemes.set_scheme_status(scheme_id, "active", actor=req.body.get("coder") or CODER_NAME))
+
+
 # --- Coding: codebook ---------------------------------------------------------------
 
 @ROUTER.get("/api/codebook/themes")
 def get_codebook_themes(req):
     include_archived = req.query.get("include_archived", "") == "1"
-    return JsonResponse(themes.list_themes(include_archived=include_archived))
+    return JsonResponse(themes.list_themes(
+        include_archived=include_archived, scheme_id=req.query.get("scheme_id"),
+    ))
 
 
-@ROUTER.post("/api/codebook/themes", json_body=True)
+@ROUTER.post("/api/codebook/themes", json_body=True, required=["name", "scheme_id"])
 def post_codebook_themes(req):
     body = req.body
     try:
@@ -1014,6 +1071,8 @@ def post_codebook_themes(req):
             description=body.get("description", ""),
             example_words=body.get("example_words", ""),
             color=body.get("color") or "#6b7fd7",
+            scheme_id=body["scheme_id"],
+            parent_theme_id=body.get("parent_theme_id") or None,
             actor=body.get("coder") or CODER_NAME,
         )
     except ValueError as exc:
@@ -1024,7 +1083,11 @@ def post_codebook_themes(req):
 @ROUTER.post("/api/codebook/themes/<theme_id>/update", json_body=True, loaders={"theme_id": themes.get_theme})
 def post_theme_update(req):
     theme_id = req.path_params["theme_id"]
-    return JsonResponse(themes.update_theme(theme_id, req.body, actor=req.body.get("coder") or CODER_NAME))
+    try:
+        updated = themes.update_theme(theme_id, req.body, actor=req.body.get("coder") or CODER_NAME)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(updated)
 
 
 @ROUTER.post("/api/codebook/themes/<theme_id>/archive", json_body="optional", loaders={"theme_id": themes.get_theme})
@@ -1108,7 +1171,9 @@ def get_coding_segment_status(req):
 
 @ROUTER.get("/api/coding/progress")
 def get_coding_progress(req):
-    return JsonResponse(review.get_progress(dataset_id=req.query.get("dataset")))
+    return JsonResponse(review.get_progress(
+        dataset_id=req.query.get("dataset"), scheme_id=req.query.get("scheme_id"),
+    ))
 
 
 @ROUTER.get("/api/coding/review_candidates")
@@ -1188,7 +1253,7 @@ def get_model_interpret(req):
 
 @ROUTER.get("/api/export/codebook")
 def get_export_codebook(req):
-    paths = activity_log.export_codebook(EXPORTS_DIR)
+    paths = activity_log.export_codebook(EXPORTS_DIR, scheme_id=req.query.get("scheme_id"))
     activity_log.log_activity(CODER_NAME, "codebook_export", {"files": [p.name for p in paths]})
     return JsonResponse({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
 

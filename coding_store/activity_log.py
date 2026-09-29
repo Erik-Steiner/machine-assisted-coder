@@ -77,19 +77,26 @@ def get_appendix_feed(action_type=None, since=None):
     """list_activity()'s rows, enriched for display: theme names resolved from
     any theme_id/source_theme_id/target_theme_id in `details` (looked up
     against every theme regardless of status, since an archived or
-    merged-away theme is still part of the historical record), and, for
-    training_run rows, the hyperparameters used (joined from
-    model_run_params via `model_version` in `details`). This is the
-    assembled feed the Web Appendix tab renders."""
+    merged-away theme is still part of the historical record), plus each
+    resolved theme's scheme name (so "Created theme 'growth'" is
+    disambiguated when two schemes both have one), and, for training_run
+    rows, the hyperparameters used (joined from model_run_params via
+    `model_version` in `details`). This is the assembled feed the Web
+    Appendix tab renders."""
     rows = list_activity(action_type=action_type, since=since)
     with schema.get_conn() as conn:
-        theme_names = {r["theme_id"]: r["name"] for r in conn.execute("SELECT theme_id, name FROM themes")}
+        theme_rows = conn.execute("SELECT theme_id, name, scheme_id FROM themes").fetchall()
+        scheme_names = {r["scheme_id"]: r["name"] for r in conn.execute("SELECT scheme_id, name FROM schemes")}
+    theme_names = {r["theme_id"]: r["name"] for r in theme_rows}
+    theme_scheme_names = {r["theme_id"]: scheme_names.get(r["scheme_id"]) for r in theme_rows}
     for row in rows:
         details = row["details"]
         for key in ("theme_id", "source_theme_id", "target_theme_id"):
             tid = details.get(key)
             if tid and theme_names.get(tid):
                 details[f"{key}_name"] = theme_names[tid]
+                if theme_scheme_names.get(tid):
+                    details[f"{key}_scheme_name"] = theme_scheme_names[tid]
         if row["action_type"] == "training_run":
             model_version = details.get("model_version")
             params = get_model_run_params(model_version) if model_version else None
@@ -109,9 +116,11 @@ def get_model_run_params(model_version):
     return {"params": json.loads(row["params_json"]), "trained_at": row["trained_at"]}
 
 
+SCHEME_EXPORT_FIELDS = ["scheme_id", "name", "description", "status", "created_at", "updated_at"]
 THEME_EXPORT_FIELDS = [
     "theme_id", "name", "description", "example_words", "color", "status",
-    "merged_into", "created_at", "updated_at",
+    "merged_into", "scheme_id", "parent_theme_id", "depth", "sort_order",
+    "created_at", "updated_at",
 ]
 CODE_EXPORT_FIELDS = [
     "code_id", "segment_id", "theme_id", "coder", "source", "note", "created_at", "deleted_at",
@@ -122,21 +131,38 @@ MODEL_RUN_EXPORT_FIELDS = [
 ]
 
 
-def export_codebook(output_dir):
-    """Dump the researcher's actual codebook -- every theme regardless of status,
-    every code including soft-deleted ones (deleted_at is provenance, not
-    deletion), and the latest model_runs -- to JSON+CSV pairs in output_dir.
-    This is the only export of coding.db's substance the app offers: use it as
-    a backup, or as a journal's supplementary material. Mirrors
-    query_api.write_export's JSON+CSV shape so both export paths in the app
-    produce the same kind of file on disk. Returns the list of paths written.
+def export_codebook(output_dir, scheme_id=None):
+    """Dump the researcher's actual codebook -- every scheme, every theme
+    regardless of status, every code including soft-deleted ones (deleted_at
+    is provenance, not deletion), and the latest model_runs -- to JSON+CSV
+    pairs in output_dir. This is the only export of coding.db's substance the
+    app offers: use it as a backup, or as a journal's supplementary material.
+    Mirrors query_api.write_export's JSON+CSV shape so both export paths in
+    the app produce the same kind of file on disk.
+
+    scheme_id, when given, filters themes/codes to that one scheme -- e.g. to
+    publish one study's codebook as supplementary material without hand-
+    filtering the combined export. schemes.json/csv always lists every
+    scheme (it's small, and knowing a scheme exists is part of the record
+    even when exporting a different one's codebook). Returns the list of
+    paths written.
     """
     output_dir = Path(output_dir)
     output_dir.mkdir(exist_ok=True)
 
     with schema.get_conn() as conn:
-        themes = [dict(r) for r in conn.execute("SELECT * FROM themes ORDER BY name").fetchall()]
-        codes = [dict(r) for r in conn.execute("SELECT * FROM codes ORDER BY code_id").fetchall()]
+        schemes = [dict(r) for r in conn.execute("SELECT * FROM schemes ORDER BY name").fetchall()]
+        if scheme_id:
+            themes = [dict(r) for r in conn.execute(
+                "SELECT * FROM themes WHERE scheme_id=? ORDER BY name", (scheme_id,)
+            ).fetchall()]
+            codes = [dict(r) for r in conn.execute(
+                """SELECT c.* FROM codes c JOIN themes t ON t.theme_id = c.theme_id
+                   WHERE t.scheme_id=? ORDER BY c.code_id""", (scheme_id,)
+            ).fetchall()]
+        else:
+            themes = [dict(r) for r in conn.execute("SELECT * FROM themes ORDER BY name").fetchall()]
+            codes = [dict(r) for r in conn.execute("SELECT * FROM codes ORDER BY code_id").fetchall()]
         model_runs = [
             dict(r) for r in
             conn.execute("SELECT * FROM model_runs ORDER BY theme_id, trained_at DESC").fetchall()
@@ -144,6 +170,7 @@ def export_codebook(output_dir):
 
     paths = []
     for name, rows, fields in (
+        ("schemes", schemes, SCHEME_EXPORT_FIELDS),
         ("themes", themes, THEME_EXPORT_FIELDS),
         ("codes", codes, CODE_EXPORT_FIELDS),
         ("model_runs", model_runs, MODEL_RUN_EXPORT_FIELDS),

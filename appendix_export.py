@@ -14,6 +14,10 @@ ACTION_LABELS = {
     "theme_archive": "Theme archived",
     "theme_restore": "Theme restored",
     "theme_merge": "Themes merged",
+    "scheme_create": "Scheme created",
+    "scheme_update": "Scheme edited",
+    "scheme_archive": "Scheme archived",
+    "scheme_restore": "Scheme restored",
     "training_run": "Classifier training run",
     "query_download": "Data downloaded",
     "codebook_export": "Codebook exported",
@@ -38,6 +42,15 @@ def _summarize(action_type, details):
         src = details.get("source_theme_id_name", details.get("source_theme_id", "?"))
         dst = details.get("target_theme_id_name", details.get("target_theme_id", "?"))
         return f'Merged "{src}" into "{dst}"'
+    if action_type == "scheme_create":
+        return f'Created scheme "{details.get("name", "?")}"'
+    if action_type == "scheme_update":
+        fields = ", ".join(details.get("fields", {}).keys()) or "no fields"
+        return f'Edited scheme "{details.get("scheme_id", "?")}" ({fields})'
+    if action_type == "scheme_archive":
+        return f'Archived scheme "{details.get("scheme_id", "?")}"'
+    if action_type == "scheme_restore":
+        return f'Restored scheme "{details.get("scheme_id", "?")}"'
     if action_type == "training_run":
         trained = ", ".join(t["name"] for t in details.get("trained", [])) or "none"
         return f'Trained model {details.get("model_version", "?")} -- themes: {trained}'

@@ -130,19 +130,36 @@
     <div id="codingNavBar">
       <button id="codingPrevBtn">&larr; Previous</button>
       <button id="codingNextBtn">Next &rarr;</button>
+      <label id="schemeSwitcherLabel">Scheme <select id="schemeSwitcher"></select></label>
+      <button id="toggleSchemes" class="btn-secondary">Manage schemes</button>
       <button id="toggleCodebook" class="btn-secondary">Codebook</button>
       <button id="toggleDatasets" class="btn-secondary">Datasets</button>
       <label id="codingMinWordsLabel">Min words <input id="codingMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
       <div id="codingProgress" class="hint"></div>
     </div>
 
+    <div id="schemesPanel" class="hidden">
+      <h3>Coding schemes</h3>
+      <p class="hint">Each scheme is an independent codebook -- switch the selector above to code
+        against a different one without touching any other scheme's themes or codes.</p>
+      <div id="schemesList"></div>
+      <div class="theme-form">
+        <input id="newSchemeName" type="text" placeholder="Scheme name, e.g. Inductive pass 2">
+        <input id="newSchemeDesc" type="text" placeholder="Description (optional)">
+        <button id="addSchemeBtn">Add scheme</button>
+      </div>
+      <div id="schemeFormStatus" class="hint"></div>
+    </div>
+
     <div id="codebookPanel" class="hidden">
       <h3>Codebook</h3>
       <div id="themeList"></div>
-      <div class="theme-form">
+      <div class="theme-form" id="newThemeForm">
+        <div id="newThemeParentHint" class="hint hidden"></div>
         <input id="newThemeName" type="text" placeholder="Theme name, e.g. Safety &amp; Alignment">
         <input id="newThemeDesc" type="text" placeholder="Description (what counts as this theme)">
         <button id="addThemeBtn">Add theme</button>
+        <button id="cancelSubThemeBtn" class="btn-secondary hidden">Cancel sub-code</button>
       </div>
       <div id="themeFormStatus" class="hint"></div>
     </div>
@@ -336,6 +353,7 @@
       <button id="trainModelsBtn">Train / retrain all eligible themes</button>
       <div id="modelTrainStatus" class="hint"></div>
     </div>
+    <div id="modelSchemeLabel" class="hint"></div>
     <div id="modelBanner" class="hint"></div>
     <div id="modelThemeItems"></div>
   </aside>
@@ -389,6 +407,7 @@
     <p class="hint">Pick one or more themes to build a recode queue -- every segment already
       coded under them, plus segments a trained model top-scores for them but that aren't
       coded yet.</p>
+    <div id="reviewSchemeLabel" class="hint"></div>
     <div id="reviewThemeSelect" class="checkbox-list"></div>
     <label id="reviewMinWordsLabel">Min words <input id="reviewMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
   </aside>

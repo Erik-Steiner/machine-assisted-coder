@@ -7,7 +7,13 @@
 // this file only adds coding-specific rendering on top.
 
 const codingState = {
-  themes: [], // active themes: [{theme_id, name, description, color, code_count}]
+  schemes: [], // independent codebooks: [{scheme_id, name, description, theme_count, code_count}]
+  activeSchemeId: null, // which scheme's themes are currently loaded/shown -- the single
+                         // source of truth model.js/review.js read (never set) on load
+  themes: [], // the active scheme's themes, flat but each carrying parent_theme_id/depth so
+              // renderThemeList()/buildChipsHtml() can build a tree client-side:
+              // [{theme_id, name, description, color, code_count, scheme_id, parent_theme_id, depth}]
+  pendingParentThemeId: null, // set by "+ Add sub-code"; read/cleared by addTheme()
   modelRuns: {}, // {theme_id: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at}}
   datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
@@ -16,6 +22,35 @@ const codingState = {
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
   minWords: 0, // live "min word count" filter -- segments below this are hidden, not deleted
 };
+
+// Builds {parent_theme_id_or_null: [theme, ...]} from the flat codingState.themes
+// array -- the one shared helper renderThemeList()/buildChipsHtml()'s numbering/
+// startMergeUI()'s descendant-exclusion all walk instead of each re-deriving it.
+function themesByParent(themeList) {
+  const map = new Map();
+  themeList.forEach((t) => {
+    const key = t.parent_theme_id || null;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(t);
+  });
+  return map;
+}
+
+// theme_id's descendants within codingState.themes, walked from themesByParent()'s
+// map -- used to keep a theme from being merged into or reparented under its own
+// child (the store layer also rejects this; this is just so the UI never offers it).
+function descendantThemeIds(themeId, byParent) {
+  const out = [];
+  const frontier = [themeId];
+  while (frontier.length) {
+    const current = frontier.pop();
+    (byParent.get(current) || []).forEach((child) => {
+      out.push(child.theme_id);
+      frontier.push(child.theme_id);
+    });
+  }
+  return out;
+}
 
 // Segments below minWords, or whose speaker_role is excluded, stay in
 // codingState.segments (data untouched) but are skipped by rendering and by
@@ -28,11 +63,117 @@ function visibleSegmentIndices() {
   return out;
 }
 
+// --- Schemes (independent codebooks) -------------------------------------------------
+//
+// codingState.activeSchemeId is the single source of truth for which codebook is
+// currently in view -- the Coding tab is the only place it's ever changed;
+// model.js/review.js just read it when they load their own theme lists.
+
+async function loadSchemes() {
+  const res = await fetch("/api/schemes");
+  codingState.schemes = await res.json();
+  if (!codingState.activeSchemeId || !codingState.schemes.some((s) => s.scheme_id === codingState.activeSchemeId)) {
+    codingState.activeSchemeId = codingState.schemes.length ? codingState.schemes[0].scheme_id : null;
+  }
+  renderSchemeSwitcher();
+  renderSchemesList();
+}
+
+function renderSchemeSwitcher() {
+  const select = document.getElementById("schemeSwitcher");
+  select.innerHTML = codingState.schemes
+    .map((s) => `<option value="${escapeHtml(s.scheme_id)}">${escapeHtml(s.name)} (${s.theme_count})</option>`)
+    .join("");
+  if (codingState.activeSchemeId) select.value = codingState.activeSchemeId;
+}
+
+async function switchScheme(schemeId) {
+  codingState.activeSchemeId = schemeId;
+  await loadThemes();
+}
+
+function renderSchemesList() {
+  const container = document.getElementById("schemesList");
+  container.innerHTML = "";
+  if (!codingState.schemes.length) {
+    container.innerHTML = '<div class="hint">No schemes yet — add one below.</div>';
+    return;
+  }
+  codingState.schemes.forEach((s) => container.appendChild(renderSchemeRow(s)));
+}
+
+function renderSchemeRow(s) {
+  const row = document.createElement("div");
+  row.className = "theme-row";
+  row.dataset.schemeId = s.scheme_id;
+  const descHtml = s.description
+    ? `<div class="theme-row-desc">${escapeHtml(s.description)}</div>`
+    : "";
+  row.innerHTML =
+    `<div class="theme-row-main">` +
+    `<span class="theme-row-name">${escapeHtml(s.name)}</span>` +
+    `<span class="theme-row-count">${s.theme_count} theme(s), ${s.code_count} code(s)</span>` +
+    `<span class="theme-row-actions">` +
+    `<button class="btn-secondary scheme-archive-btn" data-id="${escapeHtml(s.scheme_id)}">Archive</button>` +
+    `</span>` +
+    `</div>` +
+    descHtml;
+  return row;
+}
+
+async function addScheme() {
+  const nameEl = document.getElementById("newSchemeName");
+  const descEl = document.getElementById("newSchemeDesc");
+  const statusEl = document.getElementById("schemeFormStatus");
+  const name = nameEl.value.trim();
+  if (!name) {
+    statusEl.textContent = "Name is required.";
+    return;
+  }
+  statusEl.textContent = "Adding…";
+  try {
+    const res = await fetch("/api/schemes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description: descEl.value.trim() }),
+    });
+    const data = await res.json();
+    if (data.error) {
+      statusEl.textContent = "Error: " + data.error;
+      return;
+    }
+    nameEl.value = "";
+    descEl.value = "";
+    statusEl.textContent = "";
+    codingState.activeSchemeId = data.scheme_id; // switch straight to the new scheme
+    await loadSchemes();
+    await loadThemes();
+  } catch (err) {
+    statusEl.textContent = "Request failed — is the server running?";
+  }
+}
+
+async function archiveScheme(schemeId) {
+  const scheme = codingState.schemes.find((s) => s.scheme_id === schemeId);
+  if (!scheme) return;
+  if (!confirm(`Archive scheme "${scheme.name}"? Its themes and codes are kept, but it won't be offered as a scheme to code against.`)) return;
+  await fetch(`/api/schemes/${encodeURIComponent(schemeId)}/archive`, { method: "POST" });
+  await loadSchemes();
+  if (codingState.activeSchemeId !== schemeId) return;
+  await loadThemes();
+}
+
 // --- Codebook (themes) --------------------------------------------------------------
 
 async function loadThemes() {
+  if (!codingState.activeSchemeId) {
+    codingState.themes = [];
+    renderThemeList();
+    renderSegments();
+    return;
+  }
   const [themesRes, runsRes] = await Promise.all([
-    fetch("/api/codebook/themes"),
+    fetch(`/api/codebook/themes?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`),
     fetch("/api/coding/model_runs"),
   ]);
   codingState.themes = await themesRes.json();
@@ -48,15 +189,21 @@ function renderThemeList() {
     container.innerHTML = '<div class="hint">No themes yet — add one below to start coding.</div>';
     return;
   }
-  codingState.themes.forEach((t) => {
-    container.appendChild(renderThemeRow(t));
-  });
+  const byParent = themesByParent(codingState.themes);
+  const appendBranch = (parentId) => {
+    (byParent.get(parentId) || []).forEach((t) => {
+      container.appendChild(renderThemeRow(t));
+      appendBranch(t.theme_id);
+    });
+  };
+  appendBranch(null);
 }
 
 function renderThemeRow(t) {
   const row = document.createElement("div");
   row.className = "theme-row";
   row.dataset.themeId = t.theme_id;
+  row.style.marginLeft = Math.min(t.depth || 0, 6) * 20 + "px";
   const descHtml = t.description
     ? `<div class="theme-row-desc">${escapeHtml(t.description)}</div>`
     : `<div class="theme-row-desc theme-row-desc-empty">No description yet — click Edit to add one.</div>`;
@@ -72,6 +219,7 @@ function renderThemeRow(t) {
     `<span class="theme-row-count">${t.code_count}</span>` +
     badgeHtml +
     `<span class="theme-row-actions">` +
+    `<button class="btn-secondary theme-add-sub-btn" data-id="${escapeHtml(t.theme_id)}">+ Add sub-code</button>` +
     `<button class="btn-secondary theme-edit-btn" data-id="${escapeHtml(t.theme_id)}">Edit</button>` +
     `<button class="btn-secondary theme-merge-btn" data-id="${escapeHtml(t.theme_id)}">Merge</button>` +
     `<button class="btn-secondary theme-archive-btn" data-id="${escapeHtml(t.theme_id)}">Archive</button>` +
@@ -79,6 +227,25 @@ function renderThemeRow(t) {
     `</div>` +
     descHtml;
   return row;
+}
+
+// Pre-fills the "add theme" form to create a sub-code under parentId -- cleared
+// after a successful add (or Cancel) by resetPendingSubTheme().
+function startAddSubTheme(parentId) {
+  const parent = codingState.themes.find((t) => t.theme_id === parentId);
+  if (!parent) return;
+  codingState.pendingParentThemeId = parentId;
+  const hint = document.getElementById("newThemeParentHint");
+  hint.textContent = `Adding a sub-code under "${parent.name}".`;
+  hint.classList.remove("hidden");
+  document.getElementById("cancelSubThemeBtn").classList.remove("hidden");
+  document.getElementById("newThemeName").focus();
+}
+
+function resetPendingSubTheme() {
+  codingState.pendingParentThemeId = null;
+  document.getElementById("newThemeParentHint").classList.add("hidden");
+  document.getElementById("cancelSubThemeBtn").classList.add("hidden");
 }
 
 function startEditUI(themeId) {
@@ -116,7 +283,9 @@ async function saveThemeEdit(themeId) {
 
 function startMergeUI(themeId) {
   const row = document.querySelector(`.theme-row[data-theme-id="${themeId}"]`);
-  const others = codingState.themes.filter((t) => t.theme_id !== themeId);
+  const byParent = themesByParent(codingState.themes);
+  const descendants = new Set(descendantThemeIds(themeId, byParent));
+  const others = codingState.themes.filter((t) => t.theme_id !== themeId && !descendants.has(t.theme_id));
   if (!row) return;
   if (!others.length) {
     alert("No other theme to merge into yet — add one first.");
@@ -163,12 +332,20 @@ async function addTheme() {
     statusEl.textContent = "Name is required.";
     return;
   }
+  if (!codingState.activeSchemeId) {
+    statusEl.textContent = "Add a scheme first (Manage schemes, above).";
+    return;
+  }
   statusEl.textContent = "Adding…";
   try {
     const res = await fetch("/api/codebook/themes", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, description: descEl.value.trim() }),
+      body: JSON.stringify({
+        name, description: descEl.value.trim(),
+        scheme_id: codingState.activeSchemeId,
+        parent_theme_id: codingState.pendingParentThemeId,
+      }),
     });
     const data = await res.json();
     if (data.error) {
@@ -178,6 +355,7 @@ async function addTheme() {
     nameEl.value = "";
     descEl.value = "";
     statusEl.textContent = "";
+    resetPendingSubTheme();
     await loadThemes();
   } catch (err) {
     statusEl.textContent = "Request failed — is the server running?";
@@ -367,14 +545,25 @@ async function unloadDataset(datasetId) {
 
 // --- Shared segment-chip rendering + code API (reused by review.js) -------------------
 
+// Numbers only top-level (depth 0) themes for the 1-9 keyboard shortcuts --
+// broad themes get the low-friction numeric path, specific child/sub-codes are
+// click-only. See toggleFocusedSegmentTheme(), which looks up the same
+// depth-0-only ordering by index.
 function buildChipsHtml(themeIds, themes) {
+  let topLevelIndex = 0;
   return themes
-    .map((t, i) => {
+    .map((t) => {
       const active = themeIds.includes(t.theme_id);
-      const num = i < 9 ? `<span class="chip-num">${i + 1}</span>` : "";
+      let num = "";
+      if ((t.depth || 0) === 0) {
+        num = topLevelIndex < 9 ? `<span class="chip-num">${topLevelIndex + 1}</span>` : "";
+        topLevelIndex += 1;
+      }
+      const marginPx = Math.min(t.depth || 0, 6) * 10;
       return (
         `<button type="button" class="theme-chip${active ? " active" : ""}" ` +
-        `data-theme="${escapeHtml(t.theme_id)}" style="--chip-color:${escapeHtml(t.color || "#6b7fd7")}">` +
+        `data-theme="${escapeHtml(t.theme_id)}" ` +
+        `style="--chip-color:${escapeHtml(t.color || "#6b7fd7")};margin-left:${marginPx}px">` +
         `${num}${escapeHtml(t.name)}</button>`
       );
     })
@@ -521,7 +710,9 @@ function moveSegmentFocus(delta) {
 
 function toggleFocusedSegmentTheme(themeIdx) {
   if (codingState.focusIndex < 0) return;
-  const theme = codingState.themes[themeIdx];
+  // Only depth-0 (top-level) themes get a numeric shortcut -- see buildChipsHtml().
+  const topLevel = codingState.themes.filter((t) => (t.depth || 0) === 0);
+  const theme = topLevel[themeIdx];
   const seg = codingState.segments[codingState.focusIndex];
   if (!theme || !seg) return;
   if (seg.speaker_role === "interviewer") return; // not coded, per the interviewer-turn default
@@ -529,7 +720,8 @@ function toggleFocusedSegmentTheme(themeIdx) {
 }
 
 async function refreshThemeCounts() {
-  const res = await fetch("/api/codebook/themes");
+  if (!codingState.activeSchemeId) return;
+  const res = await fetch(`/api/codebook/themes?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`);
   const themes = await res.json();
   const byId = new Map(themes.map((t) => [t.theme_id, t.code_count]));
   codingState.themes.forEach((t) => {
@@ -543,7 +735,9 @@ async function refreshThemeCounts() {
 async function refreshProgress() {
   const el = document.getElementById("codingProgress");
   try {
-    const res = await fetch(`/api/coding/progress?dataset=${encodeURIComponent(state.datasetId)}`);
+    const schemePart = codingState.activeSchemeId
+      ? `&scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+    const res = await fetch(`/api/coding/progress?dataset=${encodeURIComponent(state.datasetId)}${schemePart}`);
     const p = await res.json();
     const needing = Object.entries(p.by_theme || {})
       .filter(([, v]) => v.count < 25)
@@ -603,6 +797,22 @@ function bindCodingEvents() {
   document.getElementById("toggleDatasets").addEventListener("click", () => {
     document.getElementById("datasetsPanel").classList.toggle("hidden");
   });
+  document.getElementById("toggleSchemes").addEventListener("click", () => {
+    document.getElementById("schemesPanel").classList.toggle("hidden");
+  });
+  document.getElementById("schemeSwitcher").addEventListener("change", (e) => {
+    switchScheme(e.target.value);
+  });
+  document.getElementById("addSchemeBtn").addEventListener("click", addScheme);
+  document.getElementById("newSchemeName").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") addScheme();
+  });
+  document.getElementById("schemesList").addEventListener("click", (e) => {
+    if (e.target.classList.contains("scheme-archive-btn")) {
+      archiveScheme(e.target.dataset.id);
+    }
+  });
+  document.getElementById("cancelSubThemeBtn").addEventListener("click", resetPendingSubTheme);
   document.getElementById("codingMinWords").addEventListener("input", (e) => {
     codingState.minWords = Number(e.target.value) || 0;
     if (codingState.focusIndex >= 0 && (codingState.segments[codingState.focusIndex].word_count || 0) < codingState.minWords) {
@@ -616,7 +826,9 @@ function bindCodingEvents() {
   });
 
   document.getElementById("themeList").addEventListener("click", (e) => {
-    if (e.target.classList.contains("theme-edit-btn")) {
+    if (e.target.classList.contains("theme-add-sub-btn")) {
+      startAddSubTheme(e.target.dataset.id);
+    } else if (e.target.classList.contains("theme-edit-btn")) {
       startEditUI(e.target.dataset.id);
     } else if (e.target.classList.contains("theme-edit-save")) {
       saveThemeEdit(e.target.dataset.id);
@@ -683,6 +895,7 @@ function bindCodingEvents() {
 
 async function initCoding() {
   bindCodingEvents();
+  await loadSchemes();
   await loadThemes();
   await loadDatasetStatuses();
 }

@@ -751,9 +751,10 @@ button.btn-secondary {
   max-height: 260px;
   overflow-y: auto;
 }
-#codebookPanel.hidden, #datasetsPanel.hidden { display: none; }
-#codebookPanel h3, #datasetsPanel h3 { margin: 0 0 10px 0; font-size: 14px; }
-#datasetsPanel > .hint { margin-bottom: 10px; }
+#codebookPanel.hidden, #datasetsPanel.hidden, #schemesPanel.hidden { display: none; }
+#codebookPanel h3, #datasetsPanel h3, #schemesPanel h3 { margin: 0 0 10px 0; font-size: 14px; }
+#datasetsPanel > .hint, #schemesPanel > .hint { margin-bottom: 10px; }
+#newThemeParentHint.hidden, #cancelSubThemeBtn.hidden { display: none; }
 
 .dataset-row {
   padding: 7px 0;

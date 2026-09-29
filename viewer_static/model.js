@@ -20,16 +20,31 @@ const modelState = {
 // --- Theme list / sidebar --------------------------------------------------------------
 
 async function loadModelThemes() {
+  // codingState.activeSchemeId (set by the Coding tab's scheme switcher) is the
+  // shared source of truth for which scheme's themes this sidebar shows -- Model
+  // only reads it, never sets it. Training itself still runs across every
+  // scheme's eligible themes in one pass (see startTraining()) until scheme-scoped
+  // training ships as a follow-up.
+  const schemePart = codingState.activeSchemeId
+    ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
   const [themesRes, runsRes, progressRes] = await Promise.all([
-    fetch("/api/codebook/themes"),
+    fetch(`/api/codebook/themes${schemePart}`),
     fetch("/api/coding/model_runs"),
-    fetch("/api/coding/progress"),
+    fetch(`/api/coding/progress${schemePart}`),
   ]);
   modelState.themes = await themesRes.json();
   modelState.latestRuns = await runsRes.json();
   modelState.progress = await progressRes.json();
   renderModelBanner();
   renderModelThemeList();
+  renderModelSchemeLabel();
+}
+
+function renderModelSchemeLabel() {
+  const el = document.getElementById("modelSchemeLabel");
+  if (!el) return;
+  const scheme = (codingState.schemes || []).find((s) => s.scheme_id === codingState.activeSchemeId);
+  el.textContent = scheme ? `Scheme: ${scheme.name}` : "";
 }
 
 function renderModelBanner() {

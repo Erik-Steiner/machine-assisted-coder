@@ -15,6 +15,10 @@ const ACTION_LABELS = {
   theme_archive: "Theme archived",
   theme_restore: "Theme restored",
   theme_merge: "Themes merged",
+  scheme_create: "Scheme created",
+  scheme_update: "Scheme edited",
+  scheme_archive: "Scheme archived",
+  scheme_restore: "Scheme restored",
   training_run: "Classifier training run",
   query_download: "Data downloaded",
   interview_import: "Transcript imported",
@@ -27,20 +31,39 @@ const ACTION_LABELS = {
   filter_snapshot: "Browse filter snapshot",
 };
 
+// " (scheme: X)" when get_appendix_feed() resolved a scheme name for this
+// key's theme_id -- disambiguates two schemes that happen to have a
+// same-named theme (see coding_store.activity_log.get_appendix_feed()).
+function schemeSuffix(details, key) {
+  const name = details[`${key}_scheme_name`];
+  return name ? ` (scheme: ${name})` : "";
+}
+
 function summarizeAppendixRow(actionType, details) {
   switch (actionType) {
     case "theme_create":
-      return `Created theme "${details.name || "?"}"`;
+      return `Created theme "${details.name || "?"}"${schemeSuffix(details, "theme_id")}`;
     case "theme_update": {
       const fields = Object.keys(details.fields || {}).join(", ") || "no fields";
-      return `Edited theme "${details.theme_id_name || details.theme_id || "?"}" (${fields})`;
+      return `Edited theme "${details.theme_id_name || details.theme_id || "?"}"${schemeSuffix(details, "theme_id")} (${fields})`;
     }
     case "theme_archive":
-      return `Archived theme "${details.theme_id_name || details.theme_id || "?"}"`;
+      return `Archived theme "${details.theme_id_name || details.theme_id || "?"}"${schemeSuffix(details, "theme_id")}`;
     case "theme_restore":
-      return `Restored theme "${details.theme_id_name || details.theme_id || "?"}"`;
+      return `Restored theme "${details.theme_id_name || details.theme_id || "?"}"${schemeSuffix(details, "theme_id")}`;
     case "theme_merge":
-      return `Merged "${details.source_theme_id_name || details.source_theme_id || "?"}" into "${details.target_theme_id_name || details.target_theme_id || "?"}"`;
+      return `Merged "${details.source_theme_id_name || details.source_theme_id || "?"}" into ` +
+        `"${details.target_theme_id_name || details.target_theme_id || "?"}"${schemeSuffix(details, "target_theme_id")}`;
+    case "scheme_create":
+      return `Created scheme "${details.name || "?"}"`;
+    case "scheme_update": {
+      const fields = Object.keys(details.fields || {}).join(", ") || "no fields";
+      return `Edited scheme "${details.scheme_id || "?"}" (${fields})`;
+    }
+    case "scheme_archive":
+      return `Archived scheme "${details.scheme_id || "?"}"`;
+    case "scheme_restore":
+      return `Restored scheme "${details.scheme_id || "?"}"`;
     case "training_run": {
       const trained = (details.trained || []).map((t) => t.name).join(", ") || "none";
       return `Trained model ${details.model_version || "?"} — themes: ${trained}`;
