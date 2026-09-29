@@ -1,0 +1,9 @@
+# Optional: only needed for the embedding-based ("richer") topic model engine in the Model
+# tab. The default install (requirements.txt) never pulls this in -- it drags in PyTorch as a
+# transitive dependency (hundreds of MB), far heavier than anything else this app needs.
+#
+# Install with:
+#   pip install -r requirements-embeddings.txt
+#
+# See docs/DEVELOPMENT.md's Coding subsystem section for what this unlocks.
+sentence-transformers>=3.0

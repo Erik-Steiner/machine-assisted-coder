@@ -20,6 +20,10 @@ coding.db
 coding.db-wal
 coding.db-shm
 
+# cached sentence-embedding matrices for the optional embedding-based classifier engine
+# (see paths.EMBEDDINGS_DIR / coding_store.embeddings) -- large, regenerable at CPU cost
+embeddings/
+
 # safety-net backups made by scripts/migrate_field_names.py before it rewrites
 # queries/*.json or coding.db in place -- keep locally, never commit
 coding.db.backup_*

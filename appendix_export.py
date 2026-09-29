@@ -19,8 +19,10 @@ ACTION_LABELS = {
     "scheme_archive": "Scheme archived",
     "scheme_restore": "Scheme restored",
     "training_run": "Classifier training run",
+    "embedding_training_run": "Embedding classifier training run",
     "query_download": "Data downloaded",
     "codebook_export": "Codebook exported",
+    "topic_model_export": "Full-corpus topic model exported",
     "filter_snapshot": "Browse filter snapshot",
 }
 
@@ -54,10 +56,17 @@ def _summarize(action_type, details):
     if action_type == "training_run":
         trained = ", ".join(t["name"] for t in details.get("trained", [])) or "none"
         return f'Trained model {details.get("model_version", "?")} -- themes: {trained}'
+    if action_type == "embedding_training_run":
+        trained = ", ".join(t["name"] for t in details.get("trained", [])) or "none"
+        return f'Trained embedding model {details.get("model_version", "?")} -- themes: {trained}'
     if action_type == "query_download":
         return f'Downloaded "{details.get("label", "?")}" ({details.get("count", "?")} interviews)'
     if action_type == "codebook_export":
         return f'Exported codebook ({", ".join(details.get("files", []))})'
+    if action_type == "topic_model_export":
+        engine = details.get("engine", "?")
+        return (f'Exported full-corpus topic model ({engine}, {details.get("themes_exported", "?")} '
+                f'theme(s), {details.get("segment_rows", "?")} rows)')
     if action_type == "filter_snapshot":
         return "Browse filters active at export/citation time"
     return ACTION_LABELS.get(action_type, action_type)

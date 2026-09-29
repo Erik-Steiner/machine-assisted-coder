@@ -116,6 +116,58 @@ def get_top_predictions(theme_id, model_version, limit=15):
     return out
 
 
+def get_predictions_for_theme(theme_id, model_version, threshold=None):
+    """Every segment this theme/model_version was scored against -- the
+    full-corpus counterpart to get_top_predictions() above (same join/shape,
+    no LIMIT, and an optional score threshold instead of a rank cutoff). This
+    is the read behind the full-corpus topic-model export; the Review queue
+    and Model tab exemplar panel keep using get_top_predictions() unchanged."""
+    where = "p.theme_id = ? AND p.model_version = ?"
+    params = [theme_id, model_version]
+    if threshold is not None:
+        where += " AND p.score >= ?"
+        params.append(threshold)
+    with schema.get_conn() as conn:
+        rows = conn.execute(
+            f"""SELECT p.segment_id, p.score, s.item_id, s.dataset_id, s.group_name,
+                      s.person_name, s.speaker_name, s.speaker_role, s.depth,
+                      s.word_count, s.timestamp, s.text,
+                      EXISTS(
+                        SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
+                        AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
+                      ) AS already_coded
+               FROM predictions p JOIN segments s ON s.segment_id = p.segment_id
+               WHERE {where}
+               ORDER BY p.score DESC""",
+            params,
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = dict(r)
+        d["item_id"] = str(d["item_id"])
+        out.append(d)
+    return out
+
+
+def get_corpus_coverage(theme_id, model_version, threshold, total_segments):
+    """Full-corpus prevalence at threshold: coded_count (already coded) +
+    flagged_uncoded_count (scores >= threshold but not yet coded) = covered_count,
+    against total_segments (the caller's classifier.build_corpus() scope) --
+    what fraction of the whole corpus this theme currently covers, not just
+    "N more from the top 30." total_segments is passed in rather than computed
+    here so this module keeps its existing no-dependency-on-classifier.py shape."""
+    value_prop = get_value_prop(theme_id, model_version, threshold)
+    covered_count = value_prop["coded_count"] + value_prop["flagged_uncoded_count"]
+    coverage_pct = (covered_count / total_segments) if total_segments else 0.0
+    return {
+        "coded_count": value_prop["coded_count"],
+        "flagged_uncoded_count": value_prop["flagged_uncoded_count"],
+        "covered_count": covered_count,
+        "total_segments": total_segments,
+        "coverage_pct": coverage_pct,
+    }
+
+
 def get_value_prop(theme_id, model_version, threshold):
     """coded_count (from codes) vs. flagged_uncoded_count (segments the model
     scores above threshold for this run that aren't already coded) -- the

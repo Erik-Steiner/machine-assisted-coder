@@ -20,6 +20,7 @@ const ACTION_LABELS = {
   scheme_archive: "Scheme archived",
   scheme_restore: "Scheme restored",
   training_run: "Classifier training run",
+  embedding_training_run: "Embedding classifier training run",
   query_download: "Data downloaded",
   interview_import: "Transcript imported",
   reddit_import: "Reddit/Arctic Shift imported",
@@ -28,6 +29,7 @@ const ACTION_LABELS = {
   duplicate_override: "Duplicate manually flagged/unflagged",
   duplicate_override_removed: "Duplicate override removed",
   codebook_export: "Codebook exported",
+  topic_model_export: "Full-corpus topic model exported",
   filter_snapshot: "Browse filter snapshot",
 };
 
@@ -68,6 +70,10 @@ function summarizeAppendixRow(actionType, details) {
       const trained = (details.trained || []).map((t) => t.name).join(", ") || "none";
       return `Trained model ${details.model_version || "?"} — themes: ${trained}`;
     }
+    case "embedding_training_run": {
+      const trained = (details.trained || []).map((t) => t.name).join(", ") || "none";
+      return `Trained embedding model ${details.model_version || "?"} — themes: ${trained}`;
+    }
     case "query_download":
       return `Downloaded "${details.label || "?"}" (${details.count ?? "?"} interviews)`;
     case "interview_import":
@@ -89,6 +95,9 @@ function summarizeAppendixRow(actionType, details) {
       return `Removed manual duplicate override on ${details.dataset_id || "?"}:${details.item_id || "?"}`;
     case "codebook_export":
       return `Exported codebook (${(details.files || []).join(", ")})`;
+    case "topic_model_export":
+      return `Exported full-corpus topic model (${details.engine || "?"}, ` +
+        `${details.themes_exported ?? "?"} theme(s), ${details.segment_rows ?? "?"} rows)`;
     case "filter_snapshot":
       return "Browse filters active at export/citation time";
     default:

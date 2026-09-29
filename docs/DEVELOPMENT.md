@@ -427,14 +427,16 @@ soft-deleted instead of duplicated; the source theme is then archived with
 `coding_store/themes.py`'s `merge_themes()`). There is no hard delete for a theme, by
 design: codes are load-bearing research data.
 
-`coding_store/schema.py`'s `SCHEMA` also defines `negatives`, `embeddings`, `cluster_runs`,
-`clusters`, `cluster_segments`, and `consistency_checks` tables. These exist for
-later phases (an explicit-negative-labeling UI, a v2 embeddings-based classifier,
-unsupervised topic clustering, inter-rater consistency checks) and are created by
-`init_db()`, but nothing in the current server or frontend reads or writes them yet
-except `add_negative()` (defined, not yet called from any endpoint). Don't treat their
-presence in the schema as a feature that exists -- check for an `/api/...` endpoint or
-a call site before relying on one.
+`coding_store/schema.py`'s `SCHEMA` also defines `negatives`, `cluster_runs`, `clusters`,
+`cluster_segments`, and `consistency_checks` tables. These exist for later phases (an
+explicit-negative-labeling UI, unsupervised topic clustering, inter-rater consistency
+checks) and are created by `init_db()`, but nothing in the current server or frontend
+reads or writes them yet except `add_negative()` (defined, not yet called from any
+endpoint). Don't treat their presence in the schema as a feature that exists -- check
+for an `/api/...` endpoint or a call site before relying on one. The `embeddings` table
+is the one exception: it's now wired up, by `coding_store/embeddings.py` and
+`classifier.build_embeddings()` -- see "Full-corpus export and the embedding engine"
+below.
 
 ## Model subsystem
 
@@ -464,6 +466,58 @@ duplicating them, calling back into `coding.js` through `codingState`'s
 `pendingFocusSegmentId` field ("View in Coding" on an exemplar segment switches
 Browse's dataset, positions on the right interview, and tells the Coding tab which
 segment to scroll to and focus once it loads).
+
+### Full-corpus export and the embedding engine
+
+Two additions sit on top of the Model tab above, both purely additive -- neither
+changes `get_top_predictions`'s/`get_review_candidates`'s capped behavior, which stays
+the researcher's day-to-day iterative-coding surface.
+
+**Full-corpus application.** `predictions` already holds one score per (segment, theme,
+model_version) for the *entire* corpus a theme trained against -- `run_training_pass()`
+never capped it, only the UI's reads did (`get_top_predictions(..., limit=...)`).
+`model_runs.get_predictions_for_theme()` (no `LIMIT`, optional score threshold) and
+`model_runs.get_corpus_coverage()` (coded + flagged-uncoded as a fraction of the whole
+corpus) expose that directly. `topic_model_export.py` writes this out as
+`segment_topic_scores.json`/`.csv` (every segment x theme, full precision) and
+`topic_seed_pack.json`/`.csv` (per-theme top terms + top exemplars) via `GET
+/api/model/export_full_corpus` -- for a separate, unrelated pipeline (comparing this
+codebook's classifier against another topic-modeling method, or seeding a
+guided/LLM-based one). This app never does that comparison itself.
+
+**Embedding engine.** `classifier.py`'s training functions (`train_theme`,
+`build_labels`, `_best_threshold`) only need a feature matrix and a label vector --
+they don't care whether the matrix is TF-IDF or dense sentence embeddings. So
+"bootstrap a richer classifier" reuses that exact pipeline unchanged, just swapping
+`fit_vectorizer()` for `classifier.build_embeddings()` (cached sentence embeddings, via
+`coding_store/embeddings.py` and `paths.EMBEDDINGS_DIR` -- one `.npy` matrix file per
+model, since SQLite is a poor fit for large dense vectors; the `embeddings` table only
+records each segment's row index into that file). Its `model_version`s are prefixed
+`embed_v1_` (vs. the TF-IDF pass's `tfidf_v1_`), sharing the same `model_runs`/
+`predictions` tables -- the Model tab's TF-IDF/Embedding toggle just picks a different
+`model_version` for the same `/api/model/interpret` endpoint. No `model_top_terms` rows
+are saved for `embed_v1_*` versions (embedding dimensions aren't interpretable
+vocabulary terms the way TF-IDF coefficients are).
+
+Gated behind `classifier.embedding_readiness()`: `installed` (is the *optional*
+`sentence-transformers` package importable -- see `requirements-embeddings.txt`, never
+part of the default `requirements.txt` install, since it pulls in PyTorch) and
+`volume_ready` (has at least one theme's latest run cleared `TRUST_POSITIVES`, the same
+150-positive rule-of-thumb floor already used for "trust this ranking" -- stricter than
+`MIN_POSITIVES_ATTEMPT`, since this is explicitly gated on having enough human-verified
+volume to bootstrap from, not just enough to attempt at all). `classifier.py` never
+imports `sentence_transformers` at module load time; `build_embeddings()` does it
+lazily and raises a clear, actionable error if it's missing, so the app runs
+identically whether or not the optional package is installed.
+
+A researcher doesn't need a terminal to cross that `installed` gate: `POST
+/api/model/install_embeddings_deps` runs `pip install -r requirements-embeddings.txt`
+(via `sys.executable`, so it lands in whichever Python is already running this server)
+as a background job -- `INSTALL_EMBEDDINGS_JOBS`, the same `jobs.JobRegistry` pattern as
+every other long-running action in this app -- behind an "Install embedding
+dependencies" button on the Model tab. Idempotent (pip no-ops if it's already
+installed), so the endpoint doesn't need to check `embedding_readiness()` first, only
+guard against two installs racing (`has_running()`).
 
 ## Analytics subsystem
 

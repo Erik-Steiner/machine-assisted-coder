@@ -353,6 +353,17 @@
       <button id="trainModelsBtn">Train / retrain all eligible themes</button>
       <div id="modelTrainStatus" class="hint"></div>
     </div>
+    <div id="modelExportBar">
+      <button id="exportFullCorpusBtn" class="btn-secondary">Export full corpus topic model</button>
+      <div id="modelExportStatus" class="hint"></div>
+    </div>
+    <div id="embeddingBar">
+      <div id="embeddingReadinessText" class="hint"></div>
+      <button id="installEmbeddingsBtn" class="btn-secondary hidden">Install embedding dependencies</button>
+      <div id="installEmbeddingsStatus" class="hint"></div>
+      <button id="trainEmbeddingsBtn" class="btn-secondary hidden">Bootstrap embedding topic model</button>
+      <div id="embeddingTrainStatus" class="hint"></div>
+    </div>
     <div id="modelSchemeLabel" class="hint"></div>
     <div id="modelBanner" class="hint"></div>
     <div id="modelThemeItems"></div>
@@ -362,7 +373,12 @@
     <div id="modelDetailEmpty" class="hint">Select a theme to see its metrics.</div>
     <div id="modelDetailContent" class="hidden">
       <h2 id="modelThemeName"></h2>
+      <div id="modelEngineToggle" class="hidden">
+        <button type="button" class="btn-secondary model-engine-btn" data-engine="tfidf">TF-IDF</button>
+        <button type="button" class="btn-secondary model-engine-btn" data-engine="embed">Embedding</button>
+      </div>
       <div id="modelValueProp"></div>
+      <div id="modelCoverage" class="hint"></div>
 
       <section id="modelMetricsSection">
         <h3>Latest run</h3>

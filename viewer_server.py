@@ -136,9 +136,32 @@ Endpoints:
     POST /api/model/train                            -> kick off a background training pass
                                                          (all eligible themes, one shared model_version)
     GET  /api/model/train_status?job_id=..           -> poll a training job's progress/result
+    POST /api/model/install_embeddings_deps           -> kick off a background `pip install -r
+                                                         requirements-embeddings.txt` (400 if one's
+                                                         already running) -- lets a researcher enable
+                                                         the embedding engine with a button instead
+                                                         of a terminal command
+    GET  /api/model/install_embeddings_deps_status?job_id=..  -> poll that install job
+    GET  /api/model/embedding_readiness?scheme_id=<id>  -> {installed, volume_ready, ready, ...} --
+                                                         whether the optional embedding-based
+                                                         engine can be bootstrapped right now
+                                                         (see requirements-embeddings.txt)
+    POST /api/model/train_embeddings                 -> kick off a background embedding-training
+                                                         pass (400 if embedding_readiness() isn't
+                                                         met); reuses the TF-IDF pass's training
+                                                         pipeline with sentence embeddings instead
+                                                         of TF-IDF features -- see classifier.py's
+                                                         run_embedding_training_pass()
+    GET  /api/model/train_embeddings_status?job_id=..  -> poll an embedding-training job
     GET  /api/model/interpret?theme_id=<id>          -> metrics + top terms + exemplar segments +
-                                                         value-prop stat for a theme's latest model
-                                                         (see classifier.py / scripts/train_classifiers.py)
+                                                         value-prop stat + full-corpus coverage
+                                                         for a theme's latest model (see
+                                                         classifier.py / scripts/train_classifiers.py)
+    GET  /api/model/export_full_corpus?scheme_id=&model_version=&engine=
+        -> writes segment_topic_scores/topic_seed_pack (every segment's score against every
+           trained theme, plus each theme's top terms + exemplars) to exports/ as JSON+CSV --
+           the full-corpus topic-model artifact for a separate, unrelated pipeline (comparison,
+           or seeding a different method); see topic_model_export.py
 
     GET  /api/export/codebook?scheme_id=<id>          -> writes schemes/themes/codes/model_runs to
                                                          exports/ as JSON+CSV (backup / publication
@@ -256,6 +279,7 @@ import base64
 import binascii
 import json
 import os
+import subprocess
 import sys
 import threading
 import uuid
@@ -287,6 +311,7 @@ import scripts.find_duplicates as duplicate_scanner
 import scripts.import_interview_transcript as interview_importer
 import scripts.import_reddit as reddit_importer
 import segmentation
+import topic_model_export
 from jobs import JobRegistry
 from routing import ApiError, DownloadResponse, FileResponse, JsonResponse, Router, write_response
 
@@ -585,6 +610,85 @@ def run_train_job(job_id, registry):
     })
 
 
+# --- Background embedding-training jobs (Model tab's optional richer engine) ---------
+
+EMBED_TRAIN_JOBS = JobRegistry()
+
+
+def run_train_embeddings_job(job_id, registry):
+    def on_progress(event):
+        stage = event["stage"]
+        if stage not in ("theme_start", "theme_skipped", "theme_done"):
+            return
+
+        def apply(job):
+            job["themes_total"] = event["total"]
+            job["current_theme"] = {"theme_id": event["theme_id"], "name": event["name"]}
+            if stage == "theme_skipped":
+                job["themes_done"] = event["index"] + 1
+                job["skipped"].append({
+                    "theme_id": event["theme_id"], "name": event["name"],
+                    "n_pos": event["n_pos"], "needed": classifier.TRUST_POSITIVES,
+                })
+            elif stage == "theme_done":
+                job["themes_done"] = event["index"] + 1
+                job["trained"].append({
+                    "theme_id": event["theme_id"], "name": event["name"], **event["metrics"],
+                })
+
+        registry.mutate(job_id, apply)
+
+    summary = classifier.run_embedding_training_pass(progress_callback=on_progress)
+    if summary["error"]:
+        registry.update(job_id, status="error", error=summary["error"])
+        return
+
+    trained = [
+        {"theme_id": r["theme_id"], "name": r["name"], **r["metrics"]}
+        for r in summary["results"] if r["status"] == "trained"
+    ]
+    skipped = [
+        {"theme_id": r["theme_id"], "name": r["name"], "n_pos": r["n_pos"],
+         "needed": classifier.TRUST_POSITIVES}
+        for r in summary["results"] if r["status"] == "skipped_below_trust_floor"
+    ]
+    registry.update(
+        job_id, status="done", model_version=summary["model_version"],
+        themes_total=summary["themes_total"], themes_done=summary["themes_total"],
+        trained=trained, skipped=skipped,
+    )
+    activity_log.log_activity(CODER_NAME, "embedding_training_run", {
+        "model_version": summary["model_version"],
+        "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
+        "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
+    })
+
+
+# --- Installing the optional embedding-engine dependency (Model tab) ----------------
+#
+# A researcher can click a button rather than open a terminal -- runs the exact same
+# `pip install -r requirements-embeddings.txt` the docs describe, via sys.executable so
+# it installs into whichever Python this server is already running under (not whatever
+# `pip` happens to resolve to on PATH). Idempotent -- pip no-ops if it's already
+# installed, so there's no need to check embedding_readiness() first.
+
+INSTALL_EMBEDDINGS_JOBS = JobRegistry()
+
+
+def run_install_embeddings_job(job_id, registry):
+    requirements_path = HERE / "requirements-embeddings.txt"
+    result = subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-r", str(requirements_path)],
+        capture_output=True, text=True, timeout=1800,  # generous ceiling -- first install
+                                                         # downloads PyTorch, hundreds of MB
+    )
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip()[-4000:]
+        registry.update(job_id, status="error", error=tail or "pip install failed.")
+        return
+    registry.update(job_id, status="done")
+
+
 # --- Background segmentation jobs (Coding tab's Datasets panel) ---------------------
 #
 # The in-app equivalent of scripts/build_segments.py -- but that script only reads
@@ -843,6 +947,10 @@ def switch_project(new_dir):
         QUERIES_DIR = new_dir / "queries"
         EXPORTS_DIR = new_dir / "exports"
         schema.set_db_path(new_dir / "coding.db")
+        # coding_store.embeddings reads paths.EMBEDDINGS_DIR directly (not a copy), so it's
+        # this attribute -- on the actual paths module object -- that needs reassigning, the
+        # same way schema.set_db_path() reassigns schema.DB_PATH.
+        project_paths.EMBEDDINGS_DIR = new_dir / "embeddings"
         CURRENT_PROJECT_DIR = new_dir
 
         with DATASETS_LOCK:
@@ -1216,6 +1324,56 @@ def get_model_train_status(req):
     return JsonResponse(job)
 
 
+@ROUTER.post("/api/model/install_embeddings_deps")
+def post_model_install_embeddings_deps(req):
+    if INSTALL_EMBEDDINGS_JOBS.has_running():
+        return JsonResponse({"error": "An install is already in progress."}, status=400)
+    job_id = INSTALL_EMBEDDINGS_JOBS.start({}, run_install_embeddings_job)
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/model/install_embeddings_deps_status")
+def get_model_install_embeddings_deps_status(req):
+    job = INSTALL_EMBEDDINGS_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
+@ROUTER.get("/api/model/embedding_readiness")
+def get_model_embedding_readiness(req):
+    return JsonResponse(classifier.embedding_readiness(scheme_id=req.query.get("scheme_id")))
+
+
+@ROUTER.post("/api/model/train_embeddings")
+def post_model_train_embeddings(req):
+    readiness = classifier.embedding_readiness()
+    if not readiness["installed"]:
+        return JsonResponse({
+            "error": "sentence-transformers isn't installed -- run "
+                     "`pip install -r requirements-embeddings.txt` first.",
+        }, status=400)
+    if not readiness["volume_ready"]:
+        return JsonResponse({
+            "error": f"No theme has reached the {readiness['trust_positives']}-positive "
+                     "trust floor yet -- keep coding, then try again.",
+        }, status=400)
+    job_id = EMBED_TRAIN_JOBS.start(
+        {"themes_total": 0, "themes_done": 0, "current_theme": None,
+         "trained": [], "skipped": [], "model_version": None},
+        run_train_embeddings_job,
+    )
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/model/train_embeddings_status")
+def get_model_train_embeddings_status(req):
+    job = EMBED_TRAIN_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
 @ROUTER.get("/api/model/interpret")
 def get_model_interpret(req):
     theme_id = req.query.get("theme_id", "")
@@ -1240,13 +1398,28 @@ def get_model_interpret(req):
     except ValueError:
         limit = 15
 
+    total_segments = len(classifier.build_corpus()[0])
     return JsonResponse({
         "theme_id": theme_id, "trained": True, "model_version": run["model_version"],
         "metrics": run, "trust_positives_floor": classifier.TRUST_POSITIVES,
         "value_prop": model_runs.get_value_prop(theme_id, run["model_version"], run["threshold"]),
+        "coverage": model_runs.get_corpus_coverage(
+            theme_id, run["model_version"], run["threshold"], total_segments=total_segments,
+        ),
         "top_terms": model_runs.get_top_terms(run["model_version"], theme_id),
         "exemplars": model_runs.get_top_predictions(theme_id, run["model_version"], limit=limit),
     })
+
+
+@ROUTER.get("/api/model/export_full_corpus")
+def get_model_export_full_corpus(req):
+    scheme_id = req.query.get("scheme_id")
+    model_version = req.query.get("model_version")
+    engine = req.query.get("engine") or "tfidf"
+    paths = topic_model_export.export_full_corpus_topic_model(
+        EXPORTS_DIR, scheme_id=scheme_id, model_version=model_version, engine=engine, actor=CODER_NAME,
+    )
+    return JsonResponse({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
 
 
 # --- Web Appendix ----------------------------------------------------------------

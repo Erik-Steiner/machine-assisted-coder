@@ -45,6 +45,7 @@ schema, not something to rename.
 | Coding tab UI/keyboard shortcuts        | `viewer_static/coding.js`                            |
 | Codebook / segments / codes data model  | `coding_store/schema.py` (schema), `coding_store/themes.py`, `coding_store/codes.py`, `segmentation.py` |
 | Classifier training or metrics          | `classifier.py`, `scripts/train_classifiers.py`      |
+| Full-corpus topic-model export / embedding engine | `topic_model_export.py`, `classifier.py`'s `build_embeddings`/`run_embedding_training_pass`/`embedding_readiness`, `coding_store/embeddings.py`, `requirements-embeddings.txt` |
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
@@ -136,8 +137,10 @@ schema, not something to rename.
 
 ## Known drift / forward-looking schema
 
-`coding_store/schema.py`'s schema defines `negatives`, `embeddings`, `cluster_runs`, `clusters`,
+`coding_store/schema.py`'s schema defines `negatives`, `cluster_runs`, `clusters`,
 `cluster_segments`, and `consistency_checks` tables for future phases (explicit negative
-labeling, embeddings-based v2 classifier, topic clustering, inter-rater checks). They're created
-by `init_db()` but nothing currently reads/writes most of them — don't assume a table's
-existence means a feature is live; confirm there's a calling endpoint first.
+labeling, unsupervised topic clustering, inter-rater checks). They're created by `init_db()` but
+nothing currently reads/writes most of them — don't assume a table's existence means a feature is
+live; confirm there's a calling endpoint first. `embeddings` is the exception: it's wired up
+(`coding_store/embeddings.py`, `classifier.build_embeddings()`) for the optional embedding-based
+Model tab engine — see docs/DEVELOPMENT.md's "Full-corpus export and the embedding engine".

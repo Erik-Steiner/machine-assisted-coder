@@ -27,6 +27,7 @@ support across near-identical text, and leak across CV folds (a
 duplicate's twin in the "held-out" fold isn't really held out). See
 build_corpus()'s own docstring and coding_store.py's duplicate_* tables.
 """
+import importlib.util
 from datetime import datetime, timezone
 
 import numpy as np
@@ -36,7 +37,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
-from coding_store import activity_log, dataset_status, duplicates, model_runs, schema, themes
+from coding_store import activity_log, dataset_status, duplicates, embeddings, model_runs, schema, themes
 
 TOP_TERMS_N = 20
 
@@ -55,6 +56,13 @@ LOGREG_CLASS_WEIGHT = "balanced"
 LOGREG_MAX_ITER = 1000
 CALIBRATION_METHOD = "sigmoid"
 CALIBRATION_CV = 3
+
+# Optional embedding-based ("richer") engine -- see build_embeddings()/
+# run_embedding_training_pass() below and requirements-embeddings.txt. Not a
+# hyperparameter used by the TF-IDF pass at all; named here alongside it for
+# the same reason (single place to look, easy to audit what a model_version
+# was actually produced with).
+EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 
 # Segments excluded from build_corpus() below -- and therefore from training,
 # predictions, and top-term coefficients entirely -- but never hidden from
@@ -322,6 +330,156 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
 
         top_pos, top_neg = top_terms(model, vectorizer)
         model_runs.save_top_terms(model_version, theme["theme_id"], top_pos, top_neg)
+
+        results.append({
+            "theme_id": theme["theme_id"], "name": theme["name"],
+            "status": "trained", "n_pos": n_pos, "metrics": metrics,
+        })
+        emit({"stage": "theme_done", "index": i, "total": len(theme_list),
+              "theme_id": theme["theme_id"], "name": theme["name"], "metrics": metrics})
+
+    return {"model_version": model_version, "trained_at": trained_at,
+            "themes_total": len(theme_list), "results": results, "error": None}
+
+
+# --- Optional embedding-based ("richer") engine --------------------------------------
+#
+# The TF-IDF pass above's core training functions are already feature-matrix-agnostic --
+# train_theme(X, y, n_pos) just needs a matrix and a label vector, and build_labels()/
+# _best_threshold() don't care what produced X either. So "bootstrap a richer,
+# embedding-based classifier" is: reuse that exact same supervised pipeline, on the exact
+# same codes-table labels, just swapping the feature matrix from TF-IDF to sentence
+# embeddings -- not a new modeling approach. Gated behind embedding_readiness() so it's
+# only offered once (a) sentence-transformers is actually installed (see
+# requirements-embeddings.txt -- optional, never part of the default install) and (b) the
+# codebook has enough human-verified volume to be worth bootstrapping from (TRUST_POSITIVES,
+# not the lower MIN_POSITIVES_ATTEMPT the TF-IDF pass uses).
+
+def embedding_readiness(scheme_id=None):
+    """Whether the embedding engine can be used right now: installed (the
+    optional sentence-transformers package is importable) and volume_ready
+    (at least one theme's latest run -- either engine, n_pos is
+    engine-independent -- has cleared TRUST_POSITIVES). Both surfaced
+    separately so the UI can say exactly what's missing rather than showing
+    one opaque locked button."""
+    installed = importlib.util.find_spec("sentence_transformers") is not None
+    theme_list = themes.list_themes(scheme_id=scheme_id)
+    latest = model_runs.get_latest_model_runs()
+    meeting = [
+        t for t in theme_list
+        if latest.get(t["theme_id"], {}).get("n_pos", 0) >= TRUST_POSITIVES
+    ]
+    return {
+        "installed": installed,
+        "volume_ready": bool(meeting),
+        "ready": installed and bool(meeting),
+        "themes_meeting_trust": [{"theme_id": t["theme_id"], "name": t["name"]} for t in meeting],
+        "themes_total_active": len(theme_list),
+        "trust_positives": TRUST_POSITIVES,
+    }
+
+
+def embedding_training_params(model_name=EMBEDDING_MODEL_NAME):
+    """Mirrors training_params() -- persisted once per embedding training
+    pass so the Web Appendix tab shows exactly how a given embed_v1_*
+    model_version was produced."""
+    return {
+        "engine": "embed_v1", "embedding_model": model_name, "trust_positives_floor": TRUST_POSITIVES,
+        "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
+        "logreg_max_iter": LOGREG_MAX_ITER, "calibration_method": CALIBRATION_METHOD,
+        "calibration_cv": CALIBRATION_CV,
+    }
+
+
+def build_embeddings(segment_ids, texts, model_name=EMBEDDING_MODEL_NAME):
+    """Sentence embeddings for segment_ids/texts, in that exact order,
+    cached via coding_store.embeddings/paths.EMBEDDINGS_DIR so repeated
+    training passes don't re-embed unchanged text -- re-embedding the whole
+    corpus is the expensive step, and it shouldn't repeat just because the
+    codebook grew. The only place in this module that imports
+    sentence_transformers, and only when actually called -- everything else
+    here works identically whether or not the optional package is installed."""
+    try:
+        from sentence_transformers import SentenceTransformer
+    except ImportError as exc:
+        raise ImportError(
+            "sentence-transformers isn't installed -- run "
+            "`pip install -r requirements-embeddings.txt` to enable the embedding-based topic model."
+        ) from exc
+
+    missing_ids, missing_texts = embeddings.filter_missing(segment_ids, texts, model_name)
+    if missing_ids:
+        model = SentenceTransformer(model_name)
+        vectors = model.encode(missing_texts, show_progress_bar=False, convert_to_numpy=True)
+        embeddings.append_embeddings(model_name, missing_ids, vectors)
+    return embeddings.load_matrix(segment_ids, model_name)
+
+
+def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True):
+    """Embedding-engine counterpart to run_training_pass(): same shape and
+    same side effects (model_runs + predictions per theme that trains), but
+    does not save top terms -- embedding dimensions aren't interpretable
+    vocabulary terms the way TF-IDF coefficients are, so model_top_terms
+    simply has no rows for embed_v1_* versions. Checks embedding_readiness()
+    up front and returns a descriptive error instead of attempting anything
+    if either condition isn't met."""
+    def emit(event):
+        if progress_callback:
+            progress_callback(event)
+
+    schema.init_db()
+    readiness = embedding_readiness()
+    if not readiness["installed"]:
+        return {"model_version": None, "trained_at": None, "themes_total": 0, "results": [],
+                "error": "sentence-transformers isn't installed -- run "
+                         "`pip install -r requirements-embeddings.txt` first."}
+    if not readiness["volume_ready"]:
+        return {"model_version": None, "trained_at": None, "themes_total": 0, "results": [],
+                "error": f"No theme has reached the {TRUST_POSITIVES}-positive trust floor yet -- "
+                         "keep coding, then try again."}
+
+    theme_list = themes.list_themes()
+    if not theme_list:
+        return {"model_version": None, "trained_at": None, "themes_total": 0,
+                "results": [], "error": "No themes in the codebook yet."}
+
+    emit({"stage": "corpus"})
+    segment_ids, texts, duplicate_run_id, excluded_dataset_ids = build_corpus(
+        exclude_duplicates=exclude_duplicates
+    )
+    if not segment_ids:
+        return {"model_version": None, "trained_at": None, "themes_total": len(theme_list),
+                "results": [],
+                "error": "No segments in coding.db -- run scripts/build_segments.py first."}
+
+    emit({"stage": "embedding", "n_segments": len(segment_ids)})
+    X = build_embeddings(segment_ids, texts)
+
+    model_version = "embed_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    trained_at = datetime.now(timezone.utc).isoformat()
+    activity_log.save_model_run_params(model_version, embedding_training_params(), trained_at)
+
+    results = []
+    for i, theme in enumerate(theme_list):
+        emit({"stage": "theme_start", "index": i, "total": len(theme_list),
+              "theme_id": theme["theme_id"], "name": theme["name"]})
+        y, n_pos = build_labels(theme["theme_id"], segment_ids)
+
+        if n_pos < TRUST_POSITIVES:
+            results.append({
+                "theme_id": theme["theme_id"], "name": theme["name"],
+                "status": "skipped_below_trust_floor", "n_pos": n_pos, "metrics": None,
+            })
+            emit({"stage": "theme_skipped", "index": i, "total": len(theme_list),
+                  "theme_id": theme["theme_id"], "name": theme["name"], "n_pos": n_pos})
+            continue
+
+        # n_pos >= TRUST_POSITIVES > MIN_POSITIVES_ATTEMPT, so train_theme always succeeds here.
+        metrics, model = train_theme(X, y, n_pos)
+        model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
+
+        scores = model.predict_proba(X)[:, 1]
+        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores)
 
         results.append({
             "theme_id": theme["theme_id"], "name": theme["name"],

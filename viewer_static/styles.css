@@ -990,6 +990,9 @@ button.btn-secondary {
   padding: 16px 24px;
 }
 #modelDetailContent.hidden { display: none; }
+#trainEmbeddingsBtn.hidden, #modelEngineToggle.hidden, #installEmbeddingsBtn.hidden { display: none; }
+#modelEngineToggle { margin-bottom: 8px; }
+.model-engine-btn.active { background: var(--accent); color: #fff; }
 #modelDetailContent h2 { margin: 0 0 10px 0; font-size: 20px; }
 #modelDetailContent h3 { font-size: 14px; margin: 18px 0 8px 0; }
 #modelDetailContent h4 {

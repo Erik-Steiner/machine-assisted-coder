@@ -12,10 +12,21 @@ const modelState = {
   progress: null, // /api/coding/progress (no dataset param -> all groups)
   latestRuns: {}, // {theme_id: latest model_run}
   selectedThemeId: null,
+  selectedEngine: "tfidf", // "tfidf" | "embed" -- which engine's runs the detail panel shows
+  history: [], // last /api/coding/model_runs?theme_id= response for the selected theme
   interpret: null, // last /api/model/interpret response for the selected theme
   trainJobId: null,
   trainPollTimer: null,
+  embedTrainJobId: null,
+  embedTrainPollTimer: null,
+  installJobId: null,
+  installPollTimer: null,
+  installStartedAt: null,
 };
+
+function engineOfVersion(modelVersion) {
+  return modelVersion && modelVersion.startsWith("embed_v1_") ? "embed" : "tfidf";
+}
 
 // --- Theme list / sidebar --------------------------------------------------------------
 
@@ -91,8 +102,9 @@ function renderModelThemeList() {
 
 // --- Selected theme detail: interpret + metrics + history ---------------------------------
 
-async function selectModelTheme(themeId) {
+async function selectModelTheme(themeId, engine) {
   modelState.selectedThemeId = themeId;
+  modelState.selectedEngine = engine || modelState.selectedEngine || "tfidf";
   renderModelThemeList(); // update the "selected" highlight
 
   document.getElementById("modelDetailEmpty").classList.add("hidden");
@@ -100,16 +112,32 @@ async function selectModelTheme(themeId) {
   document.getElementById("modelThemeName").textContent =
     (modelState.themes.find((t) => t.theme_id === themeId) || {}).name || themeId;
 
-  const res = await fetch(`/api/model/interpret?theme_id=${encodeURIComponent(themeId)}`);
-  modelState.interpret = await res.json();
+  const historyRes = await fetch(`/api/coding/model_runs?theme_id=${encodeURIComponent(themeId)}`);
+  const historyData = await historyRes.json();
   if (modelState.selectedThemeId !== themeId) return; // superseded by a newer selection
-  renderModelDetail();
+  modelState.history = historyData.history || [];
 
-  if (modelState.interpret.trained) {
-    renderMetricsHistory(themeId);
-  } else {
-    document.getElementById("modelHistoryTable").querySelector("tbody").innerHTML = "";
-  }
+  // The engine toggle only appears once this theme has at least one embed_v1_* run --
+  // most themes will never have one, and showing an always-present toggle would be noise.
+  const hasEmbed = modelState.history.some((r) => engineOfVersion(r.model_version) === "embed");
+  if (!hasEmbed) modelState.selectedEngine = "tfidf";
+  const toggle = document.getElementById("modelEngineToggle");
+  toggle.classList.toggle("hidden", !hasEmbed);
+  toggle.querySelectorAll(".model-engine-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.engine === modelState.selectedEngine);
+  });
+
+  const latestForEngine = modelState.history.find(
+    (r) => engineOfVersion(r.model_version) === modelState.selectedEngine,
+  );
+  const versionParam = latestForEngine
+    ? `&model_version=${encodeURIComponent(latestForEngine.model_version)}` : "";
+
+  const res = await fetch(`/api/model/interpret?theme_id=${encodeURIComponent(themeId)}${versionParam}`);
+  modelState.interpret = await res.json();
+  if (modelState.selectedThemeId !== themeId) return;
+  renderModelDetail();
+  renderMetricsHistory();
 }
 
 function renderModelDetail() {
@@ -119,6 +147,7 @@ function renderModelDetail() {
     document.getElementById("modelValueProp").innerHTML =
       `Not trained yet — ${data.progress.count || 0}/${data.min_positives} segments coded for this theme. ` +
       `Keep coding, then click "Train / retrain all eligible themes".`;
+    document.getElementById("modelCoverage").textContent = "";
     document.getElementById("modelMetricsSection").classList.add("hidden");
     document.getElementById("modelTermsSection").classList.add("hidden");
     document.getElementById("modelExemplarsSection").classList.add("hidden");
@@ -134,6 +163,15 @@ function renderModelDetail() {
     `You've coded <strong>${vp.coded_count}</strong> segment(s) for this theme. ` +
     `The model flags <strong>${vp.flagged_uncoded_count}</strong> more above its threshold ` +
     `(${vp.threshold.toFixed(3)}) that you haven't coded yet.`;
+
+  const cov = data.coverage;
+  if (cov) {
+    const pct = (cov.coverage_pct * 100).toFixed(0);
+    document.getElementById("modelCoverage").textContent =
+      `Applied to the full corpus: covers ${cov.covered_count}/${cov.total_segments} segments ` +
+      `(${pct}%) at this threshold — ${cov.coded_count} already coded, ` +
+      `${cov.flagged_uncoded_count} more flagged.`;
+  }
 
   const m = data.metrics;
   const caution = m.n_pos < data.trust_positives_floor
@@ -161,11 +199,10 @@ function renderTermsList(elementId, terms) {
     : '<li class="hint">—</li>';
 }
 
-async function renderMetricsHistory(themeId) {
-  const res = await fetch(`/api/coding/model_runs?theme_id=${encodeURIComponent(themeId)}`);
-  const data = await res.json();
+function renderMetricsHistory() {
   const tbody = document.getElementById("modelHistoryTable").querySelector("tbody");
-  tbody.innerHTML = (data.history || [])
+  const rows = modelState.interpret.trained ? modelState.history : [];
+  tbody.innerHTML = rows
     .map((r) => {
       const trainedAt = r.trained_at ? r.trained_at.slice(0, 19).replace("T", " ") : "—";
       return (
@@ -264,15 +301,184 @@ function pollTrainJob() {
   );
 }
 
+// --- Export full-corpus topic model -------------------------------------------------------
+
+async function exportFullCorpus() {
+  const btn = document.getElementById("exportFullCorpusBtn");
+  const statusEl = document.getElementById("modelExportStatus");
+  btn.disabled = true;
+  statusEl.textContent = "Exporting…";
+  try {
+    const schemePart = codingState.activeSchemeId
+      ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+    const res = await fetch(`/api/model/export_full_corpus${schemePart}`);
+    const data = await res.json();
+    if (data.error) {
+      statusEl.textContent = "Error: " + data.error;
+    } else {
+      statusEl.textContent = `Saved ${data.files.join(", ")} to ${data.exported_to}/`;
+    }
+  } catch (err) {
+    statusEl.textContent = "Request failed — is the server running?";
+  }
+  btn.disabled = false;
+}
+
+// --- Optional embedding-based ("richer") engine ---------------------------------------
+//
+// Gated behind /api/model/embedding_readiness: sentence-transformers must be installed
+// (see requirements-embeddings.txt -- not part of the default install) AND at least one
+// theme must have cleared the TRUST_POSITIVES floor. Both conditions are surfaced
+// separately so the researcher knows exactly what's missing, not just "unavailable."
+
+async function loadEmbeddingReadiness() {
+  const schemePart = codingState.activeSchemeId
+    ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+  const res = await fetch(`/api/model/embedding_readiness${schemePart}`);
+  renderEmbeddingReadiness(await res.json());
+}
+
+function renderEmbeddingReadiness(readiness) {
+  const textEl = document.getElementById("embeddingReadinessText");
+  const btn = document.getElementById("trainEmbeddingsBtn");
+  const installBtn = document.getElementById("installEmbeddingsBtn");
+  if (!readiness.installed) {
+    textEl.textContent =
+      "Embedding-based topic model: needs the optional embedding dependencies (a few hundred MB, " +
+      "one-time download) to enable this.";
+    installBtn.classList.remove("hidden");
+    btn.classList.add("hidden");
+  } else if (!readiness.volume_ready) {
+    textEl.textContent =
+      `Embedding-based topic model: needs at least one theme with ${readiness.trust_positives}+ ` +
+      `coded segments (${readiness.themes_meeting_trust.length}/${readiness.themes_total_active} ` +
+      `themes there so far).`;
+    installBtn.classList.add("hidden");
+    btn.classList.add("hidden");
+  } else {
+    textEl.textContent = "Embedding-based topic model available, bootstrapped from your codebook's coded segments.";
+    installBtn.classList.add("hidden");
+    btn.classList.remove("hidden");
+  }
+}
+
+async function startInstallEmbeddingsDeps() {
+  const btn = document.getElementById("installEmbeddingsBtn");
+  const statusEl = document.getElementById("installEmbeddingsStatus");
+  btn.disabled = true;
+  statusEl.textContent = "Starting install…";
+
+  let data;
+  try {
+    const res = await fetch("/api/model/install_embeddings_deps", { method: "POST" });
+    data = await res.json();
+  } catch (err) {
+    statusEl.textContent = "Request failed — is the server running?";
+    btn.disabled = false;
+    return;
+  }
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    btn.disabled = false;
+    return;
+  }
+  modelState.installJobId = data.job_id;
+  modelState.installStartedAt = Date.now();
+  pollInstallEmbeddingsJob();
+}
+
+function pollInstallEmbeddingsJob() {
+  modelState.installPollTimer?.cancel();
+  modelState.installPollTimer = pollBackgroundJob(
+    `/api/model/install_embeddings_deps_status?job_id=${encodeURIComponent(modelState.installJobId)}`,
+    {
+      onRunning: () => {
+        const elapsed = Math.round((Date.now() - modelState.installStartedAt) / 1000);
+        document.getElementById("installEmbeddingsStatus").textContent =
+          `Installing… (${elapsed}s — first install downloads PyTorch, can take several minutes)`;
+      },
+      onDone: () => {
+        document.getElementById("installEmbeddingsBtn").disabled = false;
+        document.getElementById("installEmbeddingsStatus").textContent = "Installed.";
+        loadEmbeddingReadiness();
+      },
+      onError: (job) => {
+        document.getElementById("installEmbeddingsBtn").disabled = false;
+        document.getElementById("installEmbeddingsStatus").textContent = "Error: " + job.error;
+      },
+    },
+  );
+}
+
+async function startEmbeddingTraining() {
+  const btn = document.getElementById("trainEmbeddingsBtn");
+  const statusEl = document.getElementById("embeddingTrainStatus");
+  btn.disabled = true;
+  statusEl.textContent = "Starting…";
+
+  let data;
+  try {
+    const res = await fetch("/api/model/train_embeddings", { method: "POST" });
+    data = await res.json();
+  } catch (err) {
+    statusEl.textContent = "Request failed — is the server running?";
+    btn.disabled = false;
+    return;
+  }
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    btn.disabled = false;
+    return;
+  }
+  modelState.embedTrainJobId = data.job_id;
+  pollEmbeddingTrainJob();
+}
+
+function pollEmbeddingTrainJob() {
+  modelState.embedTrainPollTimer?.cancel();
+  modelState.embedTrainPollTimer = pollBackgroundJob(
+    `/api/model/train_embeddings_status?job_id=${encodeURIComponent(modelState.embedTrainJobId)}`,
+    {
+      onRunning: (job) => {
+        const themeText = job.current_theme ? `: ${job.current_theme.name}` : "";
+        document.getElementById("embeddingTrainStatus").textContent =
+          `Training theme ${job.themes_done}/${job.themes_total}${themeText}…`;
+      },
+      onDone: (job) => {
+        document.getElementById("trainEmbeddingsBtn").disabled = false;
+        document.getElementById("embeddingTrainStatus").textContent =
+          `Done — ${job.trained.length} theme(s) trained, ${job.skipped.length} skipped (below the trust floor).`;
+        loadModelThemes().then(() => {
+          if (modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId);
+        });
+      },
+      onError: (job) => {
+        document.getElementById("trainEmbeddingsBtn").disabled = false;
+        document.getElementById("embeddingTrainStatus").textContent = "Error: " + job.error;
+      },
+    },
+  );
+}
+
 // --- Events / init --------------------------------------------------------------------
 
 function bindModelEvents() {
   document.getElementById("trainModelsBtn").addEventListener("click", startTraining);
+  document.getElementById("exportFullCorpusBtn").addEventListener("click", exportFullCorpus);
+  document.getElementById("trainEmbeddingsBtn").addEventListener("click", startEmbeddingTraining);
+  document.getElementById("installEmbeddingsBtn").addEventListener("click", startInstallEmbeddingsDeps);
   document.getElementById("modelThemeItems").addEventListener("click", (e) => {
     const item = e.target.closest(".model-theme-item");
     if (item) selectModelTheme(item.dataset.themeId);
   });
-  window.onEnterModelTab = () => loadModelThemes();
+  document.getElementById("modelEngineToggle").addEventListener("click", (e) => {
+    const btn = e.target.closest(".model-engine-btn");
+    if (btn && modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId, btn.dataset.engine);
+  });
+  window.onEnterModelTab = () => {
+    loadModelThemes();
+    loadEmbeddingReadiness();
+  };
 }
 
 function initModel() {

@@ -20,3 +20,9 @@ PROJECT_DIR = Path(os.getenv("PROJECT_DIR") or HERE)
 QUERIES_DIR = PROJECT_DIR / "queries"
 EXPORTS_DIR = PROJECT_DIR / "exports"
 DB_PATH = PROJECT_DIR / "coding.db"
+# Cached sentence-embedding matrices (one .npy file per model_name) for the optional
+# embedding-based classifier engine -- see classifier.build_embeddings()/coding_store.embeddings.
+# Like coding.db, project-specific and gitignored, but regenerable (at real CPU cost) from
+# segments, so it's not committed but is worth keeping across runs rather than treating as
+# disposable.
+EMBEDDINGS_DIR = PROJECT_DIR / "embeddings"

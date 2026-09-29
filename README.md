@@ -54,6 +54,13 @@ If you're a developer (or an AI coding agent) working on this codebase, read
   install these for you;
   `pandas` is also used by demo notebooks some researchers keep in a local, untracked `Examples/`
   folder, not something a fresh clone comes with.
+- `requirements-embeddings.txt` — optional, not installed by `install.bat`/`install.command`.
+  Only needed for the Model tab's embedding-based ("richer") topic-model engine, once your
+  codebook has enough coded volume to bootstrap it. Pulls in PyTorch (hundreds of MB) via
+  `sentence-transformers`, so it's never part of the default setup — an "Install embedding
+  dependencies" button on the Model tab runs this for you when you actually want the richer
+  engine (or run `pip install -r requirements-embeddings.txt` yourself) — see
+  docs/DEVELOPMENT.md's Coding subsystem section.
 - `.env.example` — a template for the ceointerviews.ai API credentials (and the optional
   `PROJECT_DIR`/`CODER_NAME` settings).
 
