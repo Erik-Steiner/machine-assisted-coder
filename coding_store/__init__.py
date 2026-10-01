@@ -8,7 +8,9 @@ duplicates/dataset_status/activity_log together:
                        none of them.
   segments.py       -- speaker-turn segments (scripts/build_segments.py's output).
   themes.py         -- the researcher's codebook: create/edit/archive/merge.
-  codes.py          -- codes applied to segments.
+  codes.py          -- codes applied to segments, and explicit rejections.
+  labels.py         -- effective labels: sub-code roll-up and rejection rules,
+                       read by training, the Model tab's counts, and progress.
   model_runs.py     -- Model tab storage: metrics, predictions, top terms.
   review.py         -- the Review tab's recode queue, and coding-progress counts.
   activity_log.py   -- Web Appendix: the research-action log, training-run

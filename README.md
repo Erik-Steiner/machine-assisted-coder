@@ -335,6 +335,11 @@ expand **Datasets** in this tab and click **Segment** next to it (see "Get your 
    not.
 3. Click **View in Coding** on an exemplar to jump to that exact segment in the Coding tab.
 
+A segment coded with a sub-code also counts as a positive for every theme above it (its parent,
+grandparent, and so on). Training and the "x/25 coded" counts include those, and the parent's chip
+shows a dashed "implied" outline. Rejecting a theme also rejects its sub-codes, but rejecting a
+sub-code says nothing about its parent.
+
 Metrics below the ~150-positive-code mark are shown with a caution note — treat the ranking as
 suggestive, not final, until a theme has more codes.
 

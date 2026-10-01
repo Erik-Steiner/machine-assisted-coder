@@ -552,12 +552,26 @@ async function unloadDataset(datasetId) {
 // depth-0-only ordering by index.
 // rejectedIds (optional): themes explicitly rejected for this segment -- shown struck
 // through. Clicking one still codes it (the server cancels the rejection).
+//
+// A parent theme whose sub-code is coded (but which isn't coded itself) is marked
+// "implied": training counts that segment as a positive for the parent too (see
+// coding_store/labels.py). Display only -- nothing extra is stored.
 function buildChipsHtml(themeIds, themes, rejectedIds = []) {
   let topLevelIndex = 0;
+  const parentOf = new Map(themes.map((t) => [t.theme_id, t.parent_theme_id || null]));
+  const implied = new Set();
+  themeIds.forEach((id) => {
+    let current = parentOf.get(id);
+    while (current && !implied.has(current)) {
+      implied.add(current);
+      current = parentOf.get(current);
+    }
+  });
   return themes
     .map((t) => {
       const active = themeIds.includes(t.theme_id);
-      const rejected = !active && rejectedIds.includes(t.theme_id);
+      const isImplied = !active && implied.has(t.theme_id);
+      const rejected = !active && !isImplied && rejectedIds.includes(t.theme_id);
       let num = "";
       if ((t.depth || 0) === 0) {
         num = topLevelIndex < 9 ? `<span class="chip-num">${topLevelIndex + 1}</span>` : "";
@@ -565,9 +579,11 @@ function buildChipsHtml(themeIds, themes, rejectedIds = []) {
       }
       const marginPx = Math.min(t.depth || 0, 6) * 10;
       return (
-        `<button type="button" class="theme-chip${active ? " active" : ""}${rejected ? " rejected" : ""}" ` +
+        `<button type="button" class="theme-chip${active ? " active" : ""}${isImplied ? " implied" : ""}` +
+        `${rejected ? " rejected" : ""}" ` +
         `data-theme="${escapeHtml(t.theme_id)}" ` +
         (rejected ? `title="Rejected for this segment. Click to code it instead." ` : "") +
+        (isImplied ? `title="Implied by a coded sub-code: counts toward this theme in training." ` : "") +
         `style="--chip-color:${escapeHtml(t.color || "#6b7fd7")};margin-left:${marginPx}px">` +
         `${num}${escapeHtml(t.name)}</button>`
       );

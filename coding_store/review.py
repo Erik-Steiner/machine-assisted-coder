@@ -4,7 +4,7 @@ fallback). Depends on codes.py (get_codes_for_segment_ids) and model_runs.py
 (get_latest_model_runs, get_top_predictions) -- this is the one submodule
 that reads across both.
 """
-from . import codes, model_runs, schema
+from . import codes, labels, model_runs, schema
 
 
 def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
@@ -90,7 +90,10 @@ def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
 
 
 def get_progress(dataset_id=None, scheme_id=None):
-    """scheme_id, when given, scopes coded_segments/by_theme to codes whose
+    """by_theme[theme_id]["count"] is the number of distinct segments effectively
+    coded with that theme, sub-codes included (see coding_store/labels.py) -- the
+    same number training checks against MIN_POSITIVES_ATTEMPT. scheme_id, when given,
+    scopes coded_segments/by_theme to codes whose
     theme belongs to that scheme -- so the Coding tab's progress bar reports
     progress within the active scheme rather than conflating two independent
     codebooks' counts into one number. total_segments/by_group stay
@@ -120,24 +123,16 @@ def get_progress(dataset_id=None, scheme_id=None):
             coded_params,
         ).fetchone()["n"]
 
-        theme_where = ["c.deleted_at IS NULL"]
-        theme_params = []
-        if dataset_id:
-            theme_where.append("s.dataset_id=?")
-            theme_params.append(dataset_id)
-        if scheme_id:
-            theme_where.append("t.scheme_id=?")
-            theme_params.append(scheme_id)
-        theme_clause = " AND ".join(theme_where)
-        by_theme_rows = conn.execute(
-            f"""SELECT c.theme_id, t.name, COUNT(*) AS n
-                FROM codes c
-                JOIN segments s ON s.segment_id = c.segment_id
-                LEFT JOIN themes t ON t.theme_id = c.theme_id
-                WHERE {theme_clause}
-                GROUP BY c.theme_id""",
-            theme_params,
+        # by_theme counts distinct segments *effectively* positive per theme -- a
+        # code on a sub-code also counts for every ancestor (coding_store/labels.py)
+        # -- so "x/25 coded" matches the n_pos the classifier will train on.
+        code_where = "c.deleted_at IS NULL" + (" AND s.dataset_id=?" if dataset_id else "")
+        code_rows = conn.execute(
+            f"""SELECT c.segment_id, c.theme_id FROM codes c
+                JOIN segments s ON s.segment_id = c.segment_id WHERE {code_where}""",
+            seg_params,
         ).fetchall()
+        theme_rows = conn.execute("SELECT theme_id, name, scheme_id, parent_theme_id FROM themes").fetchall()
 
         group_filter = "WHERE dataset_id=?" if dataset_id else ""
         by_group_total = conn.execute(
@@ -159,9 +154,17 @@ def get_progress(dataset_id=None, scheme_id=None):
         r["group_name"]: {"total_segments": r["n"], "coded_segments": coded_by_group.get(r["group_name"], 0)}
         for r in by_group_total
     }
-    by_theme = {
-        r["theme_id"]: {"name": r["name"], "count": r["n"]} for r in by_theme_rows
-    }
+    theme_info = {r["theme_id"]: r for r in theme_rows}
+    counts = labels.roll_up_counts(
+        [(r["segment_id"], r["theme_id"]) for r in code_rows],
+        {tid: r["parent_theme_id"] for tid, r in theme_info.items()},
+    )
+    by_theme = {}
+    for tid, n in counts.items():
+        info = theme_info.get(tid)
+        if scheme_id and (info is None or info["scheme_id"] != scheme_id):
+            continue
+        by_theme[tid] = {"name": info["name"] if info else None, "count": n}
     return {
         "total_segments": total_segments,
         "coded_segments": coded_segments,

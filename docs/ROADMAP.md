@@ -118,7 +118,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `POST /api/coding/negatives[/delete]`; a code and a rejection for the same
   segment/theme/coder cancel each other out. A basic "✕ not this theme" on Review's predicted
   cards (full triage UI in B2). Optional later: extra weight for explicit negatives.
-- [ ] **A2 Hierarchy roll-up.** Positives = own codes ∪ descendants' codes, computed at
+- [x] **A2 Hierarchy roll-up.** *(Done 2026-10-01, `coding_store/labels.py`. Review's "Currently coded" list stays exact by design; archived sub-codes still roll up.)* Positives = own codes ∪ descendants' codes, computed at
   training time (nothing new written to `codes`). A rejection flows down to sub-codes, never
   up. Coverage/value-prop/`already_coded` use the same definition. `roll_up` logged. A
   faint "implied" mark on parent chips in Coding.

@@ -931,6 +931,11 @@ button.btn-secondary {
   border-color: var(--chip-color, var(--accent));
   color: #fff;
 }
+.theme-chip.implied {
+  border-color: var(--chip-color, var(--accent));
+  border-style: dashed;
+  color: var(--text);
+}
 .theme-chip.rejected {
   text-decoration: line-through;
   border-style: dashed;
@@ -971,6 +976,7 @@ button.btn-secondary {
   border-radius: 6px;
   line-height: 1.4;
 }
+#modelBanner:empty { display: none; } /* model.js clears it once any classifier exists */
 
 #modelThemeItems { display: flex; flex-direction: column; }
 

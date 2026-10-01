@@ -1,9 +1,10 @@
 """Model tab storage: one classifier run per (model_version, theme_id) --
 metrics, predictions, and top predictive terms. Read-only monitoring data;
-nothing here mutates codes/themes. No dependency on any other coding_store
-submodule.
+nothing here mutates codes/themes. Depends only on schema and labels (the
+effective-label rules behind its already_coded/already_rejected flags and
+coded counts).
 """
-from . import schema
+from . import labels, schema
 
 # Which engine produced a run is encoded only in its model_version prefix (see
 # classifier.run_training_pass()/run_embedding_training_pass()). This dict is the one
@@ -145,27 +146,24 @@ def get_top_terms(model_version, theme_id):
     return {"positive": positive, "negative": negative}
 
 
-def get_top_predictions(theme_id, model_version, limit=15):
-    """Top-scored segments for one theme's model run, joined with segment text
-    and flagged for whether they're already coded -- exemplars for the
-    Model tab's interpret panel."""
+def _select_predictions(theme_id, model_version, extra_where="", extra_params=(), tail="", tail_params=()):
+    """Shared read behind get_top_predictions()/get_predictions_for_theme():
+    prediction rows joined with segment text, each flagged already_coded /
+    already_rejected under the effective-label rules (labels.effective_label_sql():
+    a code on a sub-code counts for the parent; a rejection of an ancestor counts;
+    a positive wins)."""
+    coded_sql, coded_params, rejected_sql, rejected_params = labels.effective_label_sql(theme_id)
     with schema.get_conn() as conn:
         rows = conn.execute(
-            """SELECT p.segment_id, p.score, p.oof_score, s.item_id, s.dataset_id, s.group_name,
+            f"""SELECT p.segment_id, p.score, p.oof_score, s.item_id, s.dataset_id, s.group_name,
                       s.person_name, s.speaker_name, s.speaker_role, s.depth,
                       s.word_count, s.timestamp, s.text,
-                      EXISTS(
-                        SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
-                        AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
-                      ) AS already_coded,
-                      EXISTS(
-                        SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
-                        AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
-                      ) AS already_rejected
+                      {coded_sql} AS already_coded,
+                      {rejected_sql} AS already_rejected
                FROM predictions p JOIN segments s ON s.segment_id = p.segment_id
-               WHERE p.theme_id = ? AND p.model_version = ?
-               ORDER BY p.score DESC LIMIT ?""",
-            (theme_id, model_version, limit),
+               WHERE p.theme_id = ? AND p.model_version = ? {extra_where}
+               ORDER BY p.score DESC {tail}""",
+            (*coded_params, *rejected_params, theme_id, model_version, *extra_params, *tail_params),
         ).fetchall()
     out = []
     for r in rows:
@@ -173,6 +171,13 @@ def get_top_predictions(theme_id, model_version, limit=15):
         d["item_id"] = str(d["item_id"])
         out.append(d)
     return out
+
+
+def get_top_predictions(theme_id, model_version, limit=15):
+    """Top-scored segments for one theme's model run, joined with segment text
+    and flagged for whether they're already coded/rejected -- exemplars for the
+    Model tab's interpret panel, and the Review queue's model-flagged list."""
+    return _select_predictions(theme_id, model_version, tail="LIMIT ?", tail_params=(limit,))
 
 
 def get_predictions_for_theme(theme_id, model_version, threshold=None):
@@ -181,35 +186,9 @@ def get_predictions_for_theme(theme_id, model_version, threshold=None):
     no LIMIT, and an optional score threshold instead of a rank cutoff). This
     is the read behind the full-corpus topic-model export; the Review queue
     and Model tab exemplar panel keep using get_top_predictions() unchanged."""
-    where = "p.theme_id = ? AND p.model_version = ?"
-    params = [theme_id, model_version]
-    if threshold is not None:
-        where += " AND p.score >= ?"
-        params.append(threshold)
-    with schema.get_conn() as conn:
-        rows = conn.execute(
-            f"""SELECT p.segment_id, p.score, p.oof_score, s.item_id, s.dataset_id, s.group_name,
-                      s.person_name, s.speaker_name, s.speaker_role, s.depth,
-                      s.word_count, s.timestamp, s.text,
-                      EXISTS(
-                        SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
-                        AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
-                      ) AS already_coded,
-                      EXISTS(
-                        SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
-                        AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
-                      ) AS already_rejected
-               FROM predictions p JOIN segments s ON s.segment_id = p.segment_id
-               WHERE {where}
-               ORDER BY p.score DESC""",
-            params,
-        ).fetchall()
-    out = []
-    for r in rows:
-        d = dict(r)
-        d["item_id"] = str(d["item_id"])
-        out.append(d)
-    return out
+    if threshold is None:
+        return _select_predictions(theme_id, model_version)
+    return _select_predictions(theme_id, model_version, "AND p.score >= ?", (threshold,))
 
 
 def get_corpus_coverage(theme_id, model_version, threshold, total_segments):
@@ -232,34 +211,26 @@ def get_corpus_coverage(theme_id, model_version, threshold, total_segments):
 
 
 def get_value_prop(theme_id, model_version, threshold):
-    """coded_count (from codes) vs. flagged_uncoded_count (segments the model
-    scores above threshold for this run that aren't already coded, and that no
-    coder has explicitly rejected for this theme) -- the headline "the model
-    found N more cases" stat. A rejected segment was looked at and judged not to
-    be this theme, so counting it as a "more case" (or toward coverage, see
-    get_corpus_coverage()) would overstate the theme. rejected_count is the
-    number of segments with an active rejection for the theme."""
+    """coded_count vs. flagged_uncoded_count (segments the model scores above
+    threshold for this run that aren't already coded, and that no coder has
+    explicitly rejected for this theme) -- the headline "the model found N more
+    cases" stat. A rejected segment was looked at and judged not to be this
+    theme, so counting it as a "more case" (or toward coverage, see
+    get_corpus_coverage()) would overstate the theme. All three counts use the
+    effective-label rules (see coding_store/labels.py): for a parent theme,
+    coded_count includes segments coded only with a sub-code, matching the n_pos
+    the classifier trained on."""
+    coded_sql, coded_params, rejected_sql, rejected_params = labels.effective_label_sql(theme_id)
     with schema.get_conn() as conn:
-        coded_count = conn.execute(
-            "SELECT COUNT(DISTINCT segment_id) AS n FROM codes WHERE theme_id=? AND deleted_at IS NULL",
-            (theme_id,),
-        ).fetchone()["n"]
         flagged_uncoded_count = conn.execute(
-            """SELECT COUNT(*) AS n FROM predictions p
+            f"""SELECT COUNT(*) AS n FROM predictions p
                WHERE p.theme_id=? AND p.model_version=? AND p.score >= ?
-               AND NOT EXISTS (
-                 SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
-                 AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
-               )
-               AND NOT EXISTS (
-                 SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
-                 AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
-               )""",
-            (theme_id, model_version, threshold),
+               AND NOT {coded_sql} AND NOT {rejected_sql}""",
+            (theme_id, model_version, threshold, *coded_params, *rejected_params),
         ).fetchone()["n"]
-        rejected_count = conn.execute(
-            "SELECT COUNT(DISTINCT segment_id) AS n FROM negatives WHERE theme_id=? AND deleted_at IS NULL",
-            (theme_id,),
-        ).fetchone()["n"]
-    return {"coded_count": coded_count, "flagged_uncoded_count": flagged_uncoded_count,
-            "rejected_count": rejected_count, "threshold": threshold}
+    return {
+        "coded_count": len(labels.effective_positive_segment_ids(theme_id)),
+        "flagged_uncoded_count": flagged_uncoded_count,
+        "rejected_count": len(labels.effective_rejected_segment_ids(theme_id)),
+        "threshold": threshold,
+    }

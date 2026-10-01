@@ -441,6 +441,18 @@ tab's "flags N more" and coverage counts, appear struck through on chips, and ar
 `negatives.json/csv` and in `segment_topic_scores`' `rejected` column. Roadmap A6's `reviewed`
 negative mode will train on them. Tests: `tests/test_labels.py`.
 
+**Effective labels and sub-code roll-up (`coding_store/labels.py`).** What counts as theme T is
+computed on read, never stored. A code on T *or any sub-code of T* (any depth, archived
+sub-codes included) makes a segment positive for T. A rejection of T *or any ancestor of T*
+makes it a negative, so rejections flow down, never up. A positive wins over an inherited
+rejection. These rules are used everywhere it matters: `classifier.build_labels()` (training
+positives; runs record `roll_up: true` in their params), `model_runs`' `already_coded`/
+`already_rejected` flags and `get_value_prop()` counts, and `review.get_progress()`'s per-theme
+counts (now distinct segments, so "x/25 coded" matches the `n_pos` training will see). Review's
+"Currently coded" list is deliberately still exact: it's a recode view of the codes you
+actually applied. In the Code/Review chips, a parent whose sub-code is coded shows a dashed
+"implied" outline. Tests: `tests/test_labels.py`.
+
 `coding_store/schema.py`'s `SCHEMA` also defines `cluster_runs`, `clusters`,
 `cluster_segments`, and `consistency_checks` tables. These exist for later phases
 (unsupervised topic clustering, inter-rater consistency checks) and are created by

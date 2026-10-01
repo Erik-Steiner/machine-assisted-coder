@@ -37,7 +37,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
-from coding_store import activity_log, dataset_status, duplicates, embeddings, model_runs, schema, themes
+from coding_store import activity_log, dataset_status, duplicates, embeddings, labels, model_runs, schema, themes
 
 TOP_TERMS_N = 20
 
@@ -86,7 +86,7 @@ def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=
     coding_store.dataset_status. scheme_id records which coding scheme's
     themes the pass trained (None = every scheme -- see run_training_pass())."""
     return {
-        "scheme_id": scheme_id,
+        "scheme_id": scheme_id, "roll_up": ROLL_UP,
         "ngram_range": list(NGRAM_RANGE), "max_features": MAX_FEATURES, "min_df": MIN_DF,
         "stop_words": STOP_WORDS, "min_positives_attempt": MIN_POSITIVES_ATTEMPT,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
@@ -190,15 +190,17 @@ def fit_vectorizer(texts):
     return vectorizer, X
 
 
+# Recorded in every run's params: positives roll up from sub-codes (see
+# coding_store/labels.py). Runs from before this existed have no roll_up key; for
+# those, a parent theme's positives were its direct codes only.
+ROLL_UP = True
+
+
 def build_labels(theme_id, segment_ids):
-    """0/1 label per segment_id: 1 if it has an active code for theme_id (from
-    any coder), 0 otherwise. Returns (y, n_pos)."""
-    with schema.get_conn() as conn:
-        rows = conn.execute(
-            "SELECT DISTINCT segment_id FROM codes WHERE theme_id=? AND deleted_at IS NULL",
-            (theme_id,),
-        ).fetchall()
-    positive_ids = {r["segment_id"] for r in rows}
+    """0/1 label per segment_id: 1 if it's effectively positive for theme_id --
+    an active code (from any coder) on theme_id or any of its sub-codes (see
+    coding_store/labels.py) -- 0 otherwise. Returns (y, n_pos)."""
+    positive_ids = labels.effective_positive_segment_ids(theme_id)
     y = np.array([1 if sid in positive_ids else 0 for sid in segment_ids], dtype=int)
     return y, int(y.sum())
 
@@ -400,7 +402,7 @@ def embedding_training_params(model_name=EMBEDDING_MODEL_NAME, scheme_id=None):
     pass so the Web Appendix tab shows exactly how a given embed_v1_*
     model_version was produced."""
     return {
-        "scheme_id": scheme_id,
+        "scheme_id": scheme_id, "roll_up": ROLL_UP,
         "engine": "embed_v1", "embedding_model": model_name, "trust_positives_floor": TRUST_POSITIVES,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
         "logreg_max_iter": LOGREG_MAX_ITER, "calibration_method": CALIBRATION_METHOD,

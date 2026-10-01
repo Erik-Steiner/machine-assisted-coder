@@ -3,7 +3,7 @@
 (coding_store/themes.py's merge_themes). Mistakes here don't raise errors; they
 quietly leave a segment both coded and rejected, or lose a rejection, and later
 train or queue the wrong thing -- see CLAUDE.md rule 8's named exceptions.
-Roadmap A2/A6 (hierarchy roll-up, negative modes) will add their tests here.
+Also the hierarchy rules (roadmap A2, coding_store/labels.py); A6 (negative modes) will add its tests here.
 
 Every test uses a throwaway coding.db in a temp directory, never a real project
 (CLAUDE.md rule 11), and restores schema.DB_PATH afterwards.
@@ -18,7 +18,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-from coding_store import codes, schema, schemes, themes  # noqa: E402
+import classifier  # noqa: E402
+from coding_store import codes, labels, review, schema, schemes, segments, themes  # noqa: E402
 
 
 class TempDbTestCase(unittest.TestCase):
@@ -130,6 +131,76 @@ class MergeTests(TempDbTestCase):
         themes.merge_themes(self.src, self.tgt)
         self.assertEqual(self.active_rejections("s1"), [self.tgt])
         self.assertEqual(len(self.all_rows("negatives")), 2)
+
+
+class HierarchyRollUpTests(TempDbTestCase):
+    """coding_store/labels.py: Market > Pricing > Discounts, plus a sibling Competition."""
+
+    def setUp(self):
+        super().setUp()
+        schemes.create_scheme("S")
+        self.market = themes.create_theme("Market", scheme_id="s")["theme_id"]
+        self.pricing = themes.create_theme("Pricing", scheme_id="s", parent_theme_id=self.market)["theme_id"]
+        self.discounts = themes.create_theme("Discounts", scheme_id="s", parent_theme_id=self.pricing)["theme_id"]
+        self.competition = themes.create_theme("Competition", scheme_id="s", parent_theme_id=self.market)["theme_id"]
+
+    def test_codes_roll_up_through_every_ancestor(self):
+        codes.add_code("s1", self.discounts)
+        codes.add_code("s2", self.competition)
+        codes.add_code("s3", self.market)
+        self.assertEqual(labels.effective_positive_segment_ids(self.market), {"s1", "s2", "s3"})
+        self.assertEqual(labels.effective_positive_segment_ids(self.pricing), {"s1"})
+        self.assertEqual(labels.effective_positive_segment_ids(self.competition), {"s2"})
+
+    def test_codes_never_roll_down_or_sideways(self):
+        codes.add_code("s1", self.market)
+        self.assertEqual(labels.effective_positive_segment_ids(self.pricing), set())
+        self.assertEqual(labels.effective_positive_segment_ids(self.competition), set())
+
+    def test_archived_subcode_still_counts(self):
+        codes.add_code("s1", self.pricing)
+        themes.set_theme_status(self.pricing, "archived")
+        self.assertEqual(labels.effective_positive_segment_ids(self.market), {"s1"})
+
+    def test_rejection_flows_down_not_up(self):
+        codes.add_negative("s1", self.market)
+        codes.add_negative("s2", self.pricing)
+        self.assertEqual(labels.effective_rejected_segment_ids(self.discounts), {"s1", "s2"})
+        self.assertEqual(labels.effective_rejected_segment_ids(self.market), {"s1"})
+        self.assertEqual(labels.effective_rejected_segment_ids(self.competition), {"s1"})
+
+    def test_positive_wins_over_inherited_rejection(self):
+        codes.add_negative("s1", self.market)  # "not Market"...
+        codes.add_code("s1", self.pricing)     # ...but coded Pricing, which implies Market
+        self.assertEqual(labels.effective_positive_segment_ids(self.market), {"s1"})
+        self.assertEqual(labels.effective_rejected_segment_ids(self.market), set())
+        self.assertEqual(labels.effective_rejected_segment_ids(self.pricing), set())
+        self.assertEqual(labels.effective_rejected_segment_ids(self.discounts), {"s1"})
+
+    def test_build_labels_uses_roll_up(self):
+        codes.add_code("s1", self.discounts)
+        codes.add_code("s2", self.market)
+        y, n_pos = classifier.build_labels(self.market, ["s1", "s2", "s3"])
+        self.assertEqual(list(y), [1, 1, 0])
+        self.assertEqual(n_pos, 2)
+
+    def test_progress_counts_match_training(self):
+        segments.upsert_segments([  # get_progress() counts codes on segments that exist
+            {"segment_id": sid, "item_id": "i1", "dataset_id": "d1", "seg_index": i, "text": "x"}
+            for i, sid in enumerate(["s1", "s2"])
+        ])
+        codes.add_code("s1", self.discounts)
+        codes.add_code("s1", self.pricing)  # same segment twice under one subtree: counted once
+        codes.add_code("s2", self.competition)
+        codes.add_code("s2", self.competition, coder="other")  # two coders: still one segment
+        by_theme = review.get_progress(scheme_id="s")["by_theme"]
+        self.assertEqual(by_theme[self.market]["count"], 2)
+        self.assertEqual(by_theme[self.pricing]["count"], 1)
+        self.assertEqual(by_theme[self.competition]["count"], 1)
+
+    def test_roll_up_counts_is_cycle_safe(self):
+        counts = labels.roll_up_counts([("s1", "a")], {"a": "b", "b": "a"})
+        self.assertEqual(counts, {"a": 1, "b": 1})
 
 
 if __name__ == "__main__":
