@@ -122,7 +122,7 @@ engine" depends on A4's engine-aware notion of "latest".
   training time (nothing new written to `codes`). A rejection flows down to sub-codes, never
   up. Coverage/value-prop/`already_coded` use the same definition. `roll_up` logged. A
   faint "implied" mark on parent chips in Coding.
-- [ ] **A6 Reviewed state + `negative_mode`.** `item_review_status` table and per-segment `n`
+- [x] **A6 Reviewed state + `negative_mode`.** *(Done 2026-10-01: `coding_store/reviewed.py`, `labels.reviewed_negative_segment_ids()`; new tables need no version bump.)* `item_review_status` table and per-segment `n`
   confirmations, both timestamped. `reviewed` mode trains on positives + explicit rejects +
   uncoded segments reviewed *after the theme was created*; unread segments are scored but not
   trained on. Warn (and offer `all_uncoded`) below ~50 negatives. Mode logged per run.
@@ -210,7 +210,7 @@ engine" depends on A4's engine-aware notion of "latest".
 - `predictions.oof_score REAL` (A3) — shipped
 - `model_run_pins` table (A7) — shipped (additive table, no version bump needed)
 - `negatives.deleted_at`, `source`, `note` (A5) — shipped as v5
-- `item_review_status`, per-segment review confirmations (A6)
+- `item_reviews`, `segment_none_confirmations` tables (A6) — shipped (new tables, no bump)
 - `review_decisions` (B2)
 - `themes.inclusion_criteria`, `themes.exclusion_criteria`, `codes.is_exemplar` (B4)
 - `segments_fts` FTS5 virtual table (B5)

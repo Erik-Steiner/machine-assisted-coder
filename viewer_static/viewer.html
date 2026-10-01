@@ -125,6 +125,7 @@
       <h2 id="codingPersonName"></h2>
       <div id="codingItemTitle"></div>
       <div id="codingDupNotice"></div>
+      <div id="codingReviewBar"></div>
     </div>
 
     <div id="codingNavBar">
@@ -354,6 +355,15 @@
       <label id="trainAllSchemesLabel" class="hint">
         <input type="checkbox" id="trainAllSchemes"> Train every scheme's themes instead
       </label>
+      <label id="trainNegativeModeLabel" class="hint">Negatives
+        <select id="trainNegativeMode">
+          <option value="reviewed">Only passages you've judged (recommended)</option>
+          <option value="all_uncoded">Every uncoded passage</option>
+        </select>
+      </label>
+      <div class="hint" id="trainNegativeModeHint">"Judged" means rejected, or uncoded in an interview
+        you marked fully coded (Code tab) after the theme was created. Unread passages are scored
+        but not trained on.</div>
       <div id="modelTrainStatus" class="hint"></div>
     </div>
     <div id="modelExportBar">
@@ -434,7 +444,7 @@
         <table id="modelHistoryTable">
           <thead>
             <tr>
-              <th>Trained</th><th>Version</th><th>n_pos</th><th>Precision</th>
+              <th>Trained</th><th>Version</th><th>n_pos</th><th>n_neg</th><th>Negatives</th><th>Precision</th>
               <th>Recall</th><th>F1</th><th>PR-AUC</th><th>Threshold</th>
             </tr>
           </thead>

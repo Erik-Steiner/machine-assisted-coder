@@ -17,11 +17,15 @@ The rules (roadmap A2):
   - Archived sub-codes still count. Archiving hides a theme from new coding;
     it doesn't make its existing codes untrue. (A merged theme's codes were
     re-pointed to the target, so they're counted there.)
+  - Reviewed negatives (roadmap A6, reviewed_negative_segment_ids()): segments
+    judged "fully coded" / "none of these" after a theme was created count against
+    it, alongside its explicit rejections.
 
 Nothing here writes anything: stored codes and rejections stay exactly as the
 researcher entered them, and roll-up is computed on read. Depends only on
-schema (raw SQL over themes/codes/negatives), so model_runs.py and review.py
-can use it without an import cycle.
+schema (raw SQL over themes/codes/negatives/item_reviews/
+segment_none_confirmations), so model_runs.py and review.py can use it without
+an import cycle.
 """
 from . import schema
 
@@ -97,6 +101,36 @@ def effective_rejected_segment_ids(theme_id):
             (theme_id,),
         ).fetchall()
     return {r["segment_id"] for r in rows} - effective_positive_segment_ids(theme_id)
+
+
+def reviewed_negative_segment_ids(theme_id):
+    """Every segment that counts as a negative for theme_id in training's `reviewed`
+    negative mode (roadmap A6): its explicit rejections (effective_rejected_segment_ids:
+    own or an ancestor's), plus every segment the researcher judged for this theme's
+    scheme *after the theme was created* -- inside an item marked "fully coded", or
+    confirmed "none of these themes" on its own (coding_store/reviewed.py) -- minus
+    anything effectively positive (a positive wins). A mark made before the theme
+    existed says nothing about it: that theme was never considered.
+
+    Not filtered to the training corpus (interviewer turns, short fragments,
+    duplicates): classifier.training_labels() intersects with that itself."""
+    with schema.get_conn() as conn:
+        theme = conn.execute(
+            "SELECT scheme_id, created_at FROM themes WHERE theme_id=?", (theme_id,)
+        ).fetchone()
+        if theme is None:
+            return set()
+        rows = conn.execute(
+            """SELECT s.segment_id FROM item_reviews r
+               JOIN segments s ON s.dataset_id = r.dataset_id AND CAST(s.item_id AS TEXT) = r.item_id
+               WHERE r.scheme_id = ? AND r.unmarked_at IS NULL AND r.marked_at >= ?
+               UNION
+               SELECT segment_id FROM segment_none_confirmations
+               WHERE scheme_id = ? AND unconfirmed_at IS NULL AND confirmed_at >= ?""",
+            (theme["scheme_id"], theme["created_at"], theme["scheme_id"], theme["created_at"]),
+        ).fetchall()
+    judged = {r["segment_id"] for r in rows}
+    return (judged | effective_rejected_segment_ids(theme_id)) - effective_positive_segment_ids(theme_id)
 
 
 def roll_up_counts(code_rows, parent_by_theme):

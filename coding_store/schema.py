@@ -100,6 +100,37 @@ CREATE TABLE IF NOT EXISTS negatives (
 CREATE INDEX IF NOT EXISTS idx_negatives_segment ON negatives(segment_id);
 CREATE INDEX IF NOT EXISTS idx_negatives_theme ON negatives(theme_id);
 
+-- "Reviewed" state (roadmap A6), both scoped to one coding scheme and timestamped.
+-- item_reviews: a researcher marked a whole item (interview/thread) "fully coded"
+-- for a scheme -- every uncoded, non-interviewer segment in it was considered
+-- against that scheme's themes *as they existed at marked_at*. Unmarking sets
+-- unmarked_at; re-marking adds a new row, so the history is kept.
+-- segment_none_confirmations: the per-segment equivalent (the Code tab's `n` key):
+-- "none of this scheme's themes apply here".
+-- coding_store/labels.py turns these into explicit negatives for training's
+-- `reviewed` negative mode: a segment only counts against a theme created *before*
+-- the mark/confirmation, since a later theme was never considered.
+CREATE TABLE IF NOT EXISTS item_reviews (
+    review_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    dataset_id TEXT NOT NULL,
+    item_id TEXT NOT NULL,
+    scheme_id TEXT NOT NULL,
+    coder TEXT NOT NULL,
+    marked_at TEXT NOT NULL,
+    unmarked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_item_reviews_lookup ON item_reviews(scheme_id, dataset_id, item_id);
+
+CREATE TABLE IF NOT EXISTS segment_none_confirmations (
+    confirmation_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    segment_id TEXT NOT NULL,
+    scheme_id TEXT NOT NULL,
+    coder TEXT NOT NULL,
+    confirmed_at TEXT NOT NULL,
+    unconfirmed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_segment_none_lookup ON segment_none_confirmations(scheme_id, segment_id);
+
 CREATE TABLE IF NOT EXISTS embeddings (
     segment_id TEXT NOT NULL,
     model_name TEXT NOT NULL,

@@ -3,7 +3,7 @@
 (coding_store/themes.py's merge_themes). Mistakes here don't raise errors; they
 quietly leave a segment both coded and rejected, or lose a rejection, and later
 train or queue the wrong thing -- see CLAUDE.md rule 8's named exceptions.
-Also the hierarchy rules (roadmap A2, coding_store/labels.py); A6 (negative modes) will add its tests here.
+Also the hierarchy rules (roadmap A2, coding_store/labels.py) and the `reviewed` negative mode (A6).
 
 Every test uses a throwaway coding.db in a temp directory, never a real project
 (CLAUDE.md rule 11), and restores schema.DB_PATH afterwards.
@@ -19,7 +19,7 @@ HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
 import classifier  # noqa: E402
-from coding_store import codes, labels, review, schema, schemes, segments, themes  # noqa: E402
+from coding_store import codes, labels, model_runs, review, reviewed, schema, schemes, segments, themes  # noqa: E402
 
 
 class TempDbTestCase(unittest.TestCase):
@@ -201,6 +201,121 @@ class HierarchyRollUpTests(TempDbTestCase):
     def test_roll_up_counts_is_cycle_safe(self):
         counts = labels.roll_up_counts([("s1", "a")], {"a": "b", "b": "a"})
         self.assertEqual(counts, {"a": 1, "b": 1})
+
+
+def add_segments(item_id, segment_ids, dataset_id="d1", text="some words about the topic here"):
+    segments.upsert_segments([
+        {"segment_id": sid, "item_id": item_id, "dataset_id": dataset_id, "seg_index": i,
+         "text": text, "word_count": len(text.split())}
+        for i, sid in enumerate(segment_ids)
+    ])
+
+
+class ReviewedNegativeTests(TempDbTestCase):
+    """labels.reviewed_negative_segment_ids() -- the `reviewed` negative mode (roadmap A6)."""
+
+    def setUp(self):
+        super().setUp()
+        schemes.create_scheme("S")
+        schemes.create_scheme("Other")
+        add_segments("i1", ["a1", "a2", "a3"])
+        add_segments("i2", ["b1", "b2"])
+        self.early = themes.create_theme("Early", scheme_id="s")["theme_id"]
+
+    def test_marked_item_uncoded_segments_are_negatives(self):
+        codes.add_code("a1", self.early)
+        reviewed.set_item_review("d1", "i1", "s", True)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), {"a2", "a3"})
+
+    def test_unread_items_are_not_negatives(self):
+        reviewed.set_item_review("d1", "i1", "s", True)
+        self.assertFalse({"b1", "b2"} & labels.reviewed_negative_segment_ids(self.early))
+
+    def test_mark_only_counts_for_themes_that_already_existed(self):
+        reviewed.set_item_review("d1", "i1", "s", True)
+        late = themes.create_theme("Late", scheme_id="s")["theme_id"]
+        self.assertEqual(labels.reviewed_negative_segment_ids(late), set())
+        # Re-marking keeps the original time; unmark + mark again covers the new theme.
+        reviewed.set_item_review("d1", "i1", "s", True)
+        self.assertEqual(labels.reviewed_negative_segment_ids(late), set())
+        reviewed.set_item_review("d1", "i1", "s", False)
+        reviewed.set_item_review("d1", "i1", "s", True)
+        self.assertEqual(labels.reviewed_negative_segment_ids(late), {"a1", "a2", "a3"})
+
+    def test_unmarking_withdraws(self):
+        reviewed.set_item_review("d1", "i1", "s", True)
+        reviewed.set_item_review("d1", "i1", "s", False)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), set())
+        self.assertEqual(len(self.all_rows("item_reviews")), 1)  # history kept, not deleted
+
+    def test_mark_in_another_scheme_does_not_count(self):
+        reviewed.set_item_review("d1", "i1", "other", True)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), set())
+
+    def test_none_confirmation_and_rejection_count(self):
+        reviewed.set_segment_none("b1", "s", True)
+        codes.add_negative("b2", self.early)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), {"b1", "b2"})
+        reviewed.set_segment_none("b1", "s", False)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), {"b2"})
+
+    def test_positive_wins_over_reviewed_negative(self):
+        reviewed.set_item_review("d1", "i1", "s", True)
+        child = themes.create_theme("Child", scheme_id="s", parent_theme_id=self.early)["theme_id"]
+        codes.add_code("a2", child)  # coded with a sub-code after the mark: positive for Early
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.early), {"a1", "a3"})
+
+    def test_training_labels_by_mode(self):
+        codes.add_code("a1", self.early)
+        reviewed.set_item_review("d1", "i1", "s", True)
+        ids = ["a1", "a2", "a3", "b1", "b2"]
+        idx, y, n_pos, n_neg = classifier.training_labels(self.early, ids, "reviewed")
+        self.assertEqual([ids[i] for i in idx], ["a1", "a2", "a3"])  # unread b1/b2 left out
+        self.assertEqual((list(y), n_pos, n_neg), ([1, 0, 0], 1, 2))
+        idx, y, n_pos, n_neg = classifier.training_labels(self.early, ids, "all_uncoded")
+        self.assertEqual((len(idx), n_pos, n_neg), (5, 1, 4))
+        with self.assertRaises(ValueError):
+            classifier.training_labels(self.early, ids, "bogus")
+
+
+class ReviewedTrainingPassTests(TempDbTestCase):
+    """A small end-to-end training pass in each negative mode."""
+
+    def setUp(self):
+        super().setUp()
+        schemes.create_scheme("S")
+        self.theme = themes.create_theme("Growth", scheme_id="s")["theme_id"]
+        pos_text = "revenue growth expanded quickly across new markets this year strongly"
+        neg_text = "the weather and the office kitchen were discussed at length today calmly"
+        unread_text = "an unrelated passage nobody has read about trains and maps and rivers"
+        add_segments("pos", [f"p{i:02d}" for i in range(30)], text=pos_text)
+        add_segments("neg", [f"n{i:02d}" for i in range(60)], text=neg_text)
+        add_segments("unread", [f"u{i:02d}" for i in range(40)], text=unread_text)
+        for i in range(30):
+            codes.add_code(f"p{i:02d}", self.theme)
+        reviewed.set_item_review("d1", "neg", "s", True)
+
+    def test_reviewed_mode_fits_on_judged_rows_and_scores_everything(self):
+        result = classifier.run_training_pass(negative_mode="reviewed")
+        self.assertEqual(result["results"][0]["status"], "trained")
+        self.assertEqual((result["results"][0]["n_pos"], result["results"][0]["n_neg"]), (30, 60))
+        with schema.get_conn() as conn:
+            rows = conn.execute(
+                "SELECT segment_id, oof_score FROM predictions WHERE model_version=?", (result["model_version"],)
+            ).fetchall()
+        self.assertEqual(len(rows), 130)  # every corpus segment scored
+        unread_oof = [r["oof_score"] for r in rows if r["segment_id"].startswith("u")]
+        self.assertTrue(all(v is None for v in unread_oof))  # not fitted on -> no out-of-fold score
+        runs = model_runs.list_model_runs(self.theme)
+        self.assertEqual(runs[0]["negative_mode"], "reviewed")
+
+    def test_too_few_judged_negatives_skips(self):
+        reviewed.set_item_review("d1", "neg", "s", False)
+        result = classifier.run_training_pass(negative_mode="reviewed")
+        self.assertEqual(result["results"][0]["status"], "skipped_insufficient_negatives")
+        result = classifier.run_training_pass(negative_mode="all_uncoded")
+        self.assertEqual(result["results"][0]["status"], "trained")
+        self.assertEqual(result["results"][0]["n_neg"], 100)
 
 
 if __name__ == "__main__":

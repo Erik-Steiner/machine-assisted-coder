@@ -128,6 +128,12 @@ CODE_EXPORT_FIELDS = [
 NEGATIVE_EXPORT_FIELDS = [
     "negative_id", "segment_id", "theme_id", "coder", "source", "note", "created_at", "deleted_at",
 ]
+ITEM_REVIEW_EXPORT_FIELDS = [
+    "review_id", "dataset_id", "item_id", "scheme_id", "coder", "marked_at", "unmarked_at",
+]
+SEGMENT_NONE_EXPORT_FIELDS = [
+    "confirmation_id", "segment_id", "scheme_id", "coder", "confirmed_at", "unconfirmed_at",
+]
 MODEL_RUN_EXPORT_FIELDS = [
     "model_version", "theme_id", "trained_at", "n_pos", "n_neg",
     "precision", "recall", "f1", "pr_auc", "threshold",
@@ -138,7 +144,9 @@ def export_codebook(output_dir, scheme_id=None):
     """Dump the researcher's actual codebook -- every scheme, every theme
     regardless of status, every code including soft-deleted ones (deleted_at
     is provenance, not deletion), every explicit rejection (negatives.json/csv,
-    soft-deleted ones included for the same reason), and the latest model_runs -- to JSON+CSV
+    soft-deleted ones included for the same reason), the "reviewed" record
+    (item_reviews: interviews marked fully coded; segment_none_confirmations:
+    passages confirmed "none of these" -- withdrawn ones included), and the latest model_runs -- to JSON+CSV
     pairs in output_dir. This is the only export of coding.db's substance the
     app offers: use it as a backup, or as a journal's supplementary material.
     Mirrors query_api.write_export's JSON+CSV shape so both export paths in
@@ -168,10 +176,20 @@ def export_codebook(output_dir, scheme_id=None):
                 """SELECT n.* FROM negatives n JOIN themes t ON t.theme_id = n.theme_id
                    WHERE t.scheme_id=? ORDER BY n.negative_id""", (scheme_id,)
             ).fetchall()]
+            item_reviews = [dict(r) for r in conn.execute(
+                "SELECT * FROM item_reviews WHERE scheme_id=? ORDER BY review_id", (scheme_id,)
+            ).fetchall()]
+            segment_nones = [dict(r) for r in conn.execute(
+                "SELECT * FROM segment_none_confirmations WHERE scheme_id=? ORDER BY confirmation_id", (scheme_id,)
+            ).fetchall()]
         else:
             themes = [dict(r) for r in conn.execute("SELECT * FROM themes ORDER BY name").fetchall()]
             codes = [dict(r) for r in conn.execute("SELECT * FROM codes ORDER BY code_id").fetchall()]
             negatives = [dict(r) for r in conn.execute("SELECT * FROM negatives ORDER BY negative_id").fetchall()]
+            item_reviews = [dict(r) for r in conn.execute("SELECT * FROM item_reviews ORDER BY review_id").fetchall()]
+            segment_nones = [dict(r) for r in conn.execute(
+                "SELECT * FROM segment_none_confirmations ORDER BY confirmation_id"
+            ).fetchall()]
         model_runs = [
             dict(r) for r in
             conn.execute("SELECT * FROM model_runs ORDER BY theme_id, trained_at DESC").fetchall()
@@ -183,6 +201,8 @@ def export_codebook(output_dir, scheme_id=None):
         ("themes", themes, THEME_EXPORT_FIELDS),
         ("codes", codes, CODE_EXPORT_FIELDS),
         ("negatives", negatives, NEGATIVE_EXPORT_FIELDS),
+        ("item_reviews", item_reviews, ITEM_REVIEW_EXPORT_FIELDS),
+        ("segment_none_confirmations", segment_nones, SEGMENT_NONE_EXPORT_FIELDS),
         ("model_runs", model_runs, MODEL_RUN_EXPORT_FIELDS),
     ):
         json_path = output_dir / f"{name}.json"

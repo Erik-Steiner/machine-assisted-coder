@@ -114,8 +114,17 @@ Endpoints:
     POST /api/codebook/themes/<id>/merge_into         -> merge a theme's codes into another theme in
                                                          the same scheme, archive it
 
-    GET  /api/coding/segments?item_id=<id>           -> ordered segments + their codes (theme_ids)
-                                                         and active rejections (rejected_theme_ids)
+    GET  /api/coding/segments?item_id=<id>&scheme_id=<id>  -> ordered segments + their codes (theme_ids)
+                                                         and active rejections (rejected_theme_ids); with
+                                                         scheme_id, also each segment's none_confirmed flag
+                                                         and the item's "fully coded" mark (item_review)
+    POST /api/coding/item_review                     -> {dataset_id, item_id, scheme_id, reviewed: bool} ->
+                                                         mark/unmark an item "fully coded" for a scheme: its
+                                                         uncoded segments become judged negatives for themes
+                                                         that existed at that moment (coding_store/reviewed.py,
+                                                         labels.reviewed_negative_segment_ids())
+    POST /api/coding/segment_none                    -> {segment_id, scheme_id, confirmed: bool} -> confirm/
+                                                         withdraw "none of this scheme's themes apply here"
     POST /api/coding/codes                           -> apply a code to a segment (also cancels the
                                                          same coder's rejection of that theme there)
     POST /api/coding/codes/delete                    -> remove a code from a segment
@@ -147,7 +156,9 @@ Endpoints:
            (default "tfidf"; never mixed across engines) -- see
            coding_store.review.get_review_candidates
 
-    POST /api/model/train                            -> {scheme_id?} -> kick off a background training
+    POST /api/model/train                            -> {scheme_id?, negative_mode?: "reviewed"|"all_uncoded"}
+                                                         (default "reviewed" -- see classifier.NEGATIVE_MODES)
+                                                         -> kick off a background training
                                                          pass over that scheme's eligible themes (the Model
                                                          tab sends the active scheme), or every scheme's if
                                                          scheme_id is omitted; one shared model_version
@@ -162,7 +173,7 @@ Endpoints:
                                                          whether the optional embedding-based
                                                          engine can be bootstrapped right now
                                                          (see requirements-embeddings.txt)
-    POST /api/model/train_embeddings                 -> {scheme_id?} -> kick off a background embedding-
+    POST /api/model/train_embeddings                 -> {scheme_id?, negative_mode?} -> kick off a background embedding-
                                                          training pass, scheme-scoped like /api/model/train
                                                          (400 if embedding_readiness() isn't met for that
                                                          scope); reuses the TF-IDF pass's training
@@ -336,6 +347,7 @@ from coding_store import (
     duplicates,
     model_runs,
     review,
+    reviewed as reviewed_store,
     schema,
     schemes,
     segments as segments_store,
@@ -598,7 +610,25 @@ def run_query_job(job_id, registry, kind, source_id, label, company_name, after_
 TRAIN_JOBS = JobRegistry()
 
 
-def run_train_job(job_id, registry, scheme_id=None):
+def _skipped_entry(result):
+    """One job-status entry for a theme a training pass skipped, saying what it
+    still needs: more positives, or (in the "reviewed" negative mode) more
+    judged negatives. needed/have are for the UI's "x/needed" wording."""
+    status = result["status"]
+    if status == "skipped_insufficient_negatives":
+        needed, have = classifier.MIN_NEGATIVES_REVIEWED, result.get("n_neg", 0)
+    elif status == "skipped_below_trust_floor":
+        needed, have = classifier.TRUST_POSITIVES, result["n_pos"]
+    else:
+        needed, have = classifier.MIN_POSITIVES_ATTEMPT, result["n_pos"]
+    return {"theme_id": result["theme_id"], "name": result["name"], "status": status,
+            "n_pos": result["n_pos"], "n_neg": result.get("n_neg"), "needed": needed, "have": have}
+
+
+def _run_training_job(job_id, registry, pass_fn, log_action, scheme_id, negative_mode):
+    """Shared body of the TF-IDF and embedding training jobs: run pass_fn
+    (classifier.run_training_pass / run_embedding_training_pass) with live
+    progress, then record the final trained/skipped lists and log the run."""
     def on_progress(event):
         stage = event["stage"]
         if stage not in ("theme_start", "theme_skipped", "theme_done"):
@@ -609,10 +639,7 @@ def run_train_job(job_id, registry, scheme_id=None):
             job["current_theme"] = {"theme_id": event["theme_id"], "name": event["name"]}
             if stage == "theme_skipped":
                 job["themes_done"] = event["index"] + 1
-                job["skipped"].append({
-                    "theme_id": event["theme_id"], "name": event["name"],
-                    "n_pos": event["n_pos"], "needed": classifier.MIN_POSITIVES_ATTEMPT,
-                })
+                job["skipped"].append(_skipped_entry(event))
             elif stage == "theme_done":
                 job["themes_done"] = event["index"] + 1
                 job["trained"].append({
@@ -621,7 +648,7 @@ def run_train_job(job_id, registry, scheme_id=None):
 
         registry.mutate(job_id, apply)
 
-    summary = classifier.run_training_pass(progress_callback=on_progress, scheme_id=scheme_id)
+    summary = pass_fn(progress_callback=on_progress, scheme_id=scheme_id, negative_mode=negative_mode)
     if summary["error"]:
         registry.update(job_id, status="error", error=summary["error"])
         return
@@ -631,21 +658,21 @@ def run_train_job(job_id, registry, scheme_id=None):
         {"theme_id": r["theme_id"], "name": r["name"], **r["metrics"]}
         for r in summary["results"] if r["status"] == "trained"
     ]
-    skipped = [
-        {"theme_id": r["theme_id"], "name": r["name"], "n_pos": r["n_pos"],
-         "needed": classifier.MIN_POSITIVES_ATTEMPT}
-        for r in summary["results"] if r["status"] == "skipped_insufficient_positives"
-    ]
+    skipped = [_skipped_entry(r) for r in summary["results"] if r["status"].startswith("skipped")]
     registry.update(
         job_id, status="done", model_version=summary["model_version"],
         themes_total=summary["themes_total"], themes_done=summary["themes_total"],
         trained=trained, skipped=skipped,
     )
-    activity_log.log_activity(CODER_NAME, "training_run", {
-        "model_version": summary["model_version"], "scheme_id": scheme_id,
+    activity_log.log_activity(CODER_NAME, log_action, {
+        "model_version": summary["model_version"], "scheme_id": scheme_id, "negative_mode": negative_mode,
         "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
-        "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
+        "skipped": [{"theme_id": t["theme_id"], "name": t["name"], "status": t["status"]} for t in skipped],
     })
+
+
+def run_train_job(job_id, registry, scheme_id=None, negative_mode=classifier.DEFAULT_NEGATIVE_MODE):
+    _run_training_job(job_id, registry, classifier.run_training_pass, "training_run", scheme_id, negative_mode)
 
 
 # --- Background embedding-training jobs (Model tab's optional richer engine) ---------
@@ -653,53 +680,9 @@ def run_train_job(job_id, registry, scheme_id=None):
 EMBED_TRAIN_JOBS = JobRegistry()
 
 
-def run_train_embeddings_job(job_id, registry, scheme_id=None):
-    def on_progress(event):
-        stage = event["stage"]
-        if stage not in ("theme_start", "theme_skipped", "theme_done"):
-            return
-
-        def apply(job):
-            job["themes_total"] = event["total"]
-            job["current_theme"] = {"theme_id": event["theme_id"], "name": event["name"]}
-            if stage == "theme_skipped":
-                job["themes_done"] = event["index"] + 1
-                job["skipped"].append({
-                    "theme_id": event["theme_id"], "name": event["name"],
-                    "n_pos": event["n_pos"], "needed": classifier.TRUST_POSITIVES,
-                })
-            elif stage == "theme_done":
-                job["themes_done"] = event["index"] + 1
-                job["trained"].append({
-                    "theme_id": event["theme_id"], "name": event["name"], **event["metrics"],
-                })
-
-        registry.mutate(job_id, apply)
-
-    summary = classifier.run_embedding_training_pass(progress_callback=on_progress, scheme_id=scheme_id)
-    if summary["error"]:
-        registry.update(job_id, status="error", error=summary["error"])
-        return
-
-    trained = [
-        {"theme_id": r["theme_id"], "name": r["name"], **r["metrics"]}
-        for r in summary["results"] if r["status"] == "trained"
-    ]
-    skipped = [
-        {"theme_id": r["theme_id"], "name": r["name"], "n_pos": r["n_pos"],
-         "needed": classifier.TRUST_POSITIVES}
-        for r in summary["results"] if r["status"] == "skipped_below_trust_floor"
-    ]
-    registry.update(
-        job_id, status="done", model_version=summary["model_version"],
-        themes_total=summary["themes_total"], themes_done=summary["themes_total"],
-        trained=trained, skipped=skipped,
-    )
-    activity_log.log_activity(CODER_NAME, "embedding_training_run", {
-        "model_version": summary["model_version"], "scheme_id": scheme_id,
-        "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
-        "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
-    })
+def run_train_embeddings_job(job_id, registry, scheme_id=None, negative_mode=classifier.DEFAULT_NEGATIVE_MODE):
+    _run_training_job(job_id, registry, classifier.run_embedding_training_pass, "embedding_training_run",
+                      scheme_id, negative_mode)
 
 
 # --- Storage maintenance jobs (Model tab's Storage panel) ---------------------------
@@ -1313,13 +1296,46 @@ def get_coding_segments(req):
     item_id = (req.query.get("item_id", "")).strip()
     if not item_id:
         return JsonResponse({"error": "item_id is required"}, status=400)
+    scheme_id = req.query.get("scheme_id") or None
     segments = segments_store.get_segments_for_item(item_id)
     codes_by_segment = codes_store.get_codes_for_segment_ids([s["segment_id"] for s in segments])
     rejections_by_segment = codes_store.get_negatives_for_segment_ids([s["segment_id"] for s in segments])
     for s in segments:
         s["theme_ids"] = codes_by_segment.get(s["segment_id"], [])
         s["rejected_theme_ids"] = rejections_by_segment.get(s["segment_id"], [])
-    return JsonResponse({"item_id": item_id, "segments": segments})
+    # "Reviewed" state for the requested scheme (roadmap A6) -- see coding_store/reviewed.py.
+    item_review = None
+    if scheme_id:
+        confirmed = reviewed_store.get_none_confirmed_segment_ids([s["segment_id"] for s in segments], scheme_id)
+        for s in segments:
+            s["none_confirmed"] = s["segment_id"] in confirmed
+        if segments:
+            item_review = reviewed_store.get_item_review(segments[0]["dataset_id"], item_id, scheme_id)
+    return JsonResponse({"item_id": item_id, "segments": segments, "item_review": item_review})
+
+
+@ROUTER.post("/api/coding/item_review", json_body=True, required=["dataset_id", "item_id", "scheme_id"])
+def post_coding_item_review(req):
+    body = req.body
+    if schemes.get_scheme(body["scheme_id"]) is None:
+        return JsonResponse({"error": f"unknown scheme '{body['scheme_id']}'"}, status=400)
+    review_row = reviewed_store.set_item_review(
+        body["dataset_id"], body["item_id"], body["scheme_id"], bool(body.get("reviewed", True)),
+        coder=body.get("coder") or CODER_NAME,
+    )
+    return JsonResponse({"ok": True, "item_review": review_row})
+
+
+@ROUTER.post("/api/coding/segment_none", json_body=True, required=["segment_id", "scheme_id"])
+def post_coding_segment_none(req):
+    body = req.body
+    if schemes.get_scheme(body["scheme_id"]) is None:
+        return JsonResponse({"error": f"unknown scheme '{body['scheme_id']}'"}, status=400)
+    reviewed_store.set_segment_none(
+        body["segment_id"], body["scheme_id"], bool(body.get("confirmed", True)),
+        coder=body.get("coder") or CODER_NAME,
+    )
+    return JsonResponse({"ok": True})
 
 
 @ROUTER.post("/api/coding/codes", json_body=True, required=["segment_id", "theme_id"])
@@ -1420,16 +1436,25 @@ def _training_scheme_param(body):
     return scheme_id
 
 
+def _negative_mode_param(body):
+    mode = (body.get("negative_mode") or classifier.DEFAULT_NEGATIVE_MODE).strip()
+    if mode not in classifier.NEGATIVE_MODES:
+        raise ApiError(f"negative_mode must be one of {list(classifier.NEGATIVE_MODES)}", status=400)
+    return mode
+
+
 @ROUTER.post("/api/model/train", json_body="optional")
 def post_model_train(req):
     scheme_id = _training_scheme_param(req.body)
+    negative_mode = _negative_mode_param(req.body)
     conflict = maintenance_conflict("train")
     if conflict:
         return JsonResponse({"error": conflict}, status=400)
     job_id = TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
-         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id},
-        run_train_job, scheme_id,
+         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id,
+         "negative_mode": negative_mode},
+        run_train_job, scheme_id, negative_mode,
     )
     return JsonResponse({"job_id": job_id})
 
@@ -1466,6 +1491,7 @@ def get_model_embedding_readiness(req):
 @ROUTER.post("/api/model/train_embeddings", json_body="optional")
 def post_model_train_embeddings(req):
     scheme_id = _training_scheme_param(req.body)
+    negative_mode = _negative_mode_param(req.body)
     readiness = classifier.embedding_readiness(scheme_id=scheme_id)
     if not readiness["installed"]:
         return JsonResponse({
@@ -1482,8 +1508,9 @@ def post_model_train_embeddings(req):
         return JsonResponse({"error": conflict}, status=400)
     job_id = EMBED_TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
-         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id},
-        run_train_embeddings_job, scheme_id,
+         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id,
+         "negative_mode": negative_mode},
+        run_train_embeddings_job, scheme_id, negative_mode,
     )
     return JsonResponse({"job_id": job_id})
 

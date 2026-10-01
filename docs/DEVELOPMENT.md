@@ -453,6 +453,21 @@ counts (now distinct segments, so "x/25 coded" matches the `n_pos` training will
 actually applied. In the Code/Review chips, a parent whose sub-code is coded shows a dashed
 "implied" outline. Tests: `tests/test_labels.py`.
 
+**Negative modes and "reviewed" state (roadmap A6).** Training takes a `negative_mode`
+(`classifier.NEGATIVE_MODES`). In `reviewed` (the default), a theme is fitted only on its effective
+positives plus `labels.reviewed_negative_segment_ids()`: explicit rejections, and uncoded segments
+the researcher judged for that scheme *after the theme was created*. A segment counts as judged
+if its item was marked "fully coded" (`item_reviews`) or it was confirmed "none of these" with the
+Code tab's `n` key (`segment_none_confirmations`); see `coding_store/reviewed.py`. Unread
+segments are left out of fitting and CV metrics but still scored, and their `oof_score` is NULL.
+A theme with fewer than `MIN_NEGATIVES_REVIEWED` (50) judged negatives is skipped with status
+`skipped_insufficient_negatives`, and the Train tab says so. `all_uncoded` is the original
+behavior (every uncoded corpus segment is a negative). The mode is recorded in each pass's
+`model_run_params` and shown per run in the Train tab's history; runs from before A6 read as
+`all_uncoded`. Marks and confirmations are never deleted (`unmarked_at`/`unconfirmed_at`) and
+are included in the codebook export. Tests: `tests/test_labels.py` (`ReviewedNegativeTests`,
+`ReviewedTrainingPassTests`).
+
 `coding_store/schema.py`'s `SCHEMA` also defines `cluster_runs`, `clusters`,
 `cluster_segments`, and `consistency_checks` tables. These exist for later phases
 (unsupervised topic clustering, inter-rater consistency checks) and are created by

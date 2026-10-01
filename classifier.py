@@ -45,6 +45,23 @@ MIN_POSITIVES_ATTEMPT = 25  # floor to attempt a first classifier at all
 TRUST_POSITIVES = 150  # rule-of-thumb floor before trusting the ranking
 CV_FOLDS = 5
 
+# What counts as a negative example (roadmap A6) -- see training_labels():
+#   "reviewed"    (default): only segments the researcher judged -- explicit rejections,
+#                 plus uncoded segments in items marked "fully coded" / confirmed "none
+#                 of these" after the theme existed (coding_store/labels.py). Unread
+#                 segments are left out of fitting and metrics, but still scored.
+#   "all_uncoded": every uncoded segment in the corpus is a negative (the original
+#                 behavior). Simpler, but tells the model that every relevant passage
+#                 you haven't read yet is a counter-example, which pushes down exactly
+#                 the passages stage 4 is meant to find, and biases its precision.
+NEGATIVE_MODES = ("reviewed", "all_uncoded")
+DEFAULT_NEGATIVE_MODE = "reviewed"
+# In "reviewed" mode a theme needs this many judged negatives to train; below it the
+# theme is skipped (status skipped_insufficient_negatives) rather than trained on a
+# handful of negatives -- the researcher can mark more interviews, or train that run
+# with "all_uncoded".
+MIN_NEGATIVES_REVIEWED = 50
+
 # Named so the same values feed both the real fit calls below and the
 # params logged to coding_store.model_run_params (Web Appendix tab) --
 # otherwise a logged params dict could silently drift from what actually ran.
@@ -73,7 +90,8 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 MIN_SEGMENT_WORDS = 5
 
 
-def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=None):
+def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=None,
+                    negative_mode=DEFAULT_NEGATIVE_MODE):
     """The hyperparameters actually in force for a training pass, as a plain
     dict -- persisted once per pass via coding_store.activity_log's
     save_model_run_params so the Web Appendix tab can show exactly how a given
@@ -84,9 +102,12 @@ def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=
     build_corpus()) records which whole datasets, if any, were flagged
     'excluded'/'unloaded' and therefore left out of the corpus -- see
     coding_store.dataset_status. scheme_id records which coding scheme's
-    themes the pass trained (None = every scheme -- see run_training_pass())."""
+    themes the pass trained (None = every scheme -- see run_training_pass()).
+    negative_mode records what counted as a negative (see NEGATIVE_MODES); runs
+    from before it existed have no key and were effectively "all_uncoded"."""
     return {
         "scheme_id": scheme_id, "roll_up": ROLL_UP,
+        "negative_mode": negative_mode, "min_negatives_reviewed": MIN_NEGATIVES_REVIEWED,
         "ngram_range": list(NGRAM_RANGE), "max_features": MAX_FEATURES, "min_df": MIN_DF,
         "stop_words": STOP_WORDS, "min_positives_attempt": MIN_POSITIVES_ATTEMPT,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
@@ -199,10 +220,60 @@ ROLL_UP = True
 def build_labels(theme_id, segment_ids):
     """0/1 label per segment_id: 1 if it's effectively positive for theme_id --
     an active code (from any coder) on theme_id or any of its sub-codes (see
-    coding_store/labels.py) -- 0 otherwise. Returns (y, n_pos)."""
+    coding_store/labels.py) -- 0 otherwise. Returns (y, n_pos). This is the
+    "all_uncoded" labeling; training goes through training_labels()."""
     positive_ids = labels.effective_positive_segment_ids(theme_id)
     y = np.array([1 if sid in positive_ids else 0 for sid in segment_ids], dtype=int)
     return y, int(y.sum())
+
+
+def training_labels(theme_id, segment_ids, negative_mode=DEFAULT_NEGATIVE_MODE):
+    """Which rows of the corpus a theme is fitted on, and their labels.
+    Returns (row_idx, y, n_pos, n_neg): row_idx indexes into segment_ids (and the
+    shared feature matrix), y is 0/1 for exactly those rows. In "all_uncoded" mode
+    every row is used; in "reviewed" mode only effectively positive rows and
+    labels.reviewed_negative_segment_ids() rows are, so unread segments are
+    neither positives nor negatives. Raises ValueError for an unknown mode."""
+    if negative_mode == "all_uncoded":
+        y, n_pos = build_labels(theme_id, segment_ids)
+        return np.arange(len(segment_ids)), y, n_pos, int(len(y) - n_pos)
+    if negative_mode != "reviewed":
+        raise ValueError(f"unknown negative_mode '{negative_mode}' -- expected one of {NEGATIVE_MODES}")
+    positive_ids = labels.effective_positive_segment_ids(theme_id)
+    negative_ids = labels.reviewed_negative_segment_ids(theme_id)
+    row_idx, y = [], []
+    for i, sid in enumerate(segment_ids):
+        if sid in positive_ids:
+            row_idx.append(i)
+            y.append(1)
+        elif sid in negative_ids:
+            row_idx.append(i)
+            y.append(0)
+    y = np.array(y, dtype=int)
+    n_pos = int(y.sum())
+    return np.array(row_idx, dtype=int), y, n_pos, int(len(y) - n_pos)
+
+
+def _skip_status(n_pos, n_neg, negative_mode, min_positives):
+    """The skipped_* status for a theme that can't be trained yet, or None."""
+    if n_pos < min_positives:
+        return "skipped_insufficient_positives" if min_positives == MIN_POSITIVES_ATTEMPT \
+            else "skipped_below_trust_floor"
+    if negative_mode == "reviewed" and n_neg < MIN_NEGATIVES_REVIEWED:
+        return "skipped_insufficient_negatives"
+    return None
+
+
+def _fit_on_rows(X, row_idx, y, n_pos):
+    """train_theme() on just row_idx's rows; returns (metrics, model, oof_full),
+    where oof_full has one entry per corpus row -- the out-of-fold score for
+    rows that were fitted on, None for the rest (unlabeled in "reviewed" mode)."""
+    X_fit = X if len(row_idx) == X.shape[0] else X[row_idx]
+    metrics, model, oof = train_theme(X_fit, y, n_pos)
+    oof_full = [None] * X.shape[0]
+    for j, i in enumerate(row_idx):
+        oof_full[i] = float(oof[j])
+    return metrics, model, oof_full
 
 
 def _best_threshold(y_true, y_score):
@@ -274,7 +345,8 @@ def top_terms(model, vectorizer, top_n=TOP_TERMS_N):
     return top_pos, top_neg
 
 
-def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None):
+def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None,
+                      negative_mode=DEFAULT_NEGATIVE_MODE):
     """One full training pass: build the corpus, fit one shared TF-IDF
     vectorizer, then attempt every active theme -- or only scheme_id's active
     themes, when given. Scoping to a scheme changes which themes get a run, not
@@ -286,13 +358,15 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id
     background job -- can report live progress without duplicating this loop.
     exclude_duplicates is passed straight through to build_corpus() -- see
     its docstring; scripts/train_classifiers.py's --include-duplicates flag
-    is this parameter's only caller-facing opt-out.
+    is this parameter's only caller-facing opt-out. negative_mode picks what counts
+    as a negative example (see NEGATIVE_MODES / training_labels()).
 
     Persists model_runs, predictions, and model_top_terms for every theme
-    that trains -- the only side effects. Returns:
+    that trains -- the only side effects. Every corpus segment is scored, whatever
+    the negative_mode. Returns:
       {model_version, trained_at, themes_total,
-       results: [{theme_id, name, status: "trained"|"skipped_insufficient_positives",
-                  n_pos, metrics: {...} | None}, ...],
+       results: [{theme_id, name, status: "trained" | "skipped_insufficient_positives"
+                  | "skipped_insufficient_negatives", n_pos, n_neg, metrics: {...} | None}, ...],
        error: str | None}
     model_version is None only when error is set (nothing to train on).
     """
@@ -300,6 +374,8 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id
         if progress_callback:
             progress_callback(event)
 
+    if negative_mode not in NEGATIVE_MODES:
+        raise ValueError(f"unknown negative_mode '{negative_mode}' -- expected one of {NEGATIVE_MODES}")
     schema.init_db()
     theme_list = themes.list_themes(scheme_id=scheme_id)
     if not theme_list:
@@ -321,26 +397,28 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id
     model_version = "tfidf_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
     activity_log.save_model_run_params(
-        model_version, training_params(duplicate_run_id, excluded_dataset_ids, scheme_id), trained_at
+        model_version, training_params(duplicate_run_id, excluded_dataset_ids, scheme_id, negative_mode),
+        trained_at,
     )
 
     results = []
     for i, theme in enumerate(theme_list):
         emit({"stage": "theme_start", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"]})
-        y, n_pos = build_labels(theme["theme_id"], segment_ids)
+        row_idx, y, n_pos, n_neg = training_labels(theme["theme_id"], segment_ids, negative_mode)
 
-        trained = train_theme(X, y, n_pos)
-        if trained is None:
+        skip = _skip_status(n_pos, n_neg, negative_mode, MIN_POSITIVES_ATTEMPT)
+        if skip:
             results.append({
                 "theme_id": theme["theme_id"], "name": theme["name"],
-                "status": "skipped_insufficient_positives", "n_pos": n_pos, "metrics": None,
+                "status": skip, "n_pos": n_pos, "n_neg": n_neg, "metrics": None,
             })
             emit({"stage": "theme_skipped", "index": i, "total": len(theme_list),
-                  "theme_id": theme["theme_id"], "name": theme["name"], "n_pos": n_pos})
+                  "theme_id": theme["theme_id"], "name": theme["name"],
+                  "status": skip, "n_pos": n_pos, "n_neg": n_neg})
             continue
 
-        metrics, model, oof_scores = trained
+        metrics, model, oof_scores = _fit_on_rows(X, row_idx, y, n_pos)
         model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
 
         scores = model.predict_proba(X)[:, 1]
@@ -351,7 +429,7 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id
 
         results.append({
             "theme_id": theme["theme_id"], "name": theme["name"],
-            "status": "trained", "n_pos": n_pos, "metrics": metrics,
+            "status": "trained", "n_pos": n_pos, "n_neg": n_neg, "metrics": metrics,
         })
         emit({"stage": "theme_done", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"], "metrics": metrics})
@@ -397,12 +475,14 @@ def embedding_readiness(scheme_id=None):
     }
 
 
-def embedding_training_params(model_name=EMBEDDING_MODEL_NAME, scheme_id=None):
+def embedding_training_params(model_name=EMBEDDING_MODEL_NAME, scheme_id=None,
+                              negative_mode=DEFAULT_NEGATIVE_MODE):
     """Mirrors training_params() -- persisted once per embedding training
     pass so the Web Appendix tab shows exactly how a given embed_v1_*
     model_version was produced."""
     return {
         "scheme_id": scheme_id, "roll_up": ROLL_UP,
+        "negative_mode": negative_mode, "min_negatives_reviewed": MIN_NEGATIVES_REVIEWED,
         "engine": "embed_v1", "embedding_model": model_name, "trust_positives_floor": TRUST_POSITIVES,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
         "logreg_max_iter": LOGREG_MAX_ITER, "calibration_method": CALIBRATION_METHOD,
@@ -434,7 +514,8 @@ def build_embeddings(segment_ids, texts, model_name=EMBEDDING_MODEL_NAME):
     return embeddings.load_matrix(segment_ids, model_name)
 
 
-def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None):
+def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None,
+                                negative_mode=DEFAULT_NEGATIVE_MODE):
     """Embedding-engine counterpart to run_training_pass(): same shape and
     same side effects (model_runs + predictions per theme that trains), but
     does not save top terms -- embedding dimensions aren't interpretable
@@ -449,6 +530,8 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True,
         if progress_callback:
             progress_callback(event)
 
+    if negative_mode not in NEGATIVE_MODES:
+        raise ValueError(f"unknown negative_mode '{negative_mode}' -- expected one of {NEGATIVE_MODES}")
     schema.init_db()
     readiness = embedding_readiness(scheme_id=scheme_id)
     if not readiness["installed"]:
@@ -479,25 +562,29 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True,
 
     model_version = "embed_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
-    activity_log.save_model_run_params(model_version, embedding_training_params(scheme_id=scheme_id), trained_at)
+    activity_log.save_model_run_params(
+        model_version, embedding_training_params(scheme_id=scheme_id, negative_mode=negative_mode), trained_at,
+    )
 
     results = []
     for i, theme in enumerate(theme_list):
         emit({"stage": "theme_start", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"]})
-        y, n_pos = build_labels(theme["theme_id"], segment_ids)
+        row_idx, y, n_pos, n_neg = training_labels(theme["theme_id"], segment_ids, negative_mode)
 
-        if n_pos < TRUST_POSITIVES:
+        skip = _skip_status(n_pos, n_neg, negative_mode, TRUST_POSITIVES)
+        if skip:
             results.append({
                 "theme_id": theme["theme_id"], "name": theme["name"],
-                "status": "skipped_below_trust_floor", "n_pos": n_pos, "metrics": None,
+                "status": skip, "n_pos": n_pos, "n_neg": n_neg, "metrics": None,
             })
             emit({"stage": "theme_skipped", "index": i, "total": len(theme_list),
-                  "theme_id": theme["theme_id"], "name": theme["name"], "n_pos": n_pos})
+                  "theme_id": theme["theme_id"], "name": theme["name"],
+                  "status": skip, "n_pos": n_pos, "n_neg": n_neg})
             continue
 
         # n_pos >= TRUST_POSITIVES > MIN_POSITIVES_ATTEMPT, so train_theme always succeeds here.
-        metrics, model, oof_scores = train_theme(X, y, n_pos)
+        metrics, model, oof_scores = _fit_on_rows(X, row_idx, y, n_pos)
         model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
 
         scores = model.predict_proba(X)[:, 1]
@@ -505,7 +592,7 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True,
 
         results.append({
             "theme_id": theme["theme_id"], "name": theme["name"],
-            "status": "trained", "n_pos": n_pos, "metrics": metrics,
+            "status": "trained", "n_pos": n_pos, "n_neg": n_neg, "metrics": metrics,
         })
         emit({"stage": "theme_done", "index": i, "total": len(theme_list),
               "theme_id": theme["theme_id"], "name": theme["name"], "metrics": metrics})

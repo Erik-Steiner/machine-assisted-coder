@@ -901,6 +901,19 @@ button.btn-secondary {
 }
 .seg-role-interviewer { color: var(--text-dim); background: var(--panel-alt); }
 .seg-role-other { color: var(--text-dim); background: transparent; }
+.seg-none-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--border);
+  color: var(--text-dim);
+}
+
+/* "Fully coded" mark for the current item (coding.js's renderCodingReviewBar) */
+#codingReviewBar { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; }
+#codingReviewBar:empty { display: none; }
+.coding-review-done { color: var(--text); font-weight: 600; }
+#trainNegativeModeLabel select { max-width: 100%; margin-top: 2px; }
 
 .segment-text {
   font-size: 14px;

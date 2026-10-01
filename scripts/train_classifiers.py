@@ -17,7 +17,13 @@ for a single run.
 Trains every scheme's themes by default; pass --scheme <scheme_id> to train
 only one coding scheme's themes (what the Model tab does by default).
 
+Only segments you've judged count as negatives by default (--negatives reviewed:
+explicit rejections, plus uncoded segments in interviews marked "fully coded" or
+confirmed "none of these" in the Code tab). --negatives all_uncoded treats every
+uncoded segment as a negative instead -- see classifier.NEGATIVE_MODES.
+
 Usage: python scripts/train_classifiers.py
+       python scripts/train_classifiers.py --negatives all_uncoded
        python scripts/train_classifiers.py --include-duplicates
        python scripts/train_classifiers.py --scheme default
 """
@@ -37,6 +43,9 @@ def print_progress(event):
         print("Building shared TF-IDF features over the full corpus...")
     elif stage == "vectorizing":
         print(f"{event['n_segments']} segments, fitting vectorizer...")
+    elif stage == "theme_skipped" and event.get("status") == "skipped_insufficient_negatives":
+        print(f"  skip {event['name']}: {event['n_neg']}/{classifier.MIN_NEGATIVES_REVIEWED} reviewed "
+              "negatives -- mark more interviews fully coded, or use --negatives all_uncoded")
     elif stage == "theme_skipped":
         print(f"  skip {event['name']}: {event['n_pos']}/{classifier.MIN_POSITIVES_ATTEMPT} positives needed")
     elif stage == "theme_done":
@@ -46,7 +55,7 @@ def print_progress(event):
             else f"  [below the {classifier.TRUST_POSITIVES}-positive rule of thumb -- treat ranking with caution]"
         )
         print(
-            f"  {event['name']}: n_pos={m['n_pos']} "
+            f"  {event['name']}: n_pos={m['n_pos']} n_neg={m['n_neg']} "
             f"precision={m['precision']:.2f} recall={m['recall']:.2f} "
             f"f1={m['f1']:.2f} pr_auc={m['pr_auc']:.2f}{caution}"
         )
@@ -59,13 +68,15 @@ def main():
                               "(see scripts/find_duplicates.py)")
     parser.add_argument("--scheme", metavar="SCHEME_ID", default=None,
                          help="train only this coding scheme's themes (default: every scheme)")
+    parser.add_argument("--negatives", choices=classifier.NEGATIVE_MODES, default=classifier.DEFAULT_NEGATIVE_MODE,
+                         help="what counts as a negative example (default: %(default)s)")
     args = parser.parse_args()
     if args.include_duplicates:
         print("--include-duplicates: near-duplicate segments will NOT be excluded from this run.")
 
     summary = classifier.run_training_pass(
         progress_callback=print_progress, exclude_duplicates=not args.include_duplicates,
-        scheme_id=args.scheme,
+        scheme_id=args.scheme, negative_mode=args.negatives,
     )
 
     if summary["error"]:

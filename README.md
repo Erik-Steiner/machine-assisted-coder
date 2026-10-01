@@ -340,6 +340,13 @@ grandparent, and so on). Training and the "x/25 coded" counts include those, and
 shows a dashed "implied" outline. Rejecting a theme also rejects its sub-codes, but rejecting a
 sub-code says nothing about its parent.
 
+**What counts as a negative.** Under the Train button, **Negatives** defaults to *Only passages
+you've judged*: a theme learns from your codes, your rejections, and uncoded passages in
+interviews you've marked **Mark fully coded** in the Code tab (or passages you've pressed `n` on:
+"none of this scheme's themes"). A mark only counts against themes that already existed when you
+made it. Passages you haven't read are still scored, just not used as negatives. A theme needs 50
+judged negatives to train in this mode; choose *Every uncoded passage* for the old behavior.
+
 Metrics below the ~150-positive-code mark are shown with a caution note — treat the ranking as
 suggestive, not final, until a theme has more codes.
 

@@ -79,14 +79,26 @@ def _with_engine(row):
 
 
 def list_model_runs(theme_id=None):
+    """Run rows newest first, each with `engine` and `negative_mode` (what counted
+    as a negative -- see classifier.NEGATIVE_MODES, read from the pass's
+    model_run_params). Runs from before negative modes existed have none
+    recorded; they all treated every uncoded segment as a negative, so they read
+    as "all_uncoded"."""
+    where = "WHERE m.theme_id=?" if theme_id else ""
+    params = (theme_id,) if theme_id else ()
     with schema.get_conn() as conn:
-        if theme_id:
-            rows = conn.execute(
-                "SELECT * FROM model_runs WHERE theme_id=? ORDER BY trained_at DESC", (theme_id,)
-            ).fetchall()
-        else:
-            rows = conn.execute("SELECT * FROM model_runs ORDER BY trained_at DESC").fetchall()
-    return [_with_engine(r) for r in rows]
+        rows = conn.execute(
+            f"""SELECT m.*, json_extract(pr.params_json, '$.negative_mode') AS negative_mode
+                FROM model_runs m LEFT JOIN model_run_params pr ON pr.model_version = m.model_version
+                {where} ORDER BY m.trained_at DESC""",
+            params,
+        ).fetchall()
+    out = []
+    for r in rows:
+        d = _with_engine(r)
+        d["negative_mode"] = d["negative_mode"] or "all_uncoded"
+        out.append(d)
+    return out
 
 
 def get_latest_model_runs(engine=None):

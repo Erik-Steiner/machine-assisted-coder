@@ -18,9 +18,11 @@ const codingState = {
   datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
   segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text,
-                //   theme_ids, rejected_theme_ids}]
+                //   theme_ids, rejected_theme_ids, none_confirmed}] -- none_confirmed is per active scheme
   focusIndex: -1,
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
+  itemReview: null, // the current item's active "fully coded" mark for the active scheme, or null
+                    // (coding_store/reviewed.py) -- see renderCodingReviewBar()
   minWords: 0, // live "min word count" filter -- segments below this are hidden, not deleted
 };
 
@@ -91,6 +93,8 @@ function renderSchemeSwitcher() {
 async function switchScheme(schemeId) {
   codingState.activeSchemeId = schemeId;
   await loadThemes();
+  // "Fully coded" marks and `n` confirmations are per scheme -- refetch them.
+  if (codingState.itemId != null) await loadCodingSegments(codingState.itemId);
 }
 
 function renderSchemesList() {
@@ -646,11 +650,15 @@ async function loadCodingSegments(itemId) {
   codingState.itemId = itemId;
   codingState.focusIndex = -1;
   document.getElementById("segmentContent").innerHTML = "<em>Loading segments…</em>";
-  const res = await fetch(`/api/coding/segments?item_id=${encodeURIComponent(itemId)}`);
+  const schemePart = codingState.activeSchemeId
+    ? `&scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+  const res = await fetch(`/api/coding/segments?item_id=${encodeURIComponent(itemId)}${schemePart}`);
   const data = await res.json();
   if (codingState.itemId !== itemId) return; // superseded by a newer navigation
   codingState.segments = data.segments || [];
+  codingState.itemReview = data.item_review || null;
   renderSegments();
+  renderCodingReviewBar();
 
   if (codingState.pendingFocusSegmentId) {
     const idx = codingState.segments.findIndex((s) => s.segment_id === codingState.pendingFocusSegmentId);
@@ -688,10 +696,14 @@ function renderSegmentCard(seg, idx) {
     : seg.speaker_role === "other"
       ? '<span class="seg-role-badge seg-role-other">unclear speaker</span>'
       : "";
+  const noneBadge = !isInterviewer && seg.none_confirmed && !hasSchemeCode(seg)
+    ? `<span class="seg-none-badge" title="You confirmed none of this scheme's themes apply here. Press n to undo.">no theme ✓</span>`
+    : "";
   const header =
     `<div class="segment-header">` +
     `<span class="seg-speaker">${escapeHtml(seg.speaker_name || "Unknown")}</span>` +
     roleBadge +
+    noneBadge +
     (seg.timestamp ? `<span class="seg-timestamp">${escapeHtml(seg.timestamp)}</span>` : "") +
     `</div>`;
   const text = `<div class="segment-text">${escapeHtml(seg.text)}</div>`;
@@ -729,6 +741,65 @@ async function toggleCode(seg, themeId) {
   }
   refreshProgress();
   refreshThemeCounts();
+}
+
+// --- "Reviewed" state (roadmap A6): which passages you've judged ------------------------
+//
+// In the Train tab's default "judged only" negative mode, an uncoded passage only counts
+// as a negative once you've judged it: by marking its whole interview "fully coded", or
+// pressing `n` on it ("none of this scheme's themes"). Both are per scheme and
+// timestamped, and only count against themes that existed at that moment -- see
+// coding_store/labels.py's reviewed_negative_segment_ids().
+
+function hasSchemeCode(seg) {
+  const ids = new Set(codingState.themes.map((t) => t.theme_id));
+  return seg.theme_ids.some((id) => ids.has(id));
+}
+
+function renderCodingReviewBar() {
+  const el = document.getElementById("codingReviewBar");
+  if (!codingState.activeSchemeId || !codingState.segments.length) {
+    el.innerHTML = "";
+    return;
+  }
+  const r = codingState.itemReview;
+  el.innerHTML = r
+    ? `<span class="coding-review-done">✓ Fully coded for this scheme (${escapeHtml(r.marked_at.slice(0, 10))})</span> ` +
+      `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Unmark</button>`
+    : `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Mark fully coded</button> ` +
+      `<span class="hint">Marks every uncoded passage here as judged: none of this scheme's current themes. ` +
+      `Press <kbd>n</kbd> on a single passage to say the same about just that one.</span>`;
+}
+
+async function toggleFullyCoded() {
+  if (!codingState.activeSchemeId || !codingState.segments.length) return;
+  const res = await fetch("/api/coding/item_review", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      dataset_id: codingState.segments[0].dataset_id, item_id: codingState.itemId,
+      scheme_id: codingState.activeSchemeId, reviewed: !codingState.itemReview,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) return;
+  codingState.itemReview = data.item_review || null;
+  renderCodingReviewBar();
+}
+
+async function toggleFocusedSegmentNone() {
+  if (codingState.focusIndex < 0 || !codingState.activeSchemeId) return;
+  const seg = codingState.segments[codingState.focusIndex];
+  if (!seg || seg.speaker_role === "interviewer" || hasSchemeCode(seg)) return; // coded: "none" doesn't apply
+  const confirmed = !seg.none_confirmed;
+  seg.none_confirmed = confirmed;
+  renderSegments();
+  setSegmentFocus(codingState.focusIndex);
+  await fetch("/api/coding/segment_none", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: seg.segment_id, scheme_id: codingState.activeSchemeId, confirmed }),
+  });
 }
 
 function setSegmentFocus(idx) {
@@ -816,7 +887,9 @@ function syncCodingToCurrentInterview() {
     loadCodingSegments(rec.item_id);
   } else {
     codingState.segments = [];
+    codingState.itemReview = null;
     renderSegments();
+    renderCodingReviewBar();
   }
   refreshProgress();
 }
@@ -909,6 +982,9 @@ function bindCodingEvents() {
   });
 
   document.getElementById("segmentAllBtn").addEventListener("click", () => segmentDatasets(null));
+  document.getElementById("codingReviewBar").addEventListener("click", (e) => {
+    if (e.target.id === "toggleFullyCodedBtn") toggleFullyCoded();
+  });
   document.getElementById("scanDuplicatesBtn").addEventListener("click", scanForDuplicates);
 
   document.addEventListener("keydown", (e) => {
@@ -925,6 +1001,8 @@ function bindCodingEvents() {
       moveSegmentFocus(-1);
     } else if (e.key >= "1" && e.key <= "9") {
       toggleFocusedSegmentTheme(Number(e.key) - 1);
+    } else if (e.key === "n") {
+      toggleFocusedSegmentNone();
     }
   });
 

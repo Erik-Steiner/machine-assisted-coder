@@ -85,10 +85,27 @@ function renderModelThemeList() {
   container.innerHTML = "";
   const byTheme = (modelState.progress && modelState.progress.by_theme) || {};
 
-  modelState.themes.forEach((t) => {
+  // Tree order with indented sub-codes, same as the Code tab's codebook list
+  // (coding.js's themesByParent()) -- the API returns themes flat, sorted by depth.
+  const byParent = themesByParent(modelState.themes);
+  const ordered = [];
+  const appendBranch = (parentId) => {
+    (byParent.get(parentId) || []).forEach((t) => {
+      ordered.push(t);
+      appendBranch(t.theme_id);
+    });
+  };
+  appendBranch(null);
+  // A sub-code whose parent is archived (so absent from this active list) would never
+  // be reached from the roots -- list it at the end rather than dropping it.
+  const placed = new Set(ordered.map((t) => t.theme_id));
+  modelState.themes.forEach((t) => { if (!placed.has(t.theme_id)) ordered.push(t); });
+
+  ordered.forEach((t) => {
     const div = document.createElement("div");
     div.className = "model-theme-item" + (t.theme_id === modelState.selectedThemeId ? " selected" : "");
     div.dataset.themeId = t.theme_id;
+    div.style.paddingLeft = 4 + Math.min(t.depth || 0, 6) * 16 + "px";
 
     const run = modelState.latestRuns[t.theme_id];
     const count = (byTheme[t.theme_id] && byTheme[t.theme_id].count) || 0;
@@ -186,6 +203,8 @@ function renderModelDetail() {
     : "";
   document.getElementById("modelLatestMetrics").innerHTML =
     `<span>n_pos <strong>${m.n_pos}</strong></span>` +
+    `<span>n_neg <strong>${m.n_neg}</strong></span>` +
+    `<span>negatives <strong>${escapeHtml(NEGATIVE_MODE_LABELS[m.negative_mode] || m.negative_mode || "—")}</strong></span>` +
     `<span>precision <strong>${m.precision.toFixed(2)}</strong></span>` +
     `<span>recall <strong>${m.recall.toFixed(2)}</strong></span>` +
     `<span>F1 <strong>${m.f1.toFixed(2)}</strong></span>` +
@@ -214,7 +233,9 @@ function renderMetricsHistory() {
       const trainedAt = r.trained_at ? r.trained_at.slice(0, 19).replace("T", " ") : "—";
       return (
         `<tr><td>${escapeHtml(trainedAt)}</td><td>${escapeHtml(r.model_version)}</td>` +
-        `<td>${r.n_pos}</td><td>${r.precision.toFixed(2)}</td><td>${r.recall.toFixed(2)}</td>` +
+        `<td>${r.n_pos}</td><td>${r.n_neg}</td>` +
+        `<td>${escapeHtml(NEGATIVE_MODE_LABELS[r.negative_mode] || r.negative_mode || "—")}</td>` +
+        `<td>${r.precision.toFixed(2)}</td><td>${r.recall.toFixed(2)}</td>` +
         `<td>${r.f1.toFixed(2)}</td><td>${r.pr_auc.toFixed(2)}</td><td>${r.threshold.toFixed(3)}</td></tr>`
       );
     })
@@ -271,11 +292,39 @@ function trainingScope() {
 
 function trainingRequestInit() {
   const schemeId = trainingScope();
+  const body = { negative_mode: document.getElementById("trainNegativeMode").value };
+  if (schemeId) body.scheme_id = schemeId;
   return {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(schemeId ? { scheme_id: schemeId } : {}),
+    body: JSON.stringify(body),
   };
+}
+
+// Short labels for classifier.NEGATIVE_MODES, shown in metrics and the run history.
+const NEGATIVE_MODE_LABELS = { reviewed: "judged only", all_uncoded: "all uncoded" };
+
+// "Done — ..." summary of a finished training job, breaking skipped themes down by
+// what they still need (job.skipped[].status -- see viewer_server._skipped_entry()).
+function trainingDoneText(job) {
+  const parts = [`Done — ${job.trained.length} theme(s) trained`];
+  const byStatus = {};
+  job.skipped.forEach((t) => { (byStatus[t.status] = byStatus[t.status] || []).push(t); });
+  const list = (items) => items.map((t) => `${t.name} ${t.have}/${t.needed}`).join(", ");
+  if (byStatus.skipped_insufficient_positives) {
+    parts.push(`${byStatus.skipped_insufficient_positives.length} need more coded segments (${list(byStatus.skipped_insufficient_positives)})`);
+  }
+  if (byStatus.skipped_below_trust_floor) {
+    parts.push(`${byStatus.skipped_below_trust_floor.length} below the trust floor (${list(byStatus.skipped_below_trust_floor)})`);
+  }
+  if (byStatus.skipped_insufficient_negatives) {
+    parts.push(
+      `${byStatus.skipped_insufficient_negatives.length} need more judged negatives ` +
+      `(${list(byStatus.skipped_insufficient_negatives)}) — mark interviews "fully coded" in the Code tab, ` +
+      `or train with "Every uncoded passage"`,
+    );
+  }
+  return parts.join("; ") + ".";
 }
 
 async function startTraining() {
@@ -314,7 +363,7 @@ function pollTrainJob() {
       onDone: (job) => {
         document.getElementById("trainModelsBtn").disabled = false;
         document.getElementById("modelTrainStatus").textContent =
-          `Done — ${job.trained.length} theme(s) trained, ${job.skipped.length} skipped (not enough codes yet).`;
+          trainingDoneText(job);
         loadModelThemes().then(() => {
           if (modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId);
         });
@@ -475,7 +524,7 @@ function pollEmbeddingTrainJob() {
       onDone: (job) => {
         document.getElementById("trainEmbeddingsBtn").disabled = false;
         document.getElementById("embeddingTrainStatus").textContent =
-          `Done — ${job.trained.length} theme(s) trained, ${job.skipped.length} skipped (below the trust floor).`;
+          trainingDoneText(job);
         loadModelThemes().then(() => {
           if (modelState.selectedThemeId) selectModelTheme(modelState.selectedThemeId);
         });
