@@ -61,8 +61,9 @@ fixed.
 
 ## Phase A — Foundations (M1, then A6 in M2)
 
-Implementation order: **A3 → A4 → A1 → A5 → A2 → A6** (low-risk plumbing first, then the
-changes that alter what the model learns).
+Implementation order: **A3 → A4 → A7 → A1 → A5 → A2 → A6** (low-risk plumbing first, then
+the changes that alter what the model learns). A7 follows A4 because "keep the latest run per
+engine" depends on A4's engine-aware notion of "latest".
 
 - [x] **A3 Persist out-of-fold scores.** *(Done 2026-10-01, schema v4.)* `predictions.oof_score` (v4). `train_theme()` already
   computes them for the CV metrics and then throws them away; the saved `score` comes from the
@@ -71,6 +72,40 @@ changes that alter what the model learns).
 - [ ] **A4 Engine-aware latest run.** `get_latest_model_runs(engine=)`; engine selector in
   Review; cards show which engine/run produced them. Today an embedding run silently switches
   Review to mixed-engine scores.
+- [ ] **A7 Opt-in pruning of old runs' scores, and database compaction.** Every training
+  pass writes one `predictions` row per in-scope segment for each trained theme, and old runs
+  are never removed. The real project measured on 2026-10-01: 4.04M rows from 9 runs, most of
+  a 1.15 GB `coding.db`, about 285 bytes per row including indexes. That's roughly 110 MB per
+  trained theme per run at 389k segments, so a full 8-theme retrain would add close to 1 GB.
+  - **Scope:** deletes only per-segment `predictions` rows for runs the researcher selects.
+    It **never** touches `codes`, `negatives`, `themes`, or a run's summary record
+    (`model_runs` metrics, `model_top_terms`, `model_run_params`). Learning curves (C1) and
+    the Web Appendix keep working for pruned runs.
+  - **Always kept:** the latest run per theme per engine (as defined in A4), and any
+    **pinned** run (`model_run_params.pinned`, v4). Pin a run you cite in a paper or used for an
+    export. Pruned scores can't be regenerated exactly, because the codes they were trained on
+    have since changed.
+  - **UI:** a Storage panel in the Model tab. It shows database size, rows and estimated MB per
+    run, and which runs are pinned. It proposes a default "keep the latest N per theme/engine
+    (N=2)" selection, and nothing is deleted until the researcher confirms. Never automatic,
+    and never triggered by training.
+  - **Compaction:** SQLite doesn't give space back to the disk after `DELETE`. A separate
+    "Compact database" button runs `VACUUM` as a background job (`jobs.JobRegistry`). It
+    warns that it needs free disk space up to the database's size, can take minutes on a
+    large file, and blocks coding while it runs.
+  - **Provenance:** each prune is logged to `activity_log` (versions, rows deleted, bytes
+    reclaimed), so the Web Appendix records that a run's per-segment scores were pruned while
+    its metrics remain.
+  - **Constraints on later phases:** anything that needs a run's scores after it stops being
+    latest must store its own summary at training time. C3's gold-sample metrics go in their
+    own per-run table, not computed on the fly from `predictions`. D3 compares the latest run
+    per engine, which is always kept.
+  - **Possible follow-up (not in A7):** shrink each `predictions` row by replacing the
+    repeated `model_version`/`theme_id` strings and the per-row `created_at` with a small
+    integer run key. Probably a 2–3× reduction, but it's a real table rebuild, so it needs
+    its own plan and sign-off (rule 6).
+  - **Embeddings cache:** the Storage panel also lists the size of each `embeddings/*.npy`
+    file. A model's file can be deleted and rebuilt, at CPU cost.
 - [ ] **A1 Scheme-scoped training.** `run_training_pass(scheme_id=)` (and the embedding pass,
   whose readiness check is scheme-scoped but whose training isn't). `scheme_id` logged in
   `model_run_params`. A "train all schemes" option stays.
@@ -158,7 +193,7 @@ changes that alter what the model learns).
 
 | | Contents |
 |---|---|
-| M1 | A3, A4, A1, A5, A2 |
+| M1 | A3, A4, A7, A1, A5, A2 |
 | M2 | A6, B1, B2 (the core active-learning loop) |
 | M3 | B3–B6 |
 | M4 | C1–C4 |
@@ -167,7 +202,8 @@ changes that alter what the model learns).
 
 ## Schema v4 (one migration, additive only)
 
-- `predictions.oof_score REAL` (A3)
+- `predictions.oof_score REAL` (A3) — shipped
+- `model_run_params.pinned INTEGER NOT NULL DEFAULT 0` (A7)
 - `negatives.deleted_at TEXT` (A5)
 - `item_review_status`, per-segment review confirmations (A6)
 - `review_decisions` (B2)
