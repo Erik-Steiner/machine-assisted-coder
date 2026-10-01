@@ -21,6 +21,7 @@ const codingState = {
                 //   theme_ids, rejected_theme_ids, none_confirmed}] -- none_confirmed is per active scheme
   focusIndex: -1,
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
+  backfillCandidates: [], // last /api/coding/backfill_candidates response (Datasets panel)
   itemReview: null, // the current item's active "fully coded" mark for the active scheme, or null
                     // (coding_store/reviewed.py) -- see renderCodingReviewBar()
   minWords: 0, // live "min word count" filter -- segments below this are hidden, not deleted
@@ -787,6 +788,88 @@ async function toggleFullyCoded() {
   renderCodingReviewBar();
 }
 
+// Bulk "fully coded" marks for interviews coded before marks existed (Datasets panel).
+// The server dates each mark as of the item's last code in the scheme ("last_code") or
+// a chosen moment, and records the real time separately -- coding_store/reviewed.py's
+// bulk_mark_items().
+async function loadBackfillCandidates() {
+  const statusEl = document.getElementById("backfillStatus");
+  if (!codingState.activeSchemeId) {
+    statusEl.textContent = "Pick a scheme first.";
+    return;
+  }
+  statusEl.textContent = "Looking…";
+  const res = await fetch(`/api/coding/backfill_candidates?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`);
+  const candidates = await res.json();
+  if (candidates.error) {
+    statusEl.textContent = "Error: " + candidates.error;
+    return;
+  }
+  codingState.backfillCandidates = candidates;
+  const panel = document.getElementById("backfillPanel");
+  if (!candidates.length) {
+    panel.classList.add("hidden");
+    statusEl.textContent = "Every interview with codes in this scheme is already marked.";
+    return;
+  }
+  statusEl.textContent = `${candidates.length} interview(s) have codes in this scheme but no mark.`;
+  document.getElementById("backfillList").innerHTML = candidates
+    .map((c, i) => {
+      const who = [c.person_name, c.item_title].filter(Boolean).join(" — ") || c.item_id;
+      return `<label class="checkbox-item"><input type="checkbox" class="backfill-item" data-idx="${i}" checked> ` +
+        `${escapeHtml(who)} <span class="hint">(${escapeHtml(c.dataset_label || c.dataset_id)}; ` +
+        `${c.coded_segments} coded, last ${escapeHtml((c.last_coded_at || "").slice(0, 10))})</span></label>`;
+    })
+    .join("");
+  document.getElementById("backfillSelectAll").checked = true;
+  document.getElementById("backfillDate").max = new Date().toISOString().slice(0, 10);
+  panel.classList.remove("hidden");
+}
+
+async function submitBackfill() {
+  const statusEl = document.getElementById("backfillStatus");
+  const items = [...document.querySelectorAll("#backfillList .backfill-item:checked")]
+    .map((cb) => codingState.backfillCandidates[Number(cb.dataset.idx)])
+    .map((c) => ({ dataset_id: c.dataset_id, item_id: c.item_id }));
+  if (!items.length) {
+    statusEl.textContent = "Nothing selected.";
+    return;
+  }
+  const mode = document.querySelector('input[name="backfillAsOf"]:checked').value;
+  let asOf = "last_code";
+  let asOfText = "when you last coded each one";
+  if (mode === "date") {
+    const day = document.getElementById("backfillDate").value;
+    if (!day) {
+      statusEl.textContent = "Pick a date, or choose “when you last coded each interview”.";
+      return;
+    }
+    asOf = new Date(`${day}T23:59:59`).toISOString(); // end of that day, local time
+    asOfText = `the end of ${day}`;
+  }
+  const ok = confirm(
+    `Mark ${items.length} interview(s) as fully coded for this scheme, as of ${asOfText}?\n\n` +
+    "Their uncoded passages will count as judged negatives for every theme in this scheme that " +
+    "existed at that time. You can unmark any interview later from the Code tab."
+  );
+  if (!ok) return;
+  statusEl.textContent = "Marking…";
+  const res = await fetch("/api/coding/item_reviews/bulk", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scheme_id: codingState.activeSchemeId, items, as_of: asOf }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    return;
+  }
+  document.getElementById("backfillPanel").classList.add("hidden");
+  statusEl.textContent = `Marked ${data.marked.length} interview(s)` +
+    (data.skipped.length ? ` (${data.skipped.length} skipped: already marked).` : ".");
+  if (codingState.itemId != null) await loadCodingSegments(codingState.itemId); // refresh this item's mark
+}
+
 async function toggleFocusedSegmentNone() {
   if (codingState.focusIndex < 0 || !codingState.activeSchemeId) return;
   const seg = codingState.segments[codingState.focusIndex];
@@ -984,6 +1067,11 @@ function bindCodingEvents() {
   document.getElementById("segmentAllBtn").addEventListener("click", () => segmentDatasets(null));
   document.getElementById("codingReviewBar").addEventListener("click", (e) => {
     if (e.target.id === "toggleFullyCodedBtn") toggleFullyCoded();
+  });
+  document.getElementById("loadBackfillBtn").addEventListener("click", loadBackfillCandidates);
+  document.getElementById("backfillMarkBtn").addEventListener("click", submitBackfill);
+  document.getElementById("backfillSelectAll").addEventListener("change", (e) => {
+    document.querySelectorAll("#backfillList .backfill-item").forEach((cb) => { cb.checked = e.target.checked; });
   });
   document.getElementById("scanDuplicatesBtn").addEventListener("click", scanForDuplicates);
 

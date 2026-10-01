@@ -44,9 +44,9 @@ def set_item_review(dataset_id, item_id, scheme_id, reviewed, coder=schema.DEFAU
             if active:
                 return get_item_review(dataset_id, item_id, scheme_id)
             conn.execute(
-                """INSERT INTO item_reviews (dataset_id, item_id, scheme_id, coder, marked_at)
-                   VALUES (?,?,?,?,?)""",
-                (dataset_id, item_id, scheme_id, coder, now),
+                """INSERT INTO item_reviews (dataset_id, item_id, scheme_id, coder, marked_at, recorded_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (dataset_id, item_id, scheme_id, coder, now, now),
             )
         else:
             if not active:
@@ -59,6 +59,65 @@ def set_item_review(dataset_id, item_id, scheme_id, reviewed, coder=schema.DEFAU
     activity_log.log_activity(coder, "item_marked_fully_coded" if reviewed else "item_unmarked_fully_coded",
                               {"dataset_id": dataset_id, "item_id": item_id, "scheme_id": scheme_id})
     return get_item_review(dataset_id, item_id, scheme_id)
+
+
+def backfill_candidates(scheme_id):
+    """Items with at least one active code in scheme_id and no active "fully coded"
+    mark for it -- the starting list for bulk_mark_items(), for a project coded
+    before marks existed. Each: {dataset_id, item_id, coded_segments, last_coded_at}."""
+    with schema.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT s.dataset_id, CAST(s.item_id AS TEXT) AS item_id,
+                      COUNT(DISTINCT c.segment_id) AS coded_segments, MAX(c.created_at) AS last_coded_at
+               FROM codes c
+               JOIN segments s ON s.segment_id = c.segment_id
+               JOIN themes t ON t.theme_id = c.theme_id
+               WHERE c.deleted_at IS NULL AND t.scheme_id = ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM item_reviews r WHERE r.scheme_id = t.scheme_id AND r.unmarked_at IS NULL
+                     AND r.dataset_id = s.dataset_id AND r.item_id = CAST(s.item_id AS TEXT))
+               GROUP BY s.dataset_id, CAST(s.item_id AS TEXT)
+               ORDER BY last_coded_at""",
+            (scheme_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def bulk_mark_items(items, scheme_id, as_of, coder=schema.DEFAULT_CODER):
+    """Mark several items "fully coded" at once, dated as of an earlier time:
+    as_of="last_code" dates each item's mark to its own latest active code in the
+    scheme (so themes created after you last worked on it aren't covered), or an
+    ISO timestamp (already normalized to UTC by the caller) dates them all to that
+    moment. recorded_at is always now, so the record shows the marks were entered
+    later. Items already marked, or (for "last_code") with no codes in the scheme,
+    are skipped. One activity_log entry for the batch. Returns {marked, skipped}."""
+    candidates = {(c["dataset_id"], c["item_id"]): c for c in backfill_candidates(scheme_id)}
+    now = schema._now()
+    marked, skipped = [], []
+    with schema.get_conn() as conn:
+        for dataset_id, item_id in items:
+            item_id = str(item_id)
+            already = conn.execute(
+                """SELECT 1 FROM item_reviews WHERE dataset_id=? AND item_id=? AND scheme_id=?
+                   AND unmarked_at IS NULL""",
+                (dataset_id, item_id, scheme_id),
+            ).fetchone()
+            candidate = candidates.get((dataset_id, item_id))
+            if already or (as_of == "last_code" and candidate is None):
+                skipped.append({"dataset_id": dataset_id, "item_id": item_id})
+                continue
+            marked_at = candidate["last_coded_at"] if as_of == "last_code" else as_of
+            conn.execute(
+                """INSERT INTO item_reviews (dataset_id, item_id, scheme_id, coder, marked_at, recorded_at)
+                   VALUES (?,?,?,?,?,?)""",
+                (dataset_id, item_id, scheme_id, coder, marked_at, now),
+            )
+            marked.append({"dataset_id": dataset_id, "item_id": item_id, "marked_at": marked_at})
+    activity_log.log_activity(coder, "items_bulk_marked_fully_coded", {
+        "scheme_id": scheme_id, "as_of": as_of, "marked": len(marked), "skipped": len(skipped),
+        "items": marked,
+    })
+    return {"marked": marked, "skipped": skipped}
 
 
 def set_segment_none(segment_id, scheme_id, confirmed, coder=schema.DEFAULT_CODER):

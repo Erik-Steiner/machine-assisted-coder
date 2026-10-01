@@ -182,6 +182,26 @@
         <span id="duplicateScanStatus" class="hint"></span>
       </div>
       <div id="datasetsList"></div>
+
+      <h3>Mark already-coded interviews as fully coded</h3>
+      <p class="hint">For interviews you coded before "Mark fully coded" existed. A mark tells training
+        that every uncoded passage in the interview was judged as not belonging to the active scheme's
+        themes, but only for themes that existed at the mark's date. Dating each mark to when you last
+        coded that interview means themes you created later aren't covered by mistake. The real time
+        of this action is recorded too.</p>
+      <button id="loadBackfillBtn" class="btn-secondary">Find coded interviews without a mark</button>
+      <span id="backfillStatus" class="hint"></span>
+      <div id="backfillPanel" class="hidden">
+        <label class="checkbox-item"><input type="checkbox" id="backfillSelectAll" checked> Select all</label>
+        <div id="backfillList" class="checkbox-list"></div>
+        <div id="backfillOptions">
+          <label><input type="radio" name="backfillAsOf" value="last_code" checked>
+            As of when you last coded each interview (recommended)</label>
+          <label><input type="radio" name="backfillAsOf" value="date">
+            As of the end of <input type="date" id="backfillDate"></label>
+        </div>
+        <button id="backfillMarkBtn">Mark selected as fully coded</button>
+      </div>
     </div>
 
     <div id="segmentBox">

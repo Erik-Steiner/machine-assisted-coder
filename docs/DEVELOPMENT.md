@@ -465,8 +465,14 @@ A theme with fewer than `MIN_NEGATIVES_REVIEWED` (50) judged negatives is skippe
 behavior (every uncoded corpus segment is a negative). The mode is recorded in each pass's
 `model_run_params` and shown per run in the Train tab's history; runs from before A6 read as
 `all_uncoded`. Marks and confirmations are never deleted (`unmarked_at`/`unconfirmed_at`) and
-are included in the codebook export. Tests: `tests/test_labels.py` (`ReviewedNegativeTests`,
-`ReviewedTrainingPassTests`).
+are included in the codebook export. For projects coded before marks existed, the Code tab's
+Datasets panel can bulk-mark interviews that have codes in the scheme
+(`reviewed.backfill_candidates()`/`bulk_mark_items()`, `POST /api/coding/item_reviews/bulk`).
+Each mark is dated either to that interview's last active code in the scheme (the default, so
+themes created after you last worked on it aren't covered) or to a chosen moment.
+`item_reviews.recorded_at` (schema v6) keeps the real time of entry, so a back-dated mark never
+claims to have existed earlier than it did. Tests: `tests/test_labels.py`
+(`ReviewedNegativeTests`, `BulkMarkTests`, `ReviewedTrainingPassTests`).
 
 `coding_store/schema.py`'s `SCHEMA` also defines `cluster_runs`, `clusters`,
 `cluster_segments`, and `consistency_checks` tables. These exist for later phases

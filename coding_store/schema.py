@@ -116,8 +116,10 @@ CREATE TABLE IF NOT EXISTS item_reviews (
     item_id TEXT NOT NULL,
     scheme_id TEXT NOT NULL,
     coder TEXT NOT NULL,
-    marked_at TEXT NOT NULL,
-    unmarked_at TEXT
+    marked_at TEXT NOT NULL,     -- when the mark takes effect (decides which themes it covers)
+    unmarked_at TEXT,
+    recorded_at TEXT             -- when it was actually entered; differs from marked_at only for
+                                 -- a bulk mark dated "as of" an earlier time (schema_version 6)
 );
 CREATE INDEX IF NOT EXISTS idx_item_reviews_lookup ON item_reviews(scheme_id, dataset_id, item_id);
 
@@ -343,7 +345,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def _now():
@@ -464,6 +466,15 @@ def _migrate(conn):
         conn.execute("ALTER TABLE negatives ADD COLUMN note TEXT")
     if "deleted_at" not in neg_cols:
         conn.execute("ALTER TABLE negatives ADD COLUMN deleted_at TEXT")
+
+    # schema_version 6: item_reviews.recorded_at -- a bulk "fully coded" mark can be
+    # dated as of an earlier time (e.g. when each interview was last coded, see
+    # reviewed.bulk_mark_items()); recorded_at keeps when it was actually entered, so
+    # the record never claims a mark existed earlier than it did. NULL on older rows,
+    # where recorded_at == marked_at.
+    review_cols = {row["name"] for row in conn.execute("PRAGMA table_info(item_reviews)")}
+    if "recorded_at" not in review_cols:
+        conn.execute("ALTER TABLE item_reviews ADD COLUMN recorded_at TEXT")
 
 
 def _stamp_schema_version(conn):

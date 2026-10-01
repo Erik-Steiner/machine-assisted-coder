@@ -123,6 +123,14 @@ Endpoints:
                                                          uncoded segments become judged negatives for themes
                                                          that existed at that moment (coding_store/reviewed.py,
                                                          labels.reviewed_negative_segment_ids())
+    GET  /api/coding/backfill_candidates?scheme_id=<id> -> interviews with codes in the scheme but no
+                                                         "fully coded" mark yet, with code counts, last
+                                                         coding time, and display labels
+    POST /api/coding/item_reviews/bulk               -> {scheme_id, items: [{dataset_id, item_id}], as_of:
+                                                         "last_code" | ISO date-time} -> mark them all
+                                                         fully coded, dated as of each item's last code or
+                                                         the given moment (recorded_at = now) -- see
+                                                         coding_store/reviewed.py's bulk_mark_items()
     POST /api/coding/segment_none                    -> {segment_id, scheme_id, confirmed: bool} -> confirm/
                                                          withdraw "none of this scheme's themes apply here"
     POST /api/coding/codes                           -> apply a code to a segment (also cancels the
@@ -1324,6 +1332,56 @@ def post_coding_item_review(req):
         coder=body.get("coder") or CODER_NAME,
     )
     return JsonResponse({"ok": True, "item_review": review_row})
+
+
+@ROUTER.get("/api/coding/backfill_candidates")
+def get_coding_backfill_candidates(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    candidates = reviewed_store.backfill_candidates(scheme_id)
+    # Display labels come from each dataset's in-memory index (coding.db has no titles).
+    index_by_dataset = {}
+    for c in candidates:
+        if c["dataset_id"] not in index_by_dataset:
+            dataset = get_dataset(c["dataset_id"])
+            index_by_dataset[c["dataset_id"]] = (
+                (dataset or {}).get("label", c["dataset_id"]),
+                {str(r.get("item_id")): r for r in (dataset or {}).get("index", [])},
+            )
+        label, records = index_by_dataset[c["dataset_id"]]
+        rec = records.get(c["item_id"], {})
+        c.update(dataset_label=label, person_name=rec.get("person_name"), item_title=rec.get("item_title"))
+    return JsonResponse(candidates)
+
+
+@ROUTER.post("/api/coding/item_reviews/bulk", json_body=True, required=["scheme_id", "items", "as_of"])
+def post_coding_item_reviews_bulk(req):
+    body = req.body
+    if schemes.get_scheme(body["scheme_id"]) is None:
+        return JsonResponse({"error": f"unknown scheme '{body['scheme_id']}'"}, status=400)
+    as_of = body["as_of"]
+    if as_of != "last_code":
+        # An explicit "as of" moment: normalized to UTC in the same isoformat as every
+        # other timestamp in coding.db, since labels.py compares them as strings.
+        try:
+            moment = datetime.fromisoformat(str(as_of).replace("Z", "+00:00"))
+        except ValueError:
+            return JsonResponse({"error": "as_of must be 'last_code' or an ISO date-time"}, status=400)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        moment = moment.astimezone(timezone.utc)
+        if moment > datetime.now(timezone.utc):
+            return JsonResponse({"error": "as_of can't be in the future"}, status=400)
+        as_of = moment.isoformat()
+    try:
+        items = [(i["dataset_id"], i["item_id"]) for i in body["items"]]
+    except (TypeError, KeyError):
+        return JsonResponse({"error": "items must be a list of {dataset_id, item_id}"}, status=400)
+    if not items:
+        return JsonResponse({"error": "no interviews selected"}, status=400)
+    result = reviewed_store.bulk_mark_items(items, body["scheme_id"], as_of, coder=body.get("coder") or CODER_NAME)
+    return JsonResponse({"ok": True, **result})
 
 
 @ROUTER.post("/api/coding/segment_none", json_body=True, required=["segment_id", "scheme_id"])

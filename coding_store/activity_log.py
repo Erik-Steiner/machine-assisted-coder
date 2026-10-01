@@ -129,7 +129,7 @@ NEGATIVE_EXPORT_FIELDS = [
     "negative_id", "segment_id", "theme_id", "coder", "source", "note", "created_at", "deleted_at",
 ]
 ITEM_REVIEW_EXPORT_FIELDS = [
-    "review_id", "dataset_id", "item_id", "scheme_id", "coder", "marked_at", "unmarked_at",
+    "review_id", "dataset_id", "item_id", "scheme_id", "coder", "marked_at", "unmarked_at", "recorded_at",
 ]
 SEGMENT_NONE_EXPORT_FIELDS = [
     "confirmation_id", "segment_id", "scheme_id", "coder", "confirmed_at", "unconfirmed_at",

@@ -278,6 +278,45 @@ class ReviewedNegativeTests(TempDbTestCase):
             classifier.training_labels(self.early, ids, "bogus")
 
 
+class BulkMarkTests(TempDbTestCase):
+    """reviewed.bulk_mark_items(): marks for interviews coded before marks existed."""
+
+    def setUp(self):
+        super().setUp()
+        schemes.create_scheme("S")
+        add_segments("i1", ["a1", "a2"])
+        add_segments("i2", ["b1", "b2"])
+        add_segments("i3", ["c1"])
+        self.old = themes.create_theme("Old", scheme_id="s")["theme_id"]
+        codes.add_code("a1", self.old)
+        codes.add_code("b1", self.old)
+        self.new = themes.create_theme("New", scheme_id="s")["theme_id"]  # created after the coding
+
+    def test_candidates_are_coded_unmarked_items(self):
+        reviewed.set_item_review("d1", "i2", "s", True)
+        cands = reviewed.backfill_candidates("s")
+        self.assertEqual([(c["dataset_id"], c["item_id"], c["coded_segments"]) for c in cands], [("d1", "i1", 1)])
+
+    def test_last_code_dating_does_not_cover_later_themes(self):
+        result = reviewed.bulk_mark_items([("d1", "i1"), ("d1", "i2")], "s", "last_code")
+        self.assertEqual(len(result["marked"]), 2)
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.old), {"a2", "b2"})
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.new), set())  # never considered
+        row = self.all_rows("item_reviews")[0]
+        self.assertLess(row["marked_at"], row["recorded_at"])  # dated back; real time kept
+
+    def test_explicit_date_and_skips(self):
+        reviewed.set_item_review("d1", "i2", "s", True)
+        far_past = "2000-01-01T00:00:00+00:00"
+        result = reviewed.bulk_mark_items([("d1", "i1"), ("d1", "i2")], "s", far_past)
+        self.assertEqual(([m["item_id"] for m in result["marked"]], len(result["skipped"])), (["i1"], 1))
+        self.assertEqual(labels.reviewed_negative_segment_ids(self.old), {"b2"})  # i1's mark predates Old
+
+    def test_last_code_skips_items_without_codes(self):
+        result = reviewed.bulk_mark_items([("d1", "i3")], "s", "last_code")
+        self.assertEqual((len(result["marked"]), len(result["skipped"])), (0, 1))
+
+
 class ReviewedTrainingPassTests(TempDbTestCase):
     """A small end-to-end training pass in each negative mode."""
 

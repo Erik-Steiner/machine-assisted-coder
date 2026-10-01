@@ -914,6 +914,10 @@ button.btn-secondary {
 #codingReviewBar:empty { display: none; }
 .coding-review-done { color: var(--text); font-weight: 600; }
 #trainNegativeModeLabel select { max-width: 100%; margin-top: 2px; }
+#backfillPanel.hidden { display: none; }
+#backfillPanel { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+#backfillList { max-height: 260px; overflow-y: auto; }
+#backfillOptions { display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
 
 .segment-text {
   font-size: 14px;
