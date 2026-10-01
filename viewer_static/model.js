@@ -168,7 +168,8 @@ function renderModelDetail() {
   document.getElementById("modelValueProp").innerHTML =
     `You've coded <strong>${vp.coded_count}</strong> segment(s) for this theme. ` +
     `The model flags <strong>${vp.flagged_uncoded_count}</strong> more above its threshold ` +
-    `(${vp.threshold.toFixed(3)}) that you haven't coded yet.`;
+    `(${vp.threshold.toFixed(3)}) that you haven't coded` +
+    (vp.rejected_count ? ` or rejected (${vp.rejected_count} rejected so far).` : " yet.");
 
   const cov = data.coverage;
   if (cov) {
@@ -232,6 +233,8 @@ function renderExemplars(exemplars) {
     div.className = "exemplar-card";
     const codedBadge = ex.already_coded
       ? '<span class="exemplar-coded-badge">already coded</span>'
+      : ex.already_rejected
+      ? '<span class="exemplar-coded-badge">rejected</span>'
       : '<span class="exemplar-coded-badge">not coded</span>';
     const roleBadge = ex.speaker_role === "interviewer"
       ? '<span class="seg-role-badge seg-role-interviewer">interviewer</span>'

@@ -11,7 +11,8 @@ def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
     """Assemble a recode/review queue for one or more themes: every segment
     currently coded under any of theme_ids, plus (for themes with a trained
     model) each theme's top predicted_limit scored segments not already coded
-    under that specific theme. Deduplicated by segment_id; each candidate
+    under that specific theme, and not explicitly rejected for it (see
+    codes.add_negative() -- a rejected prediction stays out of future queues). Deduplicated by segment_id; each candidate
     carries a `reasons` list explaining why it's in the queue, e.g.
     [{"type": "coded", "theme_id": "marketization"},
      {"type": "predicted", "theme_id": "integrations", "score": 0.42}].
@@ -70,7 +71,7 @@ def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
         if not run:
             continue
         for p in model_runs.get_top_predictions(theme_id, run["model_version"], limit=predicted_limit):
-            if p["already_coded"]:
+            if p["already_coded"] or p["already_rejected"]:
                 continue
             c = ensure_candidate(p)
             c["reasons"].append({
@@ -80,8 +81,10 @@ def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
 
     all_ids = list(candidates.keys())
     codes_by_segment = codes.get_codes_for_segment_ids(all_ids)
+    rejections_by_segment = codes.get_negatives_for_segment_ids(all_ids)
     for sid, c in candidates.items():
         c["theme_ids"] = codes_by_segment.get(sid, [])
+        c["rejected_theme_ids"] = rejections_by_segment.get(sid, [])
 
     return list(candidates.values())
 

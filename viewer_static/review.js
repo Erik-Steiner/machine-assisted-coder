@@ -5,9 +5,12 @@
 // re-triaging, which is a recurring qualitative-research need, not a
 // one-off. Recode actions are tagged source="recoded" (see coding_store.py's
 // add_code) so they're distinguishable later from first-pass manual coding.
+// A model-flagged segment can also be rejected for a theme ("✕ Not this
+// theme"), tagged source="review_reject", which keeps it out of that theme's
+// future queues (see coding_store/codes.py's add_negative()).
 //
-// Reuses coding.js's shared buildChipsHtml/postCode/deleteCode/
-// jumpToSegmentInCoding rather than reimplementing segment-card rendering
+// Reuses coding.js's shared buildChipsHtml/postCode/deleteCode/postNegative/
+// deleteNegative/jumpToSegmentInCoding rather than reimplementing segment-card rendering
 // and code-toggling from scratch. Shares app.js's escapeHtml/switchTab.
 
 const reviewState = {
@@ -123,15 +126,30 @@ function maxScore(candidate) {
   return Math.max(0, ...candidate.reasons.filter((r) => r.type === "predicted").map((r) => r.score));
 }
 
+// A predicted reason gets a "Not this theme" button that records an explicit rejection
+// (coding.js's postNegative()), so the segment stays out of future queues for that
+// theme. A rejected reason stays on screen (with Undo) until the queue is reloaded.
 function reasonPillsHtml(candidate) {
+  const rejected = candidate.rejected_theme_ids || [];
   return candidate.reasons
     .map((r) => {
       const theme = reviewState.themes.find((t) => t.theme_id === r.theme_id);
       const name = theme ? theme.name : r.theme_id;
-      return r.type === "coded"
-        ? `<span class="reason-pill reason-coded">coded: ${escapeHtml(name)}</span>`
-        : `<span class="reason-pill reason-predicted" title="${escapeHtml(r.model_version || "")}">` +
-          `predicted: ${escapeHtml(name)} (${r.score.toFixed(2)} · ${escapeHtml(ENGINE_LABELS[r.engine] || r.engine || "?")})</span>`;
+      if (r.type === "coded") {
+        return `<span class="reason-pill reason-coded">coded: ${escapeHtml(name)}</span>`;
+      }
+      const tid = escapeHtml(r.theme_id);
+      if (rejected.includes(r.theme_id)) {
+        return `<span class="reason-pill reason-rejected">rejected: ${escapeHtml(name)}</span>` +
+          `<button type="button" class="reason-action review-unreject-btn" data-theme="${tid}">Undo</button>`;
+      }
+      const action = candidate.theme_ids.includes(r.theme_id)
+        ? "" // coded since the queue loaded -- nothing to reject
+        : `<button type="button" class="reason-action review-reject-btn" data-theme="${tid}" ` +
+          `title="Record that this segment is not ${escapeHtml(name)}, so it stops being suggested">✕ Not this theme</button>`;
+      return `<span class="reason-pill reason-predicted" title="${escapeHtml(r.model_version || "")}">` +
+        `predicted: ${escapeHtml(name)} (${r.score.toFixed(2)} · ${escapeHtml(ENGINE_LABELS[r.engine] || r.engine || "?")})</span>` +
+        action;
     })
     .join("");
 }
@@ -143,7 +161,7 @@ function renderReviewCard(candidate) {
   div.dataset.segmentId = candidate.segment_id;
   div.style.marginLeft = Math.min(candidate.depth || 0, 6) * 20 + "px";
 
-  const chips = isInterviewer ? "" : buildChipsHtml(candidate.theme_ids, reviewState.themes);
+  const chips = isInterviewer ? "" : buildChipsHtml(candidate.theme_ids, reviewState.themes, candidate.rejected_theme_ids);
   const roleBadge = isInterviewer
     ? '<span class="seg-role-badge seg-role-interviewer">interviewer — not coded</span>'
     : "";
@@ -165,6 +183,14 @@ function renderReviewCard(candidate) {
       toggleReviewCode(candidate, chip.dataset.theme);
       return;
     }
+    if (e.target.classList.contains("review-reject-btn")) {
+      setReviewRejection(candidate, e.target.dataset.theme, true);
+      return;
+    }
+    if (e.target.classList.contains("review-unreject-btn")) {
+      setReviewRejection(candidate, e.target.dataset.theme, false);
+      return;
+    }
     if (e.target.classList.contains("review-view-btn")) {
       jumpToSegmentInCoding(candidate);
     }
@@ -178,10 +204,26 @@ async function toggleReviewCode(candidate, themeId) {
   candidate.theme_ids = active
     ? candidate.theme_ids.filter((id) => id !== themeId)
     : [...candidate.theme_ids, themeId];
+  // Coding cancels a rejection server-side (codes.add_code()); mirror that locally.
+  if (!active) candidate.rejected_theme_ids = (candidate.rejected_theme_ids || []).filter((id) => id !== themeId);
   renderReviewQueue();
   try {
     if (active) await deleteCode(candidate.segment_id, themeId);
     else await postCode(candidate.segment_id, themeId, { source: "recoded" });
+  } catch (err) {
+    // leave the optimistic UI state as-is
+  }
+}
+
+async function setReviewRejection(candidate, themeId, reject) {
+  const rejected = (candidate.rejected_theme_ids || []).filter((id) => id !== themeId);
+  candidate.rejected_theme_ids = reject ? [...rejected, themeId] : rejected;
+  // Rejecting cancels a code server-side (codes.add_negative()); mirror that locally.
+  if (reject) candidate.theme_ids = candidate.theme_ids.filter((id) => id !== themeId);
+  renderReviewQueue();
+  try {
+    if (reject) await postNegative(candidate.segment_id, themeId, { source: "review_reject" });
+    else await deleteNegative(candidate.segment_id, themeId);
   } catch (err) {
     // leave the optimistic UI state as-is
   }

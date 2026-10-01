@@ -17,7 +17,8 @@ const codingState = {
   modelRuns: {}, // {theme_id: latest TF-IDF run: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at, engine}}
   datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
-  segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text, theme_ids}]
+  segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text,
+                //   theme_ids, rejected_theme_ids}]
   focusIndex: -1,
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
   minWords: 0, // live "min word count" filter -- segments below this are hidden, not deleted
@@ -549,11 +550,14 @@ async function unloadDataset(datasetId) {
 // broad themes get the low-friction numeric path, specific child/sub-codes are
 // click-only. See toggleFocusedSegmentTheme(), which looks up the same
 // depth-0-only ordering by index.
-function buildChipsHtml(themeIds, themes) {
+// rejectedIds (optional): themes explicitly rejected for this segment -- shown struck
+// through. Clicking one still codes it (the server cancels the rejection).
+function buildChipsHtml(themeIds, themes, rejectedIds = []) {
   let topLevelIndex = 0;
   return themes
     .map((t) => {
       const active = themeIds.includes(t.theme_id);
+      const rejected = !active && rejectedIds.includes(t.theme_id);
       let num = "";
       if ((t.depth || 0) === 0) {
         num = topLevelIndex < 9 ? `<span class="chip-num">${topLevelIndex + 1}</span>` : "";
@@ -561,8 +565,9 @@ function buildChipsHtml(themeIds, themes) {
       }
       const marginPx = Math.min(t.depth || 0, 6) * 10;
       return (
-        `<button type="button" class="theme-chip${active ? " active" : ""}" ` +
+        `<button type="button" class="theme-chip${active ? " active" : ""}${rejected ? " rejected" : ""}" ` +
         `data-theme="${escapeHtml(t.theme_id)}" ` +
+        (rejected ? `title="Rejected for this segment. Click to code it instead." ` : "") +
         `style="--chip-color:${escapeHtml(t.color || "#6b7fd7")};margin-left:${marginPx}px">` +
         `${num}${escapeHtml(t.name)}</button>`
       );
@@ -580,6 +585,25 @@ function postCode(segmentId, themeId, extra) {
 
 function deleteCode(segmentId, themeId) {
   return fetch("/api/coding/codes/delete", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segmentId, theme_id: themeId }),
+  });
+}
+
+// Explicit rejection ("this segment is not that theme") -- see coding_store/codes.py's
+// add_negative(). Adding one cancels the same coder's code for that theme, and adding
+// a code cancels the rejection, so callers mirror that in their local state.
+function postNegative(segmentId, themeId, extra) {
+  return fetch("/api/coding/negatives", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segmentId, theme_id: themeId, ...(extra || {}) }),
+  });
+}
+
+function deleteNegative(segmentId, themeId) {
+  return fetch("/api/coding/negatives/delete", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ segment_id: segmentId, theme_id: themeId }),
@@ -658,7 +682,7 @@ function renderSegmentCard(seg, idx) {
   // Interviewer turns display for context but aren't coded -- no chip buttons
   // rendered at all, so the normal workflow can't touch them (coding_store.
   // add_code itself has no role check, this is a UI-level default only).
-  const chips = isInterviewer ? "" : buildChipsHtml(seg.theme_ids, codingState.themes);
+  const chips = isInterviewer ? "" : buildChipsHtml(seg.theme_ids, codingState.themes, seg.rejected_theme_ids);
 
   div.innerHTML = header + text + (isInterviewer ? "" : `<div class="segment-chips">${chips}</div>`);
 
@@ -679,6 +703,7 @@ async function toggleCode(seg, themeId) {
   seg.theme_ids = active
     ? seg.theme_ids.filter((id) => id !== themeId)
     : [...seg.theme_ids, themeId];
+  if (!active) seg.rejected_theme_ids = (seg.rejected_theme_ids || []).filter((id) => id !== themeId);
   renderSegments();
   try {
     if (active) await deleteCode(seg.segment_id, themeId);

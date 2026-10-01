@@ -427,14 +427,27 @@ soft-deleted instead of duplicated; the source theme is then archived with
 `coding_store/themes.py`'s `merge_themes()`). There is no hard delete for a theme, by
 design: codes are load-bearing research data.
 
-`coding_store/schema.py`'s `SCHEMA` also defines `negatives`, `cluster_runs`, `clusters`,
-`cluster_segments`, and `consistency_checks` tables. These exist for later phases (an
-explicit-negative-labeling UI, unsupervised topic clustering, inter-rater consistency
-checks) and are created by `init_db()`, but nothing in the current server or frontend
-reads or writes them yet except `add_negative()` (defined, not yet called from any
-endpoint). Don't treat their presence in the schema as a feature that exists -- check
-for an `/api/...` endpoint or a call site before relying on one. The `embeddings` table
-is the one exception: it's now wired up, by `coding_store/embeddings.py` and
+**Explicit rejections (`negatives`, live since schema v5).** A rejection records that a
+coder looked at a segment and decided a theme does *not* apply, which is different from never
+having coded it. It has the same shape as `codes` (`coder`/`source`/`note`/`deleted_at`) and is
+never hard-deleted. A code and a rejection for the same (segment, theme, coder) cancel each
+other: `codes.add_code()` soft-deletes the rejection and `codes.add_negative()` soft-deletes the
+code, in the same transaction. `merge_themes()` moves rejections like codes, and where a coder
+ends up with both on one segment, the code wins. The table-level `UNIQUE(segment_id, theme_id,
+coder)` also covers soft-deleted rows (unlike codes' partial index), so re-rejecting reactivates
+the existing row. Today rejections don't change training labels (an uncoded segment is already
+a 0). They keep a rejected prediction out of future Review queues, are excluded from the Model
+tab's "flags N more" and coverage counts, appear struck through on chips, and are exported as
+`negatives.json/csv` and in `segment_topic_scores`' `rejected` column. Roadmap A6's `reviewed`
+negative mode will train on them. Tests: `tests/test_labels.py`.
+
+`coding_store/schema.py`'s `SCHEMA` also defines `cluster_runs`, `clusters`,
+`cluster_segments`, and `consistency_checks` tables. These exist for later phases
+(unsupervised topic clustering, inter-rater consistency checks) and are created by
+`init_db()`, but nothing in the current server or frontend reads or writes them yet. Don't
+treat their presence in the schema as a feature that exists -- check for an `/api/...`
+endpoint or a call site before relying on one. The `embeddings` table is the other
+exception: it's now wired up, by `coding_store/embeddings.py` and
 `classifier.build_embeddings()` -- see "Full-corpus export and the embedding engine"
 below.
 
@@ -637,6 +650,12 @@ now); `review.js` passes `source: "recoded"` when adding a code, so
 `SELECT * FROM codes WHERE source='recoded'` answers "what changed during
 recoding" later. Removing a code already soft-deletes it (`deleted_at`), which is
 enough history on its own -- no separate audit table needed.
+
+A model-flagged card also has "✕ Not this theme", which records an explicit rejection
+(`POST /api/coding/negatives`, `source: "review_reject"`; see "Explicit rejections" above). The
+card stays on screen with Undo until the queue reloads, after which `get_review_candidates()`
+skips that segment for that theme. Every candidate carries `rejected_theme_ids` alongside
+`theme_ids`.
 
 ## Web Appendix subsystem
 

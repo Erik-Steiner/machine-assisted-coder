@@ -20,7 +20,7 @@ from coding_store import activity_log, model_runs, schema, themes
 SEGMENT_SCORE_FIELDS = [
     "segment_id", "item_id", "dataset_id", "group_name", "person_name",
     "theme_id", "theme_name", "scheme_id", "parent_theme_id",
-    "model_version", "engine", "score", "oof_score", "threshold", "above_threshold", "coded",
+    "model_version", "engine", "score", "oof_score", "threshold", "above_threshold", "coded", "rejected",
 ]
 SEED_PACK_FIELDS = [
     "theme_id", "name", "description", "scheme_id", "parent_theme_id", "depth",
@@ -82,6 +82,7 @@ def export_full_corpus_topic_model(output_dir, scheme_id=None, model_version=Non
                 "oof_score": p["oof_score"],
                 "threshold": run["threshold"], "above_threshold": p["score"] >= run["threshold"],
                 "coded": bool(p["already_coded"]),
+                "rejected": bool(p["already_rejected"]),
             })
 
         top_terms = model_runs.get_top_terms(run["model_version"], theme["theme_id"])

@@ -114,7 +114,7 @@ engine" depends on A4's engine-aware notion of "latest".
 - [x] **A1 Scheme-scoped training.** *(Done 2026-10-01.)* `run_training_pass(scheme_id=)` (and the embedding pass,
   whose readiness check is scheme-scoped but whose training isn't). `scheme_id` logged in
   `model_run_params`. A "train all schemes" option stays.
-- [ ] **A5 Explicit negatives.** `negatives.deleted_at` (soft delete, rule 5);
+- [x] **A5 Explicit negatives.** *(Done 2026-10-01, schema v5: also added `source`/`note` to rejections, matching codes.)* `negatives.deleted_at` (soft delete, rule 5);
   `POST /api/coding/negatives[/delete]`; a code and a rejection for the same
   segment/theme/coder cancel each other out. A basic "✕ not this theme" on Review's predicted
   cards (full triage UI in B2). Optional later: extra weight for explicit negatives.
@@ -209,7 +209,7 @@ engine" depends on A4's engine-aware notion of "latest".
 
 - `predictions.oof_score REAL` (A3) — shipped
 - `model_run_pins` table (A7) — shipped (additive table, no version bump needed)
-- `negatives.deleted_at TEXT` (A5)
+- `negatives.deleted_at`, `source`, `note` (A5) — shipped as v5
 - `item_review_status`, per-segment review confirmations (A6)
 - `review_decisions` (B2)
 - `themes.inclusion_criteria`, `themes.exclusion_criteria`, `codes.is_exemplar` (B4)

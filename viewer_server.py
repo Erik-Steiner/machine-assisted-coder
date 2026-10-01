@@ -114,9 +114,17 @@ Endpoints:
     POST /api/codebook/themes/<id>/merge_into         -> merge a theme's codes into another theme in
                                                          the same scheme, archive it
 
-    GET  /api/coding/segments?item_id=<id>           -> ordered segments + their codes
-    POST /api/coding/codes                           -> apply a code to a segment
+    GET  /api/coding/segments?item_id=<id>           -> ordered segments + their codes (theme_ids)
+                                                         and active rejections (rejected_theme_ids)
+    POST /api/coding/codes                           -> apply a code to a segment (also cancels the
+                                                         same coder's rejection of that theme there)
     POST /api/coding/codes/delete                    -> remove a code from a segment
+    POST /api/coding/negatives                       -> {segment_id, theme_id, source?, note?} -> reject
+                                                         a theme for a segment ("this isn't that theme");
+                                                         cancels the same coder's code for it there. Keeps
+                                                         the segment out of future review queues -- see
+                                                         coding_store/codes.py's add_negative()
+    POST /api/coding/negatives/delete                -> undo a rejection (soft delete)
     POST /api/coding/segment_datasets                -> {dataset_ids?: [...]} -> kick off a background
                                                          job that segments the given datasets into
                                                          coding.db (or, if dataset_ids is omitted, every
@@ -1307,8 +1315,10 @@ def get_coding_segments(req):
         return JsonResponse({"error": "item_id is required"}, status=400)
     segments = segments_store.get_segments_for_item(item_id)
     codes_by_segment = codes_store.get_codes_for_segment_ids([s["segment_id"] for s in segments])
+    rejections_by_segment = codes_store.get_negatives_for_segment_ids([s["segment_id"] for s in segments])
     for s in segments:
         s["theme_ids"] = codes_by_segment.get(s["segment_id"], [])
+        s["rejected_theme_ids"] = rejections_by_segment.get(s["segment_id"], [])
     return JsonResponse({"item_id": item_id, "segments": segments})
 
 
@@ -1326,6 +1336,23 @@ def post_coding_codes(req):
 def post_coding_codes_delete(req):
     body = req.body
     codes_store.remove_code(body["segment_id"], body["theme_id"], coder=body.get("coder") or CODER_NAME)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/coding/negatives", json_body=True, required=["segment_id", "theme_id"])
+def post_coding_negatives(req):
+    body = req.body
+    codes_store.add_negative(
+        body["segment_id"], body["theme_id"], coder=body.get("coder") or CODER_NAME,
+        source=body.get("source") or "manual", note=body.get("note"),
+    )
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/coding/negatives/delete", json_body=True, required=["segment_id", "theme_id"])
+def post_coding_negatives_delete(req):
+    body = req.body
+    codes_store.remove_negative(body["segment_id"], body["theme_id"], coder=body.get("coder") or CODER_NAME)
     return JsonResponse({"ok": True})
 
 

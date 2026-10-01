@@ -157,7 +157,11 @@ def get_top_predictions(theme_id, model_version, limit=15):
                       EXISTS(
                         SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
                         AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
-                      ) AS already_coded
+                      ) AS already_coded,
+                      EXISTS(
+                        SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
+                        AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
+                      ) AS already_rejected
                FROM predictions p JOIN segments s ON s.segment_id = p.segment_id
                WHERE p.theme_id = ? AND p.model_version = ?
                ORDER BY p.score DESC LIMIT ?""",
@@ -190,7 +194,11 @@ def get_predictions_for_theme(theme_id, model_version, threshold=None):
                       EXISTS(
                         SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
                         AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
-                      ) AS already_coded
+                      ) AS already_coded,
+                      EXISTS(
+                        SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
+                        AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
+                      ) AS already_rejected
                FROM predictions p JOIN segments s ON s.segment_id = p.segment_id
                WHERE {where}
                ORDER BY p.score DESC""",
@@ -225,8 +233,12 @@ def get_corpus_coverage(theme_id, model_version, threshold, total_segments):
 
 def get_value_prop(theme_id, model_version, threshold):
     """coded_count (from codes) vs. flagged_uncoded_count (segments the model
-    scores above threshold for this run that aren't already coded) -- the
-    headline "the model found N more cases" stat."""
+    scores above threshold for this run that aren't already coded, and that no
+    coder has explicitly rejected for this theme) -- the headline "the model
+    found N more cases" stat. A rejected segment was looked at and judged not to
+    be this theme, so counting it as a "more case" (or toward coverage, see
+    get_corpus_coverage()) would overstate the theme. rejected_count is the
+    number of segments with an active rejection for the theme."""
     with schema.get_conn() as conn:
         coded_count = conn.execute(
             "SELECT COUNT(DISTINCT segment_id) AS n FROM codes WHERE theme_id=? AND deleted_at IS NULL",
@@ -238,7 +250,16 @@ def get_value_prop(theme_id, model_version, threshold):
                AND NOT EXISTS (
                  SELECT 1 FROM codes c WHERE c.segment_id = p.segment_id
                  AND c.theme_id = p.theme_id AND c.deleted_at IS NULL
+               )
+               AND NOT EXISTS (
+                 SELECT 1 FROM negatives n WHERE n.segment_id = p.segment_id
+                 AND n.theme_id = p.theme_id AND n.deleted_at IS NULL
                )""",
             (theme_id, model_version, threshold),
         ).fetchone()["n"]
-    return {"coded_count": coded_count, "flagged_uncoded_count": flagged_uncoded_count, "threshold": threshold}
+        rejected_count = conn.execute(
+            "SELECT COUNT(DISTINCT segment_id) AS n FROM negatives WHERE theme_id=? AND deleted_at IS NULL",
+            (theme_id,),
+        ).fetchone()["n"]
+    return {"coded_count": coded_count, "flagged_uncoded_count": flagged_uncoded_count,
+            "rejected_count": rejected_count, "threshold": threshold}

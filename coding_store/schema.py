@@ -81,14 +81,24 @@ CREATE INDEX IF NOT EXISTS idx_codes_theme ON codes(theme_id);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_codes_active
     ON codes(segment_id, theme_id, coder) WHERE deleted_at IS NULL;
 
+-- Explicit rejections: a coder's decision that a theme does NOT apply to a segment
+-- (see codes.add_negative()). Same provenance/soft-delete shape as `codes`
+-- (source/note/deleted_at, all added in schema_version 5). Note the table-level
+-- UNIQUE also covers soft-deleted rows -- unlike codes' partial unique index -- so
+-- re-rejecting reactivates the existing row rather than inserting a new one.
 CREATE TABLE IF NOT EXISTS negatives (
     negative_id INTEGER PRIMARY KEY AUTOINCREMENT,
     segment_id TEXT NOT NULL,
     theme_id TEXT NOT NULL,
     coder TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'manual',
+    note TEXT,
     created_at TEXT NOT NULL,
+    deleted_at TEXT,
     UNIQUE(segment_id, theme_id, coder)
 );
+CREATE INDEX IF NOT EXISTS idx_negatives_segment ON negatives(segment_id);
+CREATE INDEX IF NOT EXISTS idx_negatives_theme ON negatives(theme_id);
 
 CREATE TABLE IF NOT EXISTS embeddings (
     segment_id TEXT NOT NULL,
@@ -302,7 +312,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def _now():
@@ -410,6 +420,19 @@ def _migrate(conn):
     pred_cols = {row["name"] for row in conn.execute("PRAGMA table_info(predictions)")}
     if "oof_score" not in pred_cols:
         conn.execute("ALTER TABLE predictions ADD COLUMN oof_score REAL")
+
+    # schema_version 5: explicit rejections become real research data (see
+    # codes.add_negative()), so they get the same provenance and soft-delete
+    # columns as `codes` -- rule 5: decisions are never hard-deleted. Every
+    # pre-v5 row (there were none in practice: nothing wrote negatives before
+    # v5) reads as an active, 'manual' rejection.
+    neg_cols = {row["name"] for row in conn.execute("PRAGMA table_info(negatives)")}
+    if "source" not in neg_cols:
+        conn.execute("ALTER TABLE negatives ADD COLUMN source TEXT NOT NULL DEFAULT 'manual'")
+    if "note" not in neg_cols:
+        conn.execute("ALTER TABLE negatives ADD COLUMN note TEXT")
+    if "deleted_at" not in neg_cols:
+        conn.execute("ALTER TABLE negatives ADD COLUMN deleted_at TEXT")
 
 
 def _stamp_schema_version(conn):

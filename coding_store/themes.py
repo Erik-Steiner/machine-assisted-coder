@@ -188,8 +188,10 @@ def merge_themes(source_theme_id, target_theme_id, actor=schema.DEFAULT_CODER):
     and its provenance both survive. If a segment already has an active target
     code from the same coder, the now-redundant source code is soft-deleted
     rather than duplicated (the unique-active-code-per-segment/theme/coder
-    constraint would otherwise reject the re-point). negatives are merged the
-    same way. source is then archived with merged_into set to target, rather
+    constraint would otherwise reject the re-point). Rejections (negatives) are
+    merged the same way, never hard-deleted, and the code/rejection exclusivity
+    rule (codes.add_negative()) holds afterwards: where a coder ends up with both
+    a code and a rejection of target on one segment, the code wins. source is then archived with merged_into set to target, rather
     than deleted, so the merge is auditable and reversible by hand if needed.
     """
     if source_theme_id == target_theme_id:
@@ -217,17 +219,45 @@ def merge_themes(source_theme_id, target_theme_id, actor=schema.DEFAULT_CODER):
                 conn.execute("UPDATE codes SET deleted_at=? WHERE code_id=?", (now, row["code_id"]))
             else:
                 conn.execute("UPDATE codes SET theme_id=? WHERE code_id=?", (target_theme_id, row["code_id"]))
+            # A code now on target cancels the same coder's rejection of target on this
+            # segment (codes.add_code()'s rule) -- the merge says source *is* target.
+            conn.execute(
+                """UPDATE negatives SET deleted_at=? WHERE segment_id=? AND theme_id=? AND coder=?
+                   AND deleted_at IS NULL""",
+                (now, row["segment_id"], target_theme_id, row["coder"]),
+            )
 
+        # Rejections move the same way as codes: re-pointed in place (keeping
+        # their provenance), or soft-deleted if redundant -- never hard-deleted.
+        # Two differences from codes: negatives' UNIQUE(segment, theme, coder)
+        # also covers soft-deleted rows, so a soft-deleted target row is
+        # reactivated rather than re-pointed onto; and a rejection is dropped
+        # (soft-deleted) when the same coder has the target theme *coded* on that
+        # segment, since a code and a rejection can't coexist (codes.add_negative()).
         source_negs = conn.execute(
-            "SELECT * FROM negatives WHERE theme_id=?", (source_theme_id,)
+            "SELECT * FROM negatives WHERE theme_id=? AND deleted_at IS NULL", (source_theme_id,)
         ).fetchall()
         for row in source_negs:
-            conn.execute(
-                """INSERT OR IGNORE INTO negatives (segment_id, theme_id, coder, created_at)
-                   VALUES (?,?,?,?)""",
-                (row["segment_id"], target_theme_id, row["coder"], now),
-            )
-            conn.execute("DELETE FROM negatives WHERE negative_id=?", (row["negative_id"],))
+            target_coded = conn.execute(
+                """SELECT 1 FROM codes WHERE segment_id=? AND theme_id=? AND coder=?
+                   AND deleted_at IS NULL""",
+                (row["segment_id"], target_theme_id, row["coder"]),
+            ).fetchone()
+            target_neg = conn.execute(
+                "SELECT negative_id, deleted_at FROM negatives WHERE segment_id=? AND theme_id=? AND coder=?",
+                (row["segment_id"], target_theme_id, row["coder"]),
+            ).fetchone()
+            if target_coded or (target_neg and target_neg["deleted_at"] is None):
+                conn.execute("UPDATE negatives SET deleted_at=? WHERE negative_id=?", (now, row["negative_id"]))
+            elif target_neg:
+                conn.execute(
+                    "UPDATE negatives SET deleted_at=NULL, source=?, note=?, created_at=? WHERE negative_id=?",
+                    (row["source"], row["note"], row["created_at"], target_neg["negative_id"]),
+                )
+                conn.execute("UPDATE negatives SET deleted_at=? WHERE negative_id=?", (now, row["negative_id"]))
+            else:
+                conn.execute("UPDATE negatives SET theme_id=? WHERE negative_id=?",
+                             (target_theme_id, row["negative_id"]))
 
         conn.execute(
             "UPDATE themes SET status='archived', merged_into=?, updated_at=? WHERE theme_id=?",

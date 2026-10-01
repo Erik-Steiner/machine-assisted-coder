@@ -149,10 +149,13 @@ schema, not something to rename.
 
 ## Known drift / forward-looking schema
 
-`coding_store/schema.py`'s schema defines `negatives`, `cluster_runs`, `clusters`,
-`cluster_segments`, and `consistency_checks` tables for future phases (explicit negative
-labeling, unsupervised topic clustering, inter-rater checks). They're created by `init_db()` but
-nothing currently reads/writes most of them — don't assume a table's existence means a feature is
-live; confirm there's a calling endpoint first. `embeddings` is the exception: it's wired up
+`coding_store/schema.py`'s schema defines `cluster_runs`, `clusters`, `cluster_segments`, and
+`consistency_checks` tables for future phases (unsupervised topic clustering, inter-rater
+checks). They're created by `init_db()` but nothing currently reads/writes them — don't assume
+a table's existence means a feature is live; confirm there's a calling endpoint first.
+`negatives` (explicit rejections) is live as of schema v5: `coding_store/codes.py`'s
+`add_negative()`, the `/api/coding/negatives` endpoints, and Review's "✕ Not this theme". It
+also has a code/rejection exclusivity rule covered by `tests/test_labels.py`.
+`embeddings` is also wired up
 (`coding_store/embeddings.py`, `classifier.build_embeddings()`) for the optional embedding-based
 Model tab engine — see docs/DEVELOPMENT.md's "Full-corpus export and the embedding engine".
