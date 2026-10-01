@@ -218,8 +218,12 @@ def _make_pipeline():
 
 def train_theme(X, y, n_pos):
     """Cross-validate for metrics, then fit a final model on all labeled data.
-    Returns (metrics_dict, fitted_final_model), or None if n_pos is below
-    MIN_POSITIVES_ATTEMPT."""
+    Returns (metrics_dict, fitted_final_model, oof_proba), or None if n_pos is
+    below MIN_POSITIVES_ATTEMPT. oof_proba is each row's out-of-fold score --
+    from a CV fold model that never saw that row -- and is returned (not just
+    used for metrics) because it's the only honest score for a segment the
+    final model trained on: the final model has effectively memorized its own
+    positives, so a miscoded segment still gets a high final-model score."""
     if n_pos < MIN_POSITIVES_ATTEMPT:
         return None
 
@@ -241,7 +245,7 @@ def train_theme(X, y, n_pos):
         "pr_auc": pr_auc,
         "threshold": threshold,
     }
-    return metrics, final_model
+    return metrics, final_model, oof_proba
 
 
 def top_terms(model, vectorizer, top_n=TOP_TERMS_N):
@@ -322,11 +326,11 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
                   "theme_id": theme["theme_id"], "name": theme["name"], "n_pos": n_pos})
             continue
 
-        metrics, model = trained
+        metrics, model, oof_scores = trained
         model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
 
         scores = model.predict_proba(X)[:, 1]
-        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores)
+        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores, oof_scores)
 
         top_pos, top_neg = top_terms(model, vectorizer)
         model_runs.save_top_terms(model_version, theme["theme_id"], top_pos, top_neg)
@@ -475,11 +479,11 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True)
             continue
 
         # n_pos >= TRUST_POSITIVES > MIN_POSITIVES_ATTEMPT, so train_theme always succeeds here.
-        metrics, model = train_theme(X, y, n_pos)
+        metrics, model, oof_scores = train_theme(X, y, n_pos)
         model_runs.save_model_run(model_version, theme["theme_id"], trained_at, metrics)
 
         scores = model.predict_proba(X)[:, 1]
-        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores)
+        model_runs.save_predictions(model_version, theme["theme_id"], segment_ids, scores, oof_scores)
 
         results.append({
             "theme_id": theme["theme_id"], "name": theme["name"],

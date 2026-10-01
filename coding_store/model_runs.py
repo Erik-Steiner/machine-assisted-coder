@@ -22,15 +22,25 @@ def save_model_run(model_version, theme_id, trained_at, metrics):
         )
 
 
-def save_predictions(model_version, theme_id, segment_ids, scores):
+def save_predictions(model_version, theme_id, segment_ids, scores, oof_scores=None):
+    """scores: the final model's score per segment. oof_scores (optional, same
+    order/length): each segment's out-of-fold CV score -- see
+    classifier.train_theme(). Stored as NULL when not given (e.g. an engine or
+    import that has no CV pass), which readers treat as "no honest score
+    available", never as 0."""
     now = schema._now()
-    rows = [(sid, theme_id, model_version, float(score), now) for sid, score in zip(segment_ids, scores)]
+    if oof_scores is None:
+        oof_scores = [None] * len(segment_ids)
+    rows = [
+        (sid, theme_id, model_version, float(score), None if oof is None else float(oof), now)
+        for sid, score, oof in zip(segment_ids, scores, oof_scores)
+    ]
     with schema.get_conn() as conn:
         conn.executemany(
-            """INSERT INTO predictions (segment_id, theme_id, model_version, score, created_at)
-               VALUES (?,?,?,?,?)
+            """INSERT INTO predictions (segment_id, theme_id, model_version, score, oof_score, created_at)
+               VALUES (?,?,?,?,?,?)
                ON CONFLICT(segment_id, theme_id, model_version) DO UPDATE SET
-                 score=excluded.score, created_at=excluded.created_at""",
+                 score=excluded.score, oof_score=excluded.oof_score, created_at=excluded.created_at""",
             rows,
         )
 
@@ -96,7 +106,7 @@ def get_top_predictions(theme_id, model_version, limit=15):
     Model tab's interpret panel."""
     with schema.get_conn() as conn:
         rows = conn.execute(
-            """SELECT p.segment_id, p.score, s.item_id, s.dataset_id, s.group_name,
+            """SELECT p.segment_id, p.score, p.oof_score, s.item_id, s.dataset_id, s.group_name,
                       s.person_name, s.speaker_name, s.speaker_role, s.depth,
                       s.word_count, s.timestamp, s.text,
                       EXISTS(
@@ -129,7 +139,7 @@ def get_predictions_for_theme(theme_id, model_version, threshold=None):
         params.append(threshold)
     with schema.get_conn() as conn:
         rows = conn.execute(
-            f"""SELECT p.segment_id, p.score, s.item_id, s.dataset_id, s.group_name,
+            f"""SELECT p.segment_id, p.score, p.oof_score, s.item_id, s.dataset_id, s.group_name,
                       s.person_name, s.speaker_name, s.speaker_role, s.depth,
                       s.word_count, s.timestamp, s.text,
                       EXISTS(

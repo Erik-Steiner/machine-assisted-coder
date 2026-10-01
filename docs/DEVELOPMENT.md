@@ -473,6 +473,16 @@ Two additions sit on top of the Model tab above, both purely additive -- neither
 changes `get_top_predictions`'s/`get_review_candidates`'s capped behavior, which stays
 the researcher's day-to-day iterative-coding surface.
 
+**Two scores per prediction (schema v4).** Each `predictions` row has `score`, from the
+final model fit on every label, and `oof_score`, the out-of-fold score from the
+cross-validation fold model that never saw that segment (`classifier.train_theme()` returns
+it alongside the metrics it already produced). A coded segment's `score` is inflated by
+construction, because the final model trained on it as a positive. Use `oof_score` whenever
+the question is "does the model agree with this label?" (e.g. finding likely mislabels).
+`oof_score` is NULL for pre-v4 runs and for any engine/import without a CV pass; treat NULL
+as "no honest score available", never as 0. The stored `oof_score`s reproduce the run's
+logged PR-AUC exactly. `segment_topic_scores` exports both columns.
+
 **Full-corpus application.** `predictions` already holds one score per (segment, theme,
 model_version) for the *entire* corpus a theme trained against -- `run_training_pass()`
 never capped it, only the UI's reads did (`get_top_predictions(..., limit=...)`).

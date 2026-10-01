@@ -64,7 +64,7 @@ fixed.
 Implementation order: **A3 → A4 → A1 → A5 → A2 → A6** (low-risk plumbing first, then the
 changes that alter what the model learns).
 
-- [ ] **A3 Persist out-of-fold scores.** `predictions.oof_score` (v4). `train_theme()` already
+- [x] **A3 Persist out-of-fold scores.** *(Done 2026-10-01, schema v4.)* `predictions.oof_score` (v4). `train_theme()` already
   computes them for the CV metrics and then throws them away; the saved `score` comes from the
   final model, which trained on every coded segment, so a miscoded segment still scores high.
   Basis for the suspect-labels queue (B1) and Phase C.

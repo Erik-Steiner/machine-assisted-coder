@@ -104,6 +104,7 @@ CREATE TABLE IF NOT EXISTS predictions (
     theme_id TEXT NOT NULL,
     model_version TEXT NOT NULL,
     score REAL NOT NULL,
+    oof_score REAL,
     created_at TEXT NOT NULL,
     UNIQUE(segment_id, theme_id, model_version)
 );
@@ -290,7 +291,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def _now():
@@ -388,6 +389,16 @@ def _migrate(conn):
             (now, now),
         )
         conn.execute("UPDATE themes SET scheme_id='default' WHERE scheme_id IS NULL")
+
+    # schema_version 4: predictions.oof_score -- the cross-validated, out-of-fold
+    # score from a model that never saw that segment (see classifier.train_theme()).
+    # `score` comes from the final model fit on every label, so a coded segment's
+    # `score` is inflated by construction; oof_score is the honest one, needed for
+    # spotting likely mislabels. NULL for every pre-v4 row and for segments a run
+    # didn't train on -- both read as "no out-of-fold score", never as 0.
+    pred_cols = {row["name"] for row in conn.execute("PRAGMA table_info(predictions)")}
+    if "oof_score" not in pred_cols:
+        conn.execute("ALTER TABLE predictions ADD COLUMN oof_score REAL")
 
 
 def _stamp_schema_version(conn):
