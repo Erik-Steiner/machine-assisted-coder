@@ -139,8 +139,10 @@ Endpoints:
            (default "tfidf"; never mixed across engines) -- see
            coding_store.review.get_review_candidates
 
-    POST /api/model/train                            -> kick off a background training pass
-                                                         (all eligible themes, one shared model_version)
+    POST /api/model/train                            -> {scheme_id?} -> kick off a background training
+                                                         pass over that scheme's eligible themes (the Model
+                                                         tab sends the active scheme), or every scheme's if
+                                                         scheme_id is omitted; one shared model_version
     GET  /api/model/train_status?job_id=..           -> poll a training job's progress/result
     POST /api/model/install_embeddings_deps           -> kick off a background `pip install -r
                                                          requirements-embeddings.txt` (400 if one's
@@ -152,9 +154,10 @@ Endpoints:
                                                          whether the optional embedding-based
                                                          engine can be bootstrapped right now
                                                          (see requirements-embeddings.txt)
-    POST /api/model/train_embeddings                 -> kick off a background embedding-training
-                                                         pass (400 if embedding_readiness() isn't
-                                                         met); reuses the TF-IDF pass's training
+    POST /api/model/train_embeddings                 -> {scheme_id?} -> kick off a background embedding-
+                                                         training pass, scheme-scoped like /api/model/train
+                                                         (400 if embedding_readiness() isn't met for that
+                                                         scope); reuses the TF-IDF pass's training
                                                          pipeline with sentence embeddings instead
                                                          of TF-IDF features -- see classifier.py's
                                                          run_embedding_training_pass()
@@ -587,7 +590,7 @@ def run_query_job(job_id, registry, kind, source_id, label, company_name, after_
 TRAIN_JOBS = JobRegistry()
 
 
-def run_train_job(job_id, registry):
+def run_train_job(job_id, registry, scheme_id=None):
     def on_progress(event):
         stage = event["stage"]
         if stage not in ("theme_start", "theme_skipped", "theme_done"):
@@ -610,7 +613,7 @@ def run_train_job(job_id, registry):
 
         registry.mutate(job_id, apply)
 
-    summary = classifier.run_training_pass(progress_callback=on_progress)
+    summary = classifier.run_training_pass(progress_callback=on_progress, scheme_id=scheme_id)
     if summary["error"]:
         registry.update(job_id, status="error", error=summary["error"])
         return
@@ -631,7 +634,7 @@ def run_train_job(job_id, registry):
         trained=trained, skipped=skipped,
     )
     activity_log.log_activity(CODER_NAME, "training_run", {
-        "model_version": summary["model_version"],
+        "model_version": summary["model_version"], "scheme_id": scheme_id,
         "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
         "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
     })
@@ -642,7 +645,7 @@ def run_train_job(job_id, registry):
 EMBED_TRAIN_JOBS = JobRegistry()
 
 
-def run_train_embeddings_job(job_id, registry):
+def run_train_embeddings_job(job_id, registry, scheme_id=None):
     def on_progress(event):
         stage = event["stage"]
         if stage not in ("theme_start", "theme_skipped", "theme_done"):
@@ -665,7 +668,7 @@ def run_train_embeddings_job(job_id, registry):
 
         registry.mutate(job_id, apply)
 
-    summary = classifier.run_embedding_training_pass(progress_callback=on_progress)
+    summary = classifier.run_embedding_training_pass(progress_callback=on_progress, scheme_id=scheme_id)
     if summary["error"]:
         registry.update(job_id, status="error", error=summary["error"])
         return
@@ -685,7 +688,7 @@ def run_train_embeddings_job(job_id, registry):
         trained=trained, skipped=skipped,
     )
     activity_log.log_activity(CODER_NAME, "embedding_training_run", {
-        "model_version": summary["model_version"],
+        "model_version": summary["model_version"], "scheme_id": scheme_id,
         "trained": [{"theme_id": t["theme_id"], "name": t["name"]} for t in trained],
         "skipped": [{"theme_id": t["theme_id"], "name": t["name"]} for t in skipped],
     })
@@ -1380,15 +1383,26 @@ def get_coding_model_runs(req):
 
 # --- Model ---------------------------------------------------------------------------
 
-@ROUTER.post("/api/model/train")
+def _training_scheme_param(body):
+    """scheme_id from a training request body: None (train every scheme) when
+    omitted/empty, else it must name an existing scheme -- a typo'd id would
+    otherwise "train" zero themes and look like a success."""
+    scheme_id = (body.get("scheme_id") or "").strip() or None
+    if scheme_id and schemes.get_scheme(scheme_id) is None:
+        raise ApiError(f"unknown scheme '{scheme_id}'", status=400)
+    return scheme_id
+
+
+@ROUTER.post("/api/model/train", json_body="optional")
 def post_model_train(req):
+    scheme_id = _training_scheme_param(req.body)
     conflict = maintenance_conflict("train")
     if conflict:
         return JsonResponse({"error": conflict}, status=400)
     job_id = TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
-         "trained": [], "skipped": [], "model_version": None},
-        run_train_job,
+         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id},
+        run_train_job, scheme_id,
     )
     return JsonResponse({"job_id": job_id})
 
@@ -1422,9 +1436,10 @@ def get_model_embedding_readiness(req):
     return JsonResponse(classifier.embedding_readiness(scheme_id=req.query.get("scheme_id")))
 
 
-@ROUTER.post("/api/model/train_embeddings")
+@ROUTER.post("/api/model/train_embeddings", json_body="optional")
 def post_model_train_embeddings(req):
-    readiness = classifier.embedding_readiness()
+    scheme_id = _training_scheme_param(req.body)
+    readiness = classifier.embedding_readiness(scheme_id=scheme_id)
     if not readiness["installed"]:
         return JsonResponse({
             "error": "sentence-transformers isn't installed -- run "
@@ -1440,8 +1455,8 @@ def post_model_train_embeddings(req):
         return JsonResponse({"error": conflict}, status=400)
     job_id = EMBED_TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
-         "trained": [], "skipped": [], "model_version": None},
-        run_train_embeddings_job,
+         "trained": [], "skipped": [], "model_version": None, "scheme_id": scheme_id},
+        run_train_embeddings_job, scheme_id,
     )
     return JsonResponse({"job_id": job_id})
 

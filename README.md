@@ -325,8 +325,10 @@ expand **Datasets** in this tab and click **Segment** next to it (see "Get your 
 
 ### Model tab
 
-1. Click **Train / retrain all eligible themes**. This retrains every theme with at least 25
-   coded segments in one background pass and polls until done — there's no per-theme button.
+1. Click **Train / retrain this scheme's themes**. This retrains every theme in the active coding
+   scheme (picked in the Code tab) that has at least 25 coded segments, in one background pass,
+   and polls until done. There's no per-theme button. Tick **Train every scheme's themes
+   instead** to retrain all schemes at once.
 2. Select a theme from the sidebar to see its latest metrics (precision/recall/F1/PR-AUC), the
    full history of every training run for that theme, the terms most positively/negatively
    associated with it, and its top-scored segments (exemplars), each flagged as already coded or

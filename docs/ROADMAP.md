@@ -111,7 +111,7 @@ engine" depends on A4's engine-aware notion of "latest".
     its own plan and sign-off (rule 6).
   - **Embeddings cache:** the Storage panel also lists the size of each `embeddings/*.npy`
     file. A model's file can be deleted and rebuilt, at CPU cost.
-- [ ] **A1 Scheme-scoped training.** `run_training_pass(scheme_id=)` (and the embedding pass,
+- [x] **A1 Scheme-scoped training.** *(Done 2026-10-01.)* `run_training_pass(scheme_id=)` (and the embedding pass,
   whose readiness check is scheme-scoped but whose training isn't). `scheme_id` logged in
   `model_run_params`. A "train all schemes" option stays.
 - [ ] **A5 Explicit negatives.** `negatives.deleted_at` (soft delete, rule 5);

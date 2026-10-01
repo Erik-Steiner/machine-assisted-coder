@@ -73,7 +73,7 @@ EMBEDDING_MODEL_NAME = "all-MiniLM-L6-v2"
 MIN_SEGMENT_WORDS = 5
 
 
-def training_params(duplicate_run_id=None, excluded_dataset_ids=None):
+def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=None):
     """The hyperparameters actually in force for a training pass, as a plain
     dict -- persisted once per pass via coding_store.activity_log's
     save_model_run_params so the Web Appendix tab can show exactly how a given
@@ -83,8 +83,10 @@ def training_params(duplicate_run_id=None, excluded_dataset_ids=None):
     yet, or exclusion was explicitly skipped. excluded_dataset_ids (see
     build_corpus()) records which whole datasets, if any, were flagged
     'excluded'/'unloaded' and therefore left out of the corpus -- see
-    coding_store.dataset_status."""
+    coding_store.dataset_status. scheme_id records which coding scheme's
+    themes the pass trained (None = every scheme -- see run_training_pass())."""
     return {
+        "scheme_id": scheme_id,
         "ngram_range": list(NGRAM_RANGE), "max_features": MAX_FEATURES, "min_df": MIN_DF,
         "stop_words": STOP_WORDS, "min_positives_attempt": MIN_POSITIVES_ATTEMPT,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
@@ -172,6 +174,12 @@ def build_corpus(exclude_duplicates=True):
     segment_ids = [r["segment_id"] for r in rows]
     texts = [r["text"] for r in rows]
     return segment_ids, texts, run_id, excluded_datasets
+
+
+def _no_themes_error(scheme_id):
+    if scheme_id:
+        return "This scheme has no active themes yet -- add some in the Code tab first."
+    return "No themes in the codebook yet."
 
 
 def fit_vectorizer(texts):
@@ -264,9 +272,13 @@ def top_terms(model, vectorizer, top_n=TOP_TERMS_N):
     return top_pos, top_neg
 
 
-def run_training_pass(progress_callback=None, exclude_duplicates=True):
+def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None):
     """One full training pass: build the corpus, fit one shared TF-IDF
-    vectorizer, then attempt every active theme. progress_callback(event)
+    vectorizer, then attempt every active theme -- or only scheme_id's active
+    themes, when given. Scoping to a scheme changes which themes get a run, not
+    any theme's scores: the vectorizer is always fit on the whole corpus, so a
+    theme trained alone scores exactly as it would trained alongside every
+    other scheme's themes. progress_callback(event)
     fires at each stage transition (corpus, vectorizing, theme_start,
     theme_skipped, theme_done) so a caller -- the CLI script or a web
     background job -- can report live progress without duplicating this loop.
@@ -287,10 +299,10 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
             progress_callback(event)
 
     schema.init_db()
-    theme_list = themes.list_themes()
+    theme_list = themes.list_themes(scheme_id=scheme_id)
     if not theme_list:
         return {"model_version": None, "trained_at": None, "themes_total": 0,
-                "results": [], "error": "No themes in the codebook yet."}
+                "results": [], "error": _no_themes_error(scheme_id)}
 
     emit({"stage": "corpus"})
     segment_ids, texts, duplicate_run_id, excluded_dataset_ids = build_corpus(
@@ -307,7 +319,7 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True):
     model_version = "tfidf_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
     activity_log.save_model_run_params(
-        model_version, training_params(duplicate_run_id, excluded_dataset_ids), trained_at
+        model_version, training_params(duplicate_run_id, excluded_dataset_ids, scheme_id), trained_at
     )
 
     results = []
@@ -383,11 +395,12 @@ def embedding_readiness(scheme_id=None):
     }
 
 
-def embedding_training_params(model_name=EMBEDDING_MODEL_NAME):
+def embedding_training_params(model_name=EMBEDDING_MODEL_NAME, scheme_id=None):
     """Mirrors training_params() -- persisted once per embedding training
     pass so the Web Appendix tab shows exactly how a given embed_v1_*
     model_version was produced."""
     return {
+        "scheme_id": scheme_id,
         "engine": "embed_v1", "embedding_model": model_name, "trust_positives_floor": TRUST_POSITIVES,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
         "logreg_max_iter": LOGREG_MAX_ITER, "calibration_method": CALIBRATION_METHOD,
@@ -419,20 +432,23 @@ def build_embeddings(segment_ids, texts, model_name=EMBEDDING_MODEL_NAME):
     return embeddings.load_matrix(segment_ids, model_name)
 
 
-def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True):
+def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id=None):
     """Embedding-engine counterpart to run_training_pass(): same shape and
     same side effects (model_runs + predictions per theme that trains), but
     does not save top terms -- embedding dimensions aren't interpretable
     vocabulary terms the way TF-IDF coefficients are, so model_top_terms
     simply has no rows for embed_v1_* versions. Checks embedding_readiness()
     up front and returns a descriptive error instead of attempting anything
-    if either condition isn't met."""
+    if either condition isn't met. scheme_id scopes both that readiness check
+    and the themes trained, the same way it does for run_training_pass() --
+    otherwise another scheme reaching the trust floor could unlock a pass
+    over this one."""
     def emit(event):
         if progress_callback:
             progress_callback(event)
 
     schema.init_db()
-    readiness = embedding_readiness()
+    readiness = embedding_readiness(scheme_id=scheme_id)
     if not readiness["installed"]:
         return {"model_version": None, "trained_at": None, "themes_total": 0, "results": [],
                 "error": "sentence-transformers isn't installed -- run "
@@ -442,10 +458,10 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True)
                 "error": f"No theme has reached the {TRUST_POSITIVES}-positive trust floor yet -- "
                          "keep coding, then try again."}
 
-    theme_list = themes.list_themes()
+    theme_list = themes.list_themes(scheme_id=scheme_id)
     if not theme_list:
         return {"model_version": None, "trained_at": None, "themes_total": 0,
-                "results": [], "error": "No themes in the codebook yet."}
+                "results": [], "error": _no_themes_error(scheme_id)}
 
     emit({"stage": "corpus"})
     segment_ids, texts, duplicate_run_id, excluded_dataset_ids = build_corpus(
@@ -461,7 +477,7 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True)
 
     model_version = "embed_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
-    activity_log.save_model_run_params(model_version, embedding_training_params(), trained_at)
+    activity_log.save_model_run_params(model_version, embedding_training_params(scheme_id=scheme_id), trained_at)
 
     results = []
     for i, theme in enumerate(theme_list):

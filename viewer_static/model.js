@@ -38,9 +38,8 @@ const ENGINE_LABELS = { tfidf: "TF-IDF", embed: "Embedding" };
 async function loadModelThemes() {
   // codingState.activeSchemeId (set by the Coding tab's scheme switcher) is the
   // shared source of truth for which scheme's themes this sidebar shows -- Model
-  // only reads it, never sets it. Training itself still runs across every
-  // scheme's eligible themes in one pass (see startTraining()) until scheme-scoped
-  // training ships as a follow-up.
+  // only reads it, never sets it. Training is scoped to the same scheme unless the
+  // "every scheme" box is ticked -- see trainingScope().
   const schemePart = codingState.activeSchemeId
     ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
   const [themesRes, runsRes, progressRes] = await Promise.all([
@@ -153,7 +152,7 @@ function renderModelDetail() {
   if (!data.trained) {
     document.getElementById("modelValueProp").innerHTML =
       `Not trained yet — ${data.progress.count || 0}/${data.min_positives} segments coded for this theme. ` +
-      `Keep coding, then click "Train / retrain all eligible themes".`;
+      `Keep coding, then click "Train / retrain this scheme's themes".`;
     document.getElementById("modelCoverage").textContent = "";
     document.getElementById("modelMetricsSection").classList.add("hidden");
     document.getElementById("modelTermsSection").classList.add("hidden");
@@ -259,6 +258,23 @@ async function viewExemplarInCoding(exemplar) {
 
 // --- Train / retrain ----------------------------------------------------------------------
 
+// Which scheme a training pass (TF-IDF or embedding) covers: the active scheme by
+// default, or null (every scheme) when the "every scheme" box is ticked or no
+// scheme exists yet. The server treats an omitted scheme_id as "every scheme".
+function trainingScope() {
+  const all = document.getElementById("trainAllSchemes").checked;
+  return all ? null : codingState.activeSchemeId || null;
+}
+
+function trainingRequestInit() {
+  const schemeId = trainingScope();
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(schemeId ? { scheme_id: schemeId } : {}),
+  };
+}
+
 async function startTraining() {
   const btn = document.getElementById("trainModelsBtn");
   btn.disabled = true;
@@ -266,7 +282,7 @@ async function startTraining() {
 
   let data;
   try {
-    const res = await fetch("/api/model/train", { method: "POST" });
+    const res = await fetch("/api/model/train", trainingRequestInit());
     data = await res.json();
   } catch (err) {
     document.getElementById("modelTrainStatus").textContent = "Request failed — is the server running?";
@@ -339,8 +355,10 @@ async function exportFullCorpus() {
 // separately so the researcher knows exactly what's missing, not just "unavailable."
 
 async function loadEmbeddingReadiness() {
-  const schemePart = codingState.activeSchemeId
-    ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+  // Same scope the embedding training request will use, so the button is never
+  // enabled by a different scheme's volume than the one it would train.
+  const schemeId = trainingScope();
+  const schemePart = schemeId ? `?scheme_id=${encodeURIComponent(schemeId)}` : "";
   const res = await fetch(`/api/model/embedding_readiness${schemePart}`);
   renderEmbeddingReadiness(await res.json());
 }
@@ -425,7 +443,7 @@ async function startEmbeddingTraining() {
 
   let data;
   try {
-    const res = await fetch("/api/model/train_embeddings", { method: "POST" });
+    const res = await fetch("/api/model/train_embeddings", trainingRequestInit());
     data = await res.json();
   } catch (err) {
     statusEl.textContent = "Request failed — is the server running?";
@@ -474,6 +492,7 @@ function bindModelEvents() {
   document.getElementById("exportFullCorpusBtn").addEventListener("click", exportFullCorpus);
   document.getElementById("trainEmbeddingsBtn").addEventListener("click", startEmbeddingTraining);
   document.getElementById("installEmbeddingsBtn").addEventListener("click", startInstallEmbeddingsDeps);
+  document.getElementById("trainAllSchemes").addEventListener("change", loadEmbeddingReadiness);
   document.getElementById("modelThemeItems").addEventListener("click", (e) => {
     const item = e.target.closest(".model-theme-item");
     if (item) selectModelTheme(item.dataset.themeId);

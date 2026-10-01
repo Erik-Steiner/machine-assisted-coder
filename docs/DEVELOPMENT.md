@@ -447,9 +447,15 @@ step). It's additive to the Coding subsystem's `coding.db`: three more tables
 (`model_runs`, `predictions`, `model_top_terms`) hold everything the tab shows, and
 nothing it does touches `segments`/`themes`/`codes`.
 
-Training always retrains every theme with enough coded segments in one pass, sharing
-one TF-IDF vectorizer fit across all of them (fit once for vocabulary consistency and
-efficiency, not per theme) -- there's no per-theme train button. `POST /api/model/train`
+Training retrains every theme with enough coded segments in one pass, sharing one TF-IDF
+vectorizer fit across all of them (fit once for vocabulary consistency and efficiency, not
+per theme) -- there's no per-theme train button. A pass is scoped to one coding scheme
+(`run_training_pass(scheme_id=...)`; the Model tab sends the active scheme, and a "Train
+every scheme's themes instead" checkbox omits it). The vectorizer is still fit on the whole
+corpus either way, so scoping changes which themes get a new run, not any theme's scores.
+`scheme_id` is recorded in `model_run_params` and the `training_run` log entry (`null` =
+every scheme). The embedding pass is scoped the same way, including its readiness check, so
+one scheme reaching the 150-positive floor can't unlock a pass over another. `POST /api/model/train`
 starts a background thread (`TRAIN_JOBS`, a `jobs.JobRegistry` instance in `viewer_server.py` --
 see "Background jobs" below -- kept separate from `JOBS`, Search & Export's fetch-job registry, so
 the two can't collide) that calls `classifier.run_training_pass()`; `GET

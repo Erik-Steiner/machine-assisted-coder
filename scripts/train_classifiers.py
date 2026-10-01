@@ -14,8 +14,12 @@ scripts/find_duplicates.py has been run at least once -- see
 classifier.build_corpus()'s docstring. Pass --include-duplicates to opt out
 for a single run.
 
+Trains every scheme's themes by default; pass --scheme <scheme_id> to train
+only one coding scheme's themes (what the Model tab does by default).
+
 Usage: python scripts/train_classifiers.py
        python scripts/train_classifiers.py --include-duplicates
+       python scripts/train_classifiers.py --scheme default
 """
 import argparse
 import sys
@@ -53,12 +57,15 @@ def main():
     parser.add_argument("--include-duplicates", action="store_true",
                          help="don't exclude non-canonical near-duplicate segments from this run "
                               "(see scripts/find_duplicates.py)")
+    parser.add_argument("--scheme", metavar="SCHEME_ID", default=None,
+                         help="train only this coding scheme's themes (default: every scheme)")
     args = parser.parse_args()
     if args.include_duplicates:
         print("--include-duplicates: near-duplicate segments will NOT be excluded from this run.")
 
     summary = classifier.run_training_pass(
         progress_callback=print_progress, exclude_duplicates=not args.include_duplicates,
+        scheme_id=args.scheme,
     )
 
     if summary["error"]:
