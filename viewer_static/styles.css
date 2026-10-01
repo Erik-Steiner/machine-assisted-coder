@@ -1161,6 +1161,14 @@ button.btn-secondary {
 }
 #reviewQueue.hidden { display: none; }
 #reviewEmpty.hidden { display: none; }
+#reviewModeQueue.hidden, #reviewLoadMore.hidden, #reviewQueueThemeLabel.hidden,
+#reviewRecodeHint.hidden, #reviewThemeSelect.hidden { display: none; }
+#reviewModeLabel, #reviewQueueThemeLabel { display: block; margin: 0 0 10px 0; }
+#reviewModeLabel select, #reviewQueueThemeLabel select { max-width: 100%; }
+#reviewModeList { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+#reviewModeHint { line-height: 1.5; max-width: 760px; }
+.reason-judged { background: var(--panel-alt); color: var(--text-dim); }
+.reason-oof { background: transparent; color: var(--text); border-style: dashed; }
 
 /* --- Web Appendix tab ------------------------------------------------------------ */
 

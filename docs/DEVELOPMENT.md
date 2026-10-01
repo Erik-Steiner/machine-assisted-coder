@@ -690,6 +690,21 @@ card stays on screen with Undo until the queue reloads, after which `get_review_
 skips that segment for that theme. Every candidate carries `rejected_theme_ids` alongside
 `theme_ids`.
 
+**Queue modes (roadmap B1).** The sidebar's View selector switches between that recode view and
+per-theme queues from `GET /api/review/queue` (`coding_store/queues.py`), each over the theme's
+latest run of the selected engine, paged 25 at a time: `top`, `uncertain` (nearest the
+threshold), `audit` (undecided passages above threshold, shuffled with a seed of model_version +
+theme_id so pages are stable within a run), `suspect` (decided passages ranked by how far their
+`oof_score` disagrees with the label; needs a run with out-of-fold scores), and `confusion`
+(coded here, at or above another theme's threshold in the same scheme, excluding the theme's own
+lineage/subtree). "Decided" means effectively positive or a reviewed negative
+(`labels.reviewed_negative_segment_ids()`). `confusion` only excludes *explicit* decisions for the
+other theme (coded or rejected): a "fully coded" mark makes every coded passage implicitly "not
+the other themes", which would empty the view in a marked project. `queues.order_queue()` is the
+pure ordering rule, covered by `tests/test_queues.py`. Queue items reuse `renderReviewCard()` via
+`queueItemToCandidate()`, which adds `judged` and `oof` reason pills. Measured on a real
+389k-segment project: about 0.2 s per page, and 0.8 s for `confusion`.
+
 ## Web Appendix subsystem
 
 The Web Appendix tab is a chronological log of research actions -- meant to be

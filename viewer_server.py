@@ -152,6 +152,13 @@ Endpoints:
     GET  /api/coding/segment_status?job_id=..        -> poll a segment_datasets job's progress/result
     GET  /api/coding/progress?dataset=<id>&scheme_id=<id>  -> coding counts by theme/group, optionally
                                                          scoped to one scheme's themes
+    GET  /api/review/queue?theme_id=<id>&mode=<m>&engine=<tfidf>&offset=<0>&limit=<25>
+        -> one page of a review queue for one theme, from its latest run of `engine`.
+           mode: top (highest undecided) | uncertain (nearest the threshold) | audit
+           (fixed random sample above threshold) | suspect (decided passages the
+           out-of-fold score disagrees with) | confusion (coded here, high for another
+           theme in the scheme). {model_version, threshold, total, items} -- see
+           coding_store/queues.py
     GET  /api/coding/model_runs?engine=<tfidf|embed>  -> latest classifier metrics per theme, each
                                                          row tagged with its "engine"; engine (optional)
                                                          restricts "latest" to that engine's runs --
@@ -354,6 +361,7 @@ from coding_store import (
     dataset_status as dataset_status_store,
     duplicates,
     model_runs,
+    queues,
     review,
     reviewed as reviewed_store,
     schema,
@@ -1469,6 +1477,24 @@ def get_review_candidates(req):
     if engine not in model_runs.ENGINE_PREFIXES:
         return JsonResponse({"error": f"unknown engine '{engine}'"}, status=400)
     return JsonResponse(review.get_review_candidates(theme_ids, predicted_limit=predicted_limit, engine=engine))
+
+
+@ROUTER.get("/api/review/queue")
+def get_review_queue(req):
+    theme_id = req.query.get("theme_id") or ""
+    mode = req.query.get("mode") or "top"
+    engine = req.query.get("engine") or "tfidf"
+    if engine not in model_runs.ENGINE_PREFIXES:
+        return JsonResponse({"error": f"unknown engine '{engine}'"}, status=400)
+    try:
+        offset = max(0, int(req.query.get("offset", "0")))
+        limit = min(200, max(1, int(req.query.get("limit", str(queues.DEFAULT_PAGE_SIZE)))))
+    except ValueError:
+        return JsonResponse({"error": "offset and limit must be integers"}, status=400)
+    try:
+        return JsonResponse(queues.get_queue(theme_id, mode, engine=engine, offset=offset, limit=limit))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
 
 @ROUTER.get("/api/coding/model_runs")

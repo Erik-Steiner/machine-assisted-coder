@@ -497,11 +497,22 @@
 <div id="reviewView">
   <aside id="reviewSidebar">
     <h3>Review themes</h3>
-    <p class="hint">Pick one or more themes to build a recode queue -- every segment already
+    <label id="reviewModeLabel">View
+      <select id="reviewMode">
+        <option value="recode">Recode: coded + top predictions</option>
+        <option value="top">Queue: highest scores</option>
+        <option value="uncertain">Queue: borderline</option>
+        <option value="audit">Queue: random check</option>
+        <option value="suspect">Queue: likely mislabels</option>
+        <option value="confusion">Queue: overlap with other themes</option>
+      </select>
+    </label>
+    <p class="hint" id="reviewRecodeHint">Pick one or more themes to build a recode queue -- every segment already
       coded under them, plus segments a trained model top-scores for them but that aren't
       coded yet.</p>
     <div id="reviewSchemeLabel" class="hint"></div>
     <div id="reviewThemeSelect" class="checkbox-list"></div>
+    <label id="reviewQueueThemeLabel" class="hidden">Theme <select id="reviewQueueTheme"></select></label>
     <label id="reviewEngineLabel">Model scores from
       <select id="reviewEngine">
         <option value="tfidf">TF-IDF</option>
@@ -521,6 +532,12 @@
         <h3>Model-flagged, not yet coded (<span id="reviewPredictedCount">0</span>)</h3>
         <div id="reviewPredictedList"></div>
       </section>
+    </div>
+    <div id="reviewModeQueue" class="hidden">
+      <p id="reviewModeHint" class="hint"></p>
+      <div id="reviewModeSummary" class="hint"></div>
+      <div id="reviewModeList"></div>
+      <button id="reviewLoadMore" class="btn-secondary hidden">Load more</button>
     </div>
   </main>
 </div>

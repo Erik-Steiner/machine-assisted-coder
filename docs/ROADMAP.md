@@ -129,7 +129,7 @@ engine" depends on A4's engine-aware notion of "latest".
 
 ## Phase B — Active-learning triage (stage 4)
 
-- [ ] **B1 Queue modes** — `GET /api/review/queue?theme_id&mode&engine&offset&limit`:
+- [x] **B1 Queue modes** *(Done 2026-10-01, `coding_store/queues.py`. `confusion` excludes only explicit decisions for the other theme, so "fully coded" marks don't empty it.)* — `GET /api/review/queue?theme_id&mode&engine&offset&limit`:
   `top`, `uncertain` (near threshold), `audit` (seeded random above threshold),
   `suspect` (coded with low OOF score; rejected with high OOF score), `confusion` (coded A,
   high for sibling B). Excludes segments already decided for that theme. Paged.

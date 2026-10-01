@@ -9,6 +9,11 @@
 // theme"), tagged source="review_reject", which keeps it out of that theme's
 // future queues (see coding_store/codes.py's add_negative()).
 //
+// Besides that recode view, the View selector offers per-theme queue modes from
+// GET /api/review/queue (coding_store/queues.py): highest scores, borderline,
+// random check, likely mislabels, and overlap with other themes -- paged, and
+// skipping passages already decided for the theme. Same cards and actions.
+//
 // Reuses coding.js's shared buildChipsHtml/postCode/deleteCode/postNegative/
 // deleteNegative/jumpToSegmentInCoding rather than reimplementing segment-card rendering
 // and code-toggling from scratch. Shares app.js's escapeHtml/switchTab.
@@ -21,6 +26,23 @@ const reviewState = {
   minWords: 0, // live "min word count" filter, same idea as coding.js's -- hides, never deletes
   engine: "tfidf", // whose predictions fill the "model-flagged" list -- one engine at a time,
                    // never mixed (see coding_store/review.py's get_review_candidates)
+  mode: "recode", // "recode" (the multi-theme view above) or a queues.py mode
+  queueThemeId: null, // the one theme a queue mode is for
+  queue: null, // last /api/review/queue response, items accumulated across "Load more"
+  queueRequest: 0, // bumped per load, so a slow response for an old selection is dropped
+};
+
+const REVIEW_MODE_HINTS = {
+  top: "Highest-scoring passages you haven't decided for this theme yet: the quickest way to find more.",
+  uncertain: "Passages the model is least sure about (scores nearest its threshold). Deciding these " +
+    "teaches the next model the most.",
+  audit: "A random sample of undecided passages above the threshold, in a fixed order for this run. " +
+    "How many you accept here estimates the model's real precision.",
+  suspect: "Passages you've already decided where the model most disagrees: coded passages it scores " +
+    "low, and judged negatives it scores high. Scores come from cross-validation, so the model never " +
+    "saw the passage. Possible miscodes, or a theme definition that has drifted.",
+  confusion: "Passages coded with this theme that score above the threshold for a different theme in " +
+    "the scheme, and haven't been coded or rejected for it: where theme boundaries may overlap.",
 };
 
 async function loadReviewThemes() {
@@ -36,8 +58,132 @@ async function loadReviewThemes() {
   const res = await fetch(`/api/codebook/themes${schemePart}`);
   reviewState.themes = await res.json();
   renderReviewThemeCheckboxes();
+  renderReviewQueueThemeSelect();
   renderReviewSchemeLabel();
-  loadReviewCandidates(); // clears the queue itself when nothing's selected
+  applyReviewMode();
+}
+
+function renderReviewQueueThemeSelect() {
+  const select = document.getElementById("reviewQueueTheme");
+  // Same tree order as the Code tab (coding.js's themesByParent), sub-codes indented.
+  const byParent = themesByParent(reviewState.themes);
+  const options = [];
+  const walk = (parentId, depth) => {
+    (byParent.get(parentId) || []).forEach((t) => {
+      options.push(`<option value="${escapeHtml(t.theme_id)}">${"\u00a0\u00a0".repeat(depth)}${escapeHtml(t.name)}</option>`);
+      walk(t.theme_id, depth + 1);
+    });
+  };
+  walk(null, 0);
+  select.innerHTML = options.join("");
+  if (!reviewState.themes.some((t) => t.theme_id === reviewState.queueThemeId)) {
+    reviewState.queueThemeId = reviewState.themes.length ? reviewState.themes[0].theme_id : null;
+  }
+  if (reviewState.queueThemeId) select.value = reviewState.queueThemeId;
+}
+
+// Shows the recode view or a queue mode's view, then loads whichever is active.
+function applyReviewMode() {
+  const recode = reviewState.mode === "recode";
+  document.getElementById("reviewThemeSelect").classList.toggle("hidden", !recode);
+  document.getElementById("reviewRecodeHint").classList.toggle("hidden", !recode);
+  document.getElementById("reviewQueueThemeLabel").classList.toggle("hidden", recode);
+  document.getElementById("reviewModeQueue").classList.toggle("hidden", recode);
+  if (recode) {
+    loadReviewCandidates(); // clears the queue itself when nothing's selected
+  } else {
+    document.getElementById("reviewEmpty").classList.add("hidden");
+    document.getElementById("reviewQueue").classList.add("hidden");
+    loadModeQueue(false);
+  }
+}
+
+async function loadModeQueue(append) {
+  const listEl = document.getElementById("reviewModeList");
+  const summaryEl = document.getElementById("reviewModeSummary");
+  document.getElementById("reviewModeHint").textContent = REVIEW_MODE_HINTS[reviewState.mode] || "";
+  if (!reviewState.queueThemeId) {
+    reviewState.queue = null;
+    listEl.innerHTML = "";
+    summaryEl.textContent = "No themes in this scheme yet.";
+    document.getElementById("reviewLoadMore").classList.add("hidden");
+    return;
+  }
+  const offset = append && reviewState.queue ? reviewState.queue.items.length : 0;
+  if (!append) {
+    listEl.innerHTML = "<em>Loading…</em>";
+    summaryEl.textContent = "";
+  }
+  const request = ++reviewState.queueRequest;
+  const res = await fetch(
+    `/api/review/queue?theme_id=${encodeURIComponent(reviewState.queueThemeId)}` +
+    `&mode=${encodeURIComponent(reviewState.mode)}&engine=${encodeURIComponent(reviewState.engine)}` +
+    `&offset=${offset}&limit=25`,
+  );
+  const data = await res.json();
+  if (request !== reviewState.queueRequest) return; // a newer selection superseded this one
+  if (data.error) {
+    listEl.innerHTML = "";
+    summaryEl.textContent = "Error: " + data.error;
+    return;
+  }
+  data.items = data.items.map((item) => queueItemToCandidate(item, data.model_version));
+  if (append && reviewState.queue) data.items = reviewState.queue.items.concat(data.items);
+  reviewState.queue = data;
+  renderModeQueue();
+}
+
+// Turns a queue item into the candidate shape renderReviewCard() already draws:
+// `reasons` says why it's here, in this mode's terms.
+function queueItemToCandidate(item, modelVersion) {
+  const tid = reviewState.queueThemeId;
+  const predicted = (themeId, score, version) => ({
+    type: "predicted", theme_id: themeId, score, engine: reviewState.engine, model_version: version,
+  });
+  let reasons;
+  if (reviewState.mode === "suspect") {
+    reasons = [
+      { type: item.label === "positive" ? "coded" : "judged", theme_id: tid },
+      { type: "oof", theme_id: tid, score: item.oof_score },
+    ];
+  } else if (reviewState.mode === "confusion") {
+    reasons = [{ type: "coded", theme_id: tid },
+      predicted(item.other_theme_id, item.other_score, item.other_model_version)];
+  } else {
+    reasons = [predicted(tid, item.score, modelVersion)];
+  }
+  return { ...item, reasons };
+}
+
+function renderModeQueue() {
+  const q = reviewState.queue;
+  const listEl = document.getElementById("reviewModeList");
+  const summaryEl = document.getElementById("reviewModeSummary");
+  const engineLabel = ENGINE_LABELS[reviewState.engine] || reviewState.engine;
+  listEl.innerHTML = "";
+  if (!q.model_version) {
+    summaryEl.textContent = `No ${engineLabel} run for this theme yet — train it in the Train tab.`;
+    document.getElementById("reviewLoadMore").classList.add("hidden");
+    return;
+  }
+  const visible = q.items.filter((c) => (c.word_count || 0) >= reviewState.minWords);
+  const hiddenCount = q.items.length - visible.length;
+  summaryEl.textContent =
+    `Showing ${q.items.length} of ${q.total}` + (hiddenCount ? ` (${hiddenCount} hidden by min words)` : "") +
+    ` · ${engineLabel} run ${q.model_version}, threshold ${q.threshold.toFixed(3)}`;
+  if (!q.total) {
+    listEl.innerHTML = reviewState.mode === "suspect"
+      ? '<div class="hint">Nothing to show. If this theme&#39;s latest run is older than out-of-fold scores, retrain it.</div>'
+      : '<div class="hint">Nothing to show for this theme in this view.</div>';
+  }
+  visible.forEach((c) => listEl.appendChild(renderReviewCard(c)));
+  document.getElementById("reviewLoadMore").classList.toggle("hidden", q.items.length >= q.total);
+}
+
+// Re-render whichever view is showing after a code/rejection changes a card.
+function rerenderReview() {
+  if (reviewState.mode === "recode") renderReviewQueue();
+  else if (reviewState.queue) renderModeQueue();
 }
 
 function renderReviewSchemeLabel() {
@@ -138,6 +284,13 @@ function reasonPillsHtml(candidate) {
       if (r.type === "coded") {
         return `<span class="reason-pill reason-coded">coded: ${escapeHtml(name)}</span>`;
       }
+      if (r.type === "judged") {
+        return `<span class="reason-pill reason-judged">judged not: ${escapeHtml(name)}</span>`;
+      }
+      if (r.type === "oof") {
+        return `<span class="reason-pill reason-oof" title="Out-of-fold score: from a cross-validation ` +
+          `model that never saw this passage">model, unseen: ${r.score.toFixed(2)}</span>`;
+      }
       const tid = escapeHtml(r.theme_id);
       if (rejected.includes(r.theme_id)) {
         return `<span class="reason-pill reason-rejected">rejected: ${escapeHtml(name)}</span>` +
@@ -206,7 +359,7 @@ async function toggleReviewCode(candidate, themeId) {
     : [...candidate.theme_ids, themeId];
   // Coding cancels a rejection server-side (codes.add_code()); mirror that locally.
   if (!active) candidate.rejected_theme_ids = (candidate.rejected_theme_ids || []).filter((id) => id !== themeId);
-  renderReviewQueue();
+  rerenderReview();
   try {
     if (active) await deleteCode(candidate.segment_id, themeId);
     else await postCode(candidate.segment_id, themeId, { source: "recoded" });
@@ -220,7 +373,7 @@ async function setReviewRejection(candidate, themeId, reject) {
   candidate.rejected_theme_ids = reject ? [...rejected, themeId] : rejected;
   // Rejecting cancels a code server-side (codes.add_negative()); mirror that locally.
   if (reject) candidate.theme_ids = candidate.theme_ids.filter((id) => id !== themeId);
-  renderReviewQueue();
+  rerenderReview();
   try {
     if (reject) await postNegative(candidate.segment_id, themeId, { source: "review_reject" });
     else await deleteNegative(candidate.segment_id, themeId);
@@ -232,12 +385,21 @@ async function setReviewRejection(candidate, themeId, reject) {
 function bindReviewEvents() {
   document.getElementById("reviewMinWords").addEventListener("input", (e) => {
     reviewState.minWords = Number(e.target.value) || 0;
-    renderReviewQueue();
+    rerenderReview();
   });
   document.getElementById("reviewEngine").addEventListener("change", (e) => {
     reviewState.engine = e.target.value;
-    loadReviewCandidates();
+    applyReviewMode();
   });
+  document.getElementById("reviewMode").addEventListener("change", (e) => {
+    reviewState.mode = e.target.value;
+    applyReviewMode();
+  });
+  document.getElementById("reviewQueueTheme").addEventListener("change", (e) => {
+    reviewState.queueThemeId = e.target.value;
+    loadModeQueue(false);
+  });
+  document.getElementById("reviewLoadMore").addEventListener("click", () => loadModeQueue(true));
   window.onEnterReviewTab = () => loadReviewThemes();
 }
 

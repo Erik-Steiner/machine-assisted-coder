@@ -365,6 +365,20 @@ suggestive, not final, until a theme has more codes.
 This tab is for revisiting/refining an existing codebook (e.g. two themes turning out to
 overlap), not for first-pass coding — do that in the Coding tab.
 
+The **View** selector at the top of the sidebar also offers queues for one theme at a time, from its
+latest run (25 at a time, with **Load more**). Passages you've already decided for that theme are
+left out, except in *likely mislabels*:
+
+- **Highest scores**: the strongest undecided candidates, the quickest way to find more.
+- **Borderline**: undecided passages scoring nearest the model's threshold. Deciding these teaches
+  the next model the most.
+- **Random check**: a fixed random sample of undecided passages above the threshold. The share you
+  accept estimates the model's real precision.
+- **Likely mislabels**: passages you've already decided where the model most disagrees, using
+  scores from a model that never saw them. Possible miscodes, or a theme definition that has drifted.
+- **Overlap with other themes**: passages coded with this theme that score high for another theme
+  in the scheme and haven't been coded or rejected for it.
+
 ### Web Appendix tab
 
 A read-only, chronological log of research actions: themes created/edited/archived/merged,

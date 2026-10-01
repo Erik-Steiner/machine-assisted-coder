@@ -13,6 +13,8 @@ duplicates/dataset_status/activity_log together:
                        read by training, the Model tab's counts, and progress.
   model_runs.py     -- Model tab storage: metrics, predictions, top terms.
   review.py         -- the Review tab's recode queue, and coding-progress counts.
+  queues.py         -- the Review tab's per-theme queue modes (top, uncertain,
+                       audit, suspect, confusion).
   reviewed.py       -- what's been judged: items marked "fully coded" and passages
                        confirmed "none of these", per scheme.
   activity_log.py   -- Web Appendix: the research-action log, training-run

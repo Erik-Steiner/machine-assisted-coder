@@ -120,9 +120,14 @@ def reviewed_negative_segment_ids(theme_id):
         ).fetchone()
         if theme is None:
             return set()
+        # Plain s.item_id = r.item_id, not CAST(...): older coding.dbs declare
+        # segments.item_id INTEGER (inherited from the pre-v2 feed_item_id column), and
+        # SQLite's comparison rules then convert r.item_id's text to a number, so mixed
+        # storage still matches. A CAST would also match, but it disables the item_id
+        # index: measured 1.7 s vs 0.008 s on a real 389k-segment database, same rows.
         rows = conn.execute(
             """SELECT s.segment_id FROM item_reviews r
-               JOIN segments s ON s.dataset_id = r.dataset_id AND CAST(s.item_id AS TEXT) = r.item_id
+               JOIN segments s ON s.dataset_id = r.dataset_id AND s.item_id = r.item_id
                WHERE r.scheme_id = ? AND r.unmarked_at IS NULL AND r.marked_at >= ?
                UNION
                SELECT segment_id FROM segment_none_confirmations
