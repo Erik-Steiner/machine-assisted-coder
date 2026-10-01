@@ -7,7 +7,7 @@ that reads across both.
 from . import codes, model_runs, schema
 
 
-def get_review_candidates(theme_ids, predicted_limit=30):
+def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
     """Assemble a recode/review queue for one or more themes: every segment
     currently coded under any of theme_ids, plus (for themes with a trained
     model) each theme's top predicted_limit scored segments not already coded
@@ -16,7 +16,12 @@ def get_review_candidates(theme_ids, predicted_limit=30):
     [{"type": "coded", "theme_id": "marketization"},
      {"type": "predicted", "theme_id": "integrations", "score": 0.42}].
     Every candidate's `theme_ids` field lists ALL of its current active
-    codes (not just ones in theme_ids), so the UI can show full context."""
+    codes (not just ones in theme_ids), so the UI can show full context.
+
+    engine picks whose predictions fill the queue: each theme's latest run *of
+    that engine* (see model_runs.get_latest_model_runs()), never a mix. Predicted
+    reasons carry engine + model_version so the UI can say which run flagged a
+    segment."""
     if not theme_ids:
         return []
 
@@ -59,7 +64,7 @@ def get_review_candidates(theme_ids, predicted_limit=30):
                 if tid in theme_ids:
                     candidates[sid]["reasons"].append({"type": "coded", "theme_id": tid})
 
-    latest_runs = model_runs.get_latest_model_runs()
+    latest_runs = model_runs.get_latest_model_runs(engine=engine)
     for theme_id in theme_ids:
         run = latest_runs.get(theme_id)
         if not run:
@@ -68,7 +73,10 @@ def get_review_candidates(theme_ids, predicted_limit=30):
             if p["already_coded"]:
                 continue
             c = ensure_candidate(p)
-            c["reasons"].append({"type": "predicted", "theme_id": theme_id, "score": p["score"]})
+            c["reasons"].append({
+                "type": "predicted", "theme_id": theme_id, "score": p["score"],
+                "engine": run["engine"], "model_version": run["model_version"],
+            })
 
     all_ids = list(candidates.keys())
     codes_by_segment = codes.get_codes_for_segment_ids(all_ids)

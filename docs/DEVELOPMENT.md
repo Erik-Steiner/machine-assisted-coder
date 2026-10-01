@@ -509,6 +509,18 @@ records each segment's row index into that file). Its `model_version`s are prefi
 are saved for `embed_v1_*` versions (embedding dimensions aren't interpretable
 vocabulary terms the way TF-IDF coefficients are).
 
+**Engine-aware "latest run".** Because both engines share `model_runs`, "a theme's latest run"
+is ambiguous. `model_runs.get_latest_model_runs(engine=...)` takes `"tfidf"`/`"embed"` and
+returns only that engine's latest run; without `engine` it returns whichever run is newest,
+which is fine for engine-independent facts like `n_pos` (`embedding_readiness()` uses it that
+way) but wrong anywhere *scores* are shown. An embedding run would otherwise silently take
+over those views for the themes it trained. So the Coding/Model sidebar badges always request
+`engine=tfidf`, and the Review tab has a "Model scores from" selector (default TF-IDF) that it
+passes to `/api/coding/review_candidates`. Each predicted reason carries `engine` and
+`model_version`, and the pill shows the engine. The prefix ↔ engine mapping lives in
+`model_runs.ENGINE_PREFIXES` (mirrored by `model.js`'s `engineOfVersion()`); add a new engine
+there, not as another hardcoded prefix check.
+
 Gated behind `classifier.embedding_readiness()`: `installed` (is the *optional*
 `sentence-transformers` package importable -- see `requirements-embeddings.txt`, never
 part of the default `requirements.txt` install, since it pulls in PyTorch) and

@@ -5,6 +5,32 @@ submodule.
 """
 from . import schema
 
+# Which engine produced a run is encoded only in its model_version prefix (see
+# classifier.run_training_pass()/run_embedding_training_pass()). This dict is the one
+# place that mapping lives -- topic_model_export.py and the API's `engine` parameters
+# all go through it, and model.js's engineOfVersion() mirrors it on the frontend.
+ENGINE_PREFIXES = {"tfidf": "tfidf_v1_", "embed": "embed_v1_"}
+
+
+def engine_of_version(model_version):
+    """"tfidf" | "embed" for a known model_version prefix, None otherwise."""
+    for engine, prefix in ENGINE_PREFIXES.items():
+        if (model_version or "").startswith(prefix):
+            return engine
+    return None
+
+
+def _engine_clause(engine, column="model_version"):
+    """(sql, params) restricting `column` to one engine's model_versions -- or ("", ())
+    for engine=None. substr() rather than LIKE because the prefixes contain `_`,
+    which LIKE treats as a wildcard. Raises ValueError for an unknown engine."""
+    if engine is None:
+        return "", ()
+    prefix = ENGINE_PREFIXES.get(engine)
+    if prefix is None:
+        raise ValueError(f"unknown engine '{engine}' -- expected one of {sorted(ENGINE_PREFIXES)}")
+    return f"substr({column}, 1, ?) = ?", (len(prefix), prefix)
+
 
 def save_model_run(model_version, theme_id, trained_at, metrics):
     with schema.get_conn() as conn:
@@ -45,6 +71,12 @@ def save_predictions(model_version, theme_id, segment_ids, scores, oof_scores=No
         )
 
 
+def _with_engine(row):
+    d = dict(row)
+    d["engine"] = engine_of_version(d["model_version"])
+    return d
+
+
 def list_model_runs(theme_id=None):
     with schema.get_conn() as conn:
         if theme_id:
@@ -53,20 +85,33 @@ def list_model_runs(theme_id=None):
             ).fetchall()
         else:
             rows = conn.execute("SELECT * FROM model_runs ORDER BY trained_at DESC").fetchall()
-    return [dict(r) for r in rows]
+    return [_with_engine(r) for r in rows]
 
 
-def get_latest_model_runs():
-    """{theme_id: latest model_run dict}, one row per theme (its most recent run)."""
+def get_latest_model_runs(engine=None):
+    """{theme_id: latest model_run dict}, one row per theme (its most recent run),
+    each carrying an `engine` key. engine ("tfidf"/"embed") restricts to that
+    engine's runs. Pass it whenever the result decides whose *scores* get shown:
+    with engine=None, an embedding run silently becomes "latest" for the themes it
+    trained, so one view ends up mixing two engines whose scores aren't comparable.
+    engine=None stays correct for engine-independent facts like n_pos (see
+    classifier.embedding_readiness())."""
+    inner_clause, params = _engine_clause(engine)
+    outer_clause, _ = _engine_clause(engine, column="m.model_version")
+    inner_where = f"WHERE {inner_clause}" if inner_clause else ""
+    # The outer filter matters too: two engines' runs could share a trained_at.
+    outer_where = f"WHERE {outer_clause}" if outer_clause else ""
     with schema.get_conn() as conn:
         rows = conn.execute(
-            """SELECT m.* FROM model_runs m
-               INNER JOIN (
-                 SELECT theme_id, MAX(trained_at) AS max_trained_at
-                 FROM model_runs GROUP BY theme_id
-               ) latest ON latest.theme_id = m.theme_id AND latest.max_trained_at = m.trained_at"""
+            f"""SELECT m.* FROM model_runs m
+                INNER JOIN (
+                  SELECT theme_id, MAX(trained_at) AS max_trained_at
+                  FROM model_runs {inner_where} GROUP BY theme_id
+                ) latest ON latest.theme_id = m.theme_id AND latest.max_trained_at = m.trained_at
+                {outer_where}""",
+            params + params,
         ).fetchall()
-    return {r["theme_id"]: dict(r) for r in rows}
+    return {r["theme_id"]: _with_engine(r) for r in rows}
 
 
 def save_top_terms(model_version, theme_id, top_pos, top_neg):

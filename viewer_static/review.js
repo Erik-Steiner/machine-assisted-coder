@@ -16,6 +16,8 @@ const reviewState = {
   selectedThemeIds: new Set(),
   candidates: [],
   minWords: 0, // live "min word count" filter, same idea as coding.js's -- hides, never deletes
+  engine: "tfidf", // whose predictions fill the "model-flagged" list -- one engine at a time,
+                   // never mixed (see coding_store/review.py's get_review_candidates)
 };
 
 async function loadReviewThemes() {
@@ -82,7 +84,10 @@ async function loadReviewCandidates() {
   predictedList.innerHTML = "";
 
   const themeIds = [...reviewState.selectedThemeIds].join(",");
-  const res = await fetch(`/api/coding/review_candidates?theme_ids=${encodeURIComponent(themeIds)}&predicted_limit=30`);
+  const res = await fetch(
+    `/api/coding/review_candidates?theme_ids=${encodeURIComponent(themeIds)}` +
+    `&predicted_limit=30&engine=${encodeURIComponent(reviewState.engine)}`,
+  );
   reviewState.candidates = await res.json();
   renderReviewQueue();
 }
@@ -103,7 +108,12 @@ function renderReviewQueue() {
   predictedList.innerHTML = "";
 
   if (!coded.length) codedList.innerHTML = '<div class="hint">No segments currently coded under the selected theme(s).</div>';
-  if (!predicted.length) predictedList.innerHTML = '<div class="hint">No additional model-flagged candidates (train the selected theme(s) first, or all top candidates are already coded).</div>';
+  if (!predicted.length) {
+    const engineLabel = ENGINE_LABELS[reviewState.engine] || reviewState.engine;
+    predictedList.innerHTML =
+      `<div class="hint">No additional ${escapeHtml(engineLabel)}-flagged candidates (no ${escapeHtml(engineLabel)} ` +
+      `run for the selected theme(s) yet, or all top candidates are already coded).</div>`;
+  }
 
   coded.forEach((c) => codedList.appendChild(renderReviewCard(c)));
   predicted.forEach((c) => predictedList.appendChild(renderReviewCard(c)));
@@ -120,7 +130,8 @@ function reasonPillsHtml(candidate) {
       const name = theme ? theme.name : r.theme_id;
       return r.type === "coded"
         ? `<span class="reason-pill reason-coded">coded: ${escapeHtml(name)}</span>`
-        : `<span class="reason-pill reason-predicted">predicted: ${escapeHtml(name)} (${r.score.toFixed(2)})</span>`;
+        : `<span class="reason-pill reason-predicted" title="${escapeHtml(r.model_version || "")}">` +
+          `predicted: ${escapeHtml(name)} (${r.score.toFixed(2)} · ${escapeHtml(ENGINE_LABELS[r.engine] || r.engine || "?")})</span>`;
     })
     .join("");
 }
@@ -180,6 +191,10 @@ function bindReviewEvents() {
   document.getElementById("reviewMinWords").addEventListener("input", (e) => {
     reviewState.minWords = Number(e.target.value) || 0;
     renderReviewQueue();
+  });
+  document.getElementById("reviewEngine").addEventListener("change", (e) => {
+    reviewState.engine = e.target.value;
+    loadReviewCandidates();
   });
   window.onEnterReviewTab = () => loadReviewThemes();
 }

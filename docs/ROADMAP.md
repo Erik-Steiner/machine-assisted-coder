@@ -69,7 +69,7 @@ engine" depends on A4's engine-aware notion of "latest".
   computes them for the CV metrics and then throws them away; the saved `score` comes from the
   final model, which trained on every coded segment, so a miscoded segment still scores high.
   Basis for the suspect-labels queue (B1) and Phase C.
-- [ ] **A4 Engine-aware latest run.** `get_latest_model_runs(engine=)`; engine selector in
+- [x] **A4 Engine-aware latest run.** *(Done 2026-10-01.)* `get_latest_model_runs(engine=)`; engine selector in
   Review; cards show which engine/run produced them. Today an embedding run silently switches
   Review to mixed-engine scores.
 - [ ] **A7 Opt-in pruning of old runs' scores, and database compaction.** Every training

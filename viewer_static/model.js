@@ -10,7 +10,8 @@
 const modelState = {
   themes: [],
   progress: null, // /api/coding/progress (no dataset param -> all groups)
-  latestRuns: {}, // {theme_id: latest model_run}
+  latestRuns: {}, // {theme_id: latest TF-IDF model_run} -- the sidebar badges are always TF-IDF;
+                  // the detail panel's engine toggle is what shows embedding runs
   selectedThemeId: null,
   selectedEngine: "tfidf", // "tfidf" | "embed" -- which engine's runs the detail panel shows
   history: [], // last /api/coding/model_runs?theme_id= response for the selected theme
@@ -24,9 +25,13 @@ const modelState = {
   installStartedAt: null,
 };
 
+// Mirrors coding_store/model_runs.py's ENGINE_PREFIXES -- keep the two in sync.
 function engineOfVersion(modelVersion) {
   return modelVersion && modelVersion.startsWith("embed_v1_") ? "embed" : "tfidf";
 }
+
+// Display names for engine ids; shared with review.js (loaded after this file).
+const ENGINE_LABELS = { tfidf: "TF-IDF", embed: "Embedding" };
 
 // --- Theme list / sidebar --------------------------------------------------------------
 
@@ -40,7 +45,7 @@ async function loadModelThemes() {
     ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
   const [themesRes, runsRes, progressRes] = await Promise.all([
     fetch(`/api/codebook/themes${schemePart}`),
-    fetch("/api/coding/model_runs"),
+    fetch("/api/coding/model_runs?engine=tfidf"),
     fetch(`/api/coding/progress${schemePart}`),
   ]);
   modelState.themes = await themesRes.json();
@@ -89,7 +94,8 @@ function renderModelThemeList() {
     const run = modelState.latestRuns[t.theme_id];
     const count = (byTheme[t.theme_id] && byTheme[t.theme_id].count) || 0;
     const badge = run
-      ? `<span class="model-badge">F1 ${run.f1.toFixed(2)} · PR-AUC ${run.pr_auc.toFixed(2)}</span>`
+      ? `<span class="model-badge" title="latest TF-IDF run: ${escapeHtml(run.model_version)}">` +
+        `F1 ${run.f1.toFixed(2)} · PR-AUC ${run.pr_auc.toFixed(2)}</span>`
       : `<span class="model-theme-item-hint">${count}/25 coded</span>`;
 
     div.innerHTML =

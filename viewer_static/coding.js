@@ -14,7 +14,7 @@ const codingState = {
               // renderThemeList()/buildChipsHtml() can build a tree client-side:
               // [{theme_id, name, description, color, code_count, scheme_id, parent_theme_id, depth}]
   pendingParentThemeId: null, // set by "+ Add sub-code"; read/cleared by addTheme()
-  modelRuns: {}, // {theme_id: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at}}
+  modelRuns: {}, // {theme_id: latest TF-IDF run: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at, engine}}
   datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
   segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text, theme_ids}]
@@ -174,7 +174,7 @@ async function loadThemes() {
   }
   const [themesRes, runsRes] = await Promise.all([
     fetch(`/api/codebook/themes?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`),
-    fetch("/api/coding/model_runs"),
+    fetch("/api/coding/model_runs?engine=tfidf"),
   ]);
   codingState.themes = await themesRes.json();
   codingState.modelRuns = await runsRes.json();
@@ -209,7 +209,7 @@ function renderThemeRow(t) {
     : `<div class="theme-row-desc theme-row-desc-empty">No description yet — click Edit to add one.</div>`;
   const run = codingState.modelRuns[t.theme_id];
   const badgeHtml = run
-    ? `<span class="model-badge" title="trained on ${run.n_pos} positives">` +
+    ? `<span class="model-badge" title="latest TF-IDF run (${escapeHtml(run.model_version)}), trained on ${run.n_pos} positives">` +
       `F1 ${run.f1.toFixed(2)} · PR-AUC ${run.pr_auc.toFixed(2)}</span>`
     : "";
   row.innerHTML =

@@ -32,7 +32,7 @@ MAX_SEED_EXEMPLARS = 20
 
 
 def _engine_prefix(engine):
-    return {"tfidf": "tfidf_v1_", "embed": "embed_v1_"}.get(engine, engine)
+    return model_runs.ENGINE_PREFIXES.get(engine, engine)
 
 
 def _latest_run_for_engine(theme_id, engine):

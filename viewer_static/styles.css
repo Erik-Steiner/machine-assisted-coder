@@ -1098,6 +1098,7 @@ button.btn-secondary {
 }
 #reviewSidebar h3 { margin: 0 0 8px 0; font-size: 14px; }
 #reviewSidebar .hint { margin-bottom: 10px; }
+#reviewEngineLabel { display: block; margin: 10px 0; }
 
 #reviewMain {
   flex: 1;

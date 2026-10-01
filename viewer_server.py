@@ -127,11 +127,17 @@ Endpoints:
     GET  /api/coding/segment_status?job_id=..        -> poll a segment_datasets job's progress/result
     GET  /api/coding/progress?dataset=<id>&scheme_id=<id>  -> coding counts by theme/group, optionally
                                                          scoped to one scheme's themes
-    GET  /api/coding/model_runs                      -> latest classifier metrics per theme
+    GET  /api/coding/model_runs?engine=<tfidf|embed>  -> latest classifier metrics per theme, each
+                                                         row tagged with its "engine"; engine (optional)
+                                                         restricts "latest" to that engine's runs --
+                                                         pass it wherever scores get shown, so an
+                                                         embedding run never silently replaces TF-IDF
     GET  /api/coding/model_runs?theme_id=<id>        -> full model_runs history for one theme
-    GET  /api/coding/review_candidates?theme_ids=<a,b>&predicted_limit=<30>
+    GET  /api/coding/review_candidates?theme_ids=<a,b>&predicted_limit=<30>&engine=<tfidf>
         -> recode queue: segments coded under theme(s) a/b, plus each theme's
-           top-scored not-yet-coded predictions (see coding_store.get_review_candidates)
+           top-scored not-yet-coded predictions from its latest run of `engine`
+           (default "tfidf"; never mixed across engines) -- see
+           coding_store.review.get_review_candidates
 
     POST /api/model/train                            -> kick off a background training pass
                                                          (all eligible themes, one shared model_version)
@@ -1293,7 +1299,10 @@ def get_review_candidates(req):
         predicted_limit = int(req.query.get("predicted_limit", "30"))
     except ValueError:
         predicted_limit = 30
-    return JsonResponse(review.get_review_candidates(theme_ids, predicted_limit=predicted_limit))
+    engine = req.query.get("engine") or "tfidf"
+    if engine not in model_runs.ENGINE_PREFIXES:
+        return JsonResponse({"error": f"unknown engine '{engine}'"}, status=400)
+    return JsonResponse(review.get_review_candidates(theme_ids, predicted_limit=predicted_limit, engine=engine))
 
 
 @ROUTER.get("/api/coding/model_runs")
@@ -1301,7 +1310,10 @@ def get_coding_model_runs(req):
     theme_id = req.query.get("theme_id")
     if theme_id:
         return JsonResponse({"theme_id": theme_id, "history": model_runs.list_model_runs(theme_id)})
-    return JsonResponse(model_runs.get_latest_model_runs())
+    engine = req.query.get("engine") or None
+    if engine is not None and engine not in model_runs.ENGINE_PREFIXES:
+        return JsonResponse({"error": f"unknown engine '{engine}'"}, status=400)
+    return JsonResponse(model_runs.get_latest_model_runs(engine=engine))
 
 
 # --- Model ---------------------------------------------------------------------------
