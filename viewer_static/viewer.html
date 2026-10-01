@@ -364,6 +364,9 @@
       <button id="trainEmbeddingsBtn" class="btn-secondary hidden">Bootstrap embedding topic model</button>
       <div id="embeddingTrainStatus" class="hint"></div>
     </div>
+    <div id="modelStorageBar">
+      <button id="modelStorageBtn" class="btn-secondary">Storage…</button>
+    </div>
     <div id="modelSchemeLabel" class="hint"></div>
     <div id="modelBanner" class="hint"></div>
     <div id="modelThemeItems"></div>
@@ -371,6 +374,47 @@
 
   <main id="modelDetail">
     <div id="modelDetailEmpty" class="hint">Select a theme to see its metrics.</div>
+    <div id="modelStoragePanel" class="hidden">
+      <h2>Storage</h2>
+      <p class="hint">Every training run stores a score for every segment, for every theme it
+        trained, and those scores take up most of the database. Here you can delete the scores of
+        old runs. A run's metrics, top terms, and settings are always kept, and so are your codes.
+        Each theme's most recent runs and any pinned run are never deleted. Pin a run you cite or
+        exported from: deleted scores can't be recreated exactly once your codes have changed.</p>
+      <div id="storageSummary"></div>
+      <div id="storageControls">
+        <label>Keep the latest
+          <input id="storageKeepLatest" type="number" min="1" value="2" style="width:4em">
+          runs per theme and engine</label>
+        <button id="storageRefreshBtn" class="btn-secondary">Refresh</button>
+      </div>
+      <table id="storageRunsTable">
+        <thead>
+          <tr>
+            <th></th><th>Trained</th><th>Run</th><th>Engine</th><th>Themes</th>
+            <th>Rows</th><th>Size (≈)</th><th>Can free (≈)</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <div id="storagePruneBar">
+        <button id="storagePruneBtn">Delete scores for selected runs</button>
+        <span id="storageSelectionText" class="hint"></span>
+      </div>
+      <div id="storagePruneStatus" class="hint"></div>
+
+      <h3>Compact database</h3>
+      <p class="hint">Deleting scores frees space inside the database file, but the file itself
+        only shrinks after compacting. Compacting can take several minutes on a large database,
+        needs free disk space of up to twice the database's size while it runs, and blocks coding
+        and training until it finishes. If the project folder is synced (Dropbox, OneDrive…),
+        the whole database will re-sync afterwards.</p>
+      <button id="storageCompactBtn" class="btn-secondary">Compact database</button>
+      <div id="storageCompactStatus" class="hint"></div>
+
+      <h3>Embedding cache</h3>
+      <div id="storageEmbeddings" class="hint"></div>
+    </div>
     <div id="modelDetailContent" class="hidden">
       <h2 id="modelThemeName"></h2>
       <div id="modelEngineToggle" class="hidden">
@@ -475,6 +519,7 @@
 <script src="/coding.js"></script>
 <script src="/analytics.js"></script>
 <script src="/model.js"></script>
+<script src="/storage.js"></script>
 <script src="/review.js"></script>
 <script src="/appendix.js"></script>
 </body>

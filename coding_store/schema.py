@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS model_runs (
     PRIMARY KEY (model_version, theme_id)
 );
 
+-- Training passes the researcher has pinned (e.g. a run cited in a paper or used for
+-- an export): coding_store.storage never prunes a pinned run's per-segment scores.
+-- One row per pinned model_version; unpinning deletes the row (the pin itself is
+-- logged to activity_log either way). See coding_store/storage.py.
+CREATE TABLE IF NOT EXISTS model_run_pins (
+    model_version TEXT PRIMARY KEY,
+    pinned_at TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    note TEXT
+);
+
 CREATE TABLE IF NOT EXISTS model_top_terms (
     model_version TEXT NOT NULL,
     theme_id TEXT NOT NULL,

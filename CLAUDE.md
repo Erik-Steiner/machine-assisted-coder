@@ -26,8 +26,8 @@ it. Seven tabs, one server (`viewer_server.py`):
   filter snapshots) for citing as manuscript supplementary material.
 
 No frontend framework, no build step, no bundler. `viewer_static/*.js` files are loaded as
-plain `<script>` tags in a fixed order (`app.js` → `coding.js` → `analytics.js` → `model.js` →
-`review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
+plain `<script>` tags in a fixed order (`app.js` → `projects.js` → `import.js` → `coding.js` →
+`analytics.js` → `model.js` → `storage.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
 rather than duplicating navigation logic. This is deliberate — see "Hard rules" below.
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
@@ -51,6 +51,7 @@ schema, not something to rename.
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
+| Disk footprint: pruning old runs' scores, pins, compaction | `coding_store/storage.py` (`plan_prune` is the deletion rule), `viewer_static/storage.js`, `tests/test_storage.py` |
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
 | Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
@@ -83,16 +84,25 @@ schema, not something to rename.
    gitignored (see `.gitignore`) because they're large/regenerable-except-for-actual-codes, but
    the researcher's real codebook and codes exist *only* in `coding.db`. Never delete, truncate,
    or bulk-modify it outside the documented API (the `coding_store` package's functions) without the user's
-   explicit sign-off.
+   explicit sign-off. The one sanctioned bulk delete is the Model tab's Storage panel
+   (`coding_store/storage.py`: pruning old runs' per-segment scores, then compacting). Only the
+   researcher triggers it, from the UI. An agent must never run it against a real project.
 7. **Match field names exactly between server and frontend.** A mismatch between the index
    payload's keys and a frontend filter's field name fails silently (empty filter list), not
    loudly. Grep both sides after renaming a field — see [IMPORTING_DATA.md](docs/IMPORTING_DATA.md)
    for the canonical schema every dataset and every layer of the app is expected to share.
-8. **No automated test suite exists**, with one deliberate, narrow exception: `tests/` holds
-   `unittest`-based regression tests for `import_interview_transcript.py`'s pure line-parsing
-   functions (`parse_turns`/`parse_labeled_turns`/`parse_transcript_turns`/`bridge_backchannels`)
-   specifically, since they're cheap to test (no DB/server/file I/O) and the labeled-turn format
-   is a tunable heuristic worth a regression net. Run with `python -m unittest discover -s tests`.
+8. **No automated test suite exists**, with a few deliberate, narrow exceptions, each in
+   `tests/` as `unittest` regression tests:
+   - `import_interview_transcript.py`'s pure line-parsing functions (`parse_turns`/
+     `parse_labeled_turns`/`parse_transcript_turns`/`bridge_backchannels`), because they're cheap
+     to test and the labeled-turn format is a tunable heuristic worth a regression net.
+   - `coding_store/storage.py`'s pruning rule (`plan_prune`/`prune_predictions`), because a
+     mistake there silently deletes scores that can't be regenerated.
+   - Label-building logic (roadmap A2/A6: hierarchy roll-up, negative modes), once it exists,
+     because a mistake there silently trains wrong models.
+   Any test that needs a database creates a throwaway `coding.db` in a temp directory and
+   restores `schema.DB_PATH` afterwards, never a real project (rule 11). Run with
+   `python -m unittest discover -s tests`.
    This isn't a green light to add tests elsewhere by default — for everything else, after a
    change, start the server (`python viewer_server.py`) and exercise the actual feature in a
    browser; check the browser console for JS errors before calling a frontend change done. Don't

@@ -72,17 +72,22 @@ engine" depends on A4's engine-aware notion of "latest".
 - [x] **A4 Engine-aware latest run.** *(Done 2026-10-01.)* `get_latest_model_runs(engine=)`; engine selector in
   Review; cards show which engine/run produced them. Today an embedding run silently switches
   Review to mixed-engine scores.
-- [ ] **A7 Opt-in pruning of old runs' scores, and database compaction.** Every training
-  pass writes one `predictions` row per in-scope segment for each trained theme, and old runs
-  are never removed. The real project measured on 2026-10-01: 4.04M rows from 9 runs, most of
-  a 1.15 GB `coding.db`, about 285 bytes per row including indexes. That's roughly 110 MB per
-  trained theme per run at 389k segments, so a full 8-theme retrain would add close to 1 GB.
+- [x] **A7 Opt-in pruning of old runs' scores, and database compaction.** *(Done 2026-10-01.)*
+  Every training pass writes one `predictions` row per in-scope segment for each trained theme,
+  and old runs are never removed. The real project measured on 2026-10-01 (10 runs): 4.40M
+  rows, most of a 1.24 GB `coding.db`, about 280 bytes per row including indexes. Training
+  scores only in-scope segments (about 72k per theme, not all 389k), so that's roughly 18 MB
+  per trained theme per run, about 90 MB for a 5-theme retrain. Measured on a copy: pruning
+  to the latest 2 runs per theme took 160 s; compacting then took 7 s and shrank the file
+  from 1,242 MB to 431 MB. One deviation from the plan: pins live in their own
+  `model_run_pins` table (when, who, why) instead of a `model_run_params.pinned` column,
+  because not every run has a params row and a pin's reason is worth recording.
   - **Scope:** deletes only per-segment `predictions` rows for runs the researcher selects.
     It **never** touches `codes`, `negatives`, `themes`, or a run's summary record
     (`model_runs` metrics, `model_top_terms`, `model_run_params`). Learning curves (C1) and
     the Web Appendix keep working for pruned runs.
   - **Always kept:** the latest run per theme per engine (as defined in A4), and any
-    **pinned** run (`model_run_params.pinned`, v4). Pin a run you cite in a paper or used for an
+    **pinned** run (`model_run_pins` table). Pin a run you cite in a paper or used for an
     export. Pruned scores can't be regenerated exactly, because the codes they were trained on
     have since changed.
   - **UI:** a Storage panel in the Model tab. It shows database size, rows and estimated MB per
@@ -200,10 +205,10 @@ engine" depends on A4's engine-aware notion of "latest".
 | M5 | D1–D3 |
 | M6 | E3, E4, then E0, E1, E2, E5 |
 
-## Schema v4 (one migration, additive only)
+## Schema changes (additive only)
 
 - `predictions.oof_score REAL` (A3) — shipped
-- `model_run_params.pinned INTEGER NOT NULL DEFAULT 0` (A7)
+- `model_run_pins` table (A7) — shipped (additive table, no version bump needed)
 - `negatives.deleted_at TEXT` (A5)
 - `item_review_status`, per-segment review confirmations (A6)
 - `review_decisions` (B2)
@@ -211,5 +216,6 @@ engine" depends on A4's engine-aware notion of "latest".
 - `segments_fts` FTS5 virtual table (B5)
 - `validation_samples`, `validation_sample_items` (C3)
 
-Items from later milestones may be added to v4 only if v4 hasn't shipped to a real
-`coding.db` yet; otherwise they get v5.
+**v4 shipped to the real `coding.db` on 2026-10-01** (it migrated the next time the app ran),
+so every column change still listed above needs a **v5** bump in `schema._migrate()`. New
+tables (`CREATE TABLE IF NOT EXISTS`) need no bump.

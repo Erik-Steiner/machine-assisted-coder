@@ -169,6 +169,26 @@ Endpoints:
            the full-corpus topic-model artifact for a separate, unrelated pipeline (comparison,
            or seeding a different method); see topic_model_export.py
 
+    GET  /api/storage/report?keep_latest=<2>          -> coding.db file sizes, reusable free space, and every
+                                                         training pass with per-theme row counts, estimated
+                                                         size, and prune status (latest/recent/pinned/
+                                                         prunable/pruned) -- see coding_store/storage.py.
+                                                         Read-only
+    POST /api/storage/pin                             -> {model_version, pinned: bool, note?} -> pin/unpin a
+                                                         training pass (pinned runs are never pruned)
+    POST /api/storage/prune                           -> {pairs: [{model_version, theme_id}], keep_latest}
+                                                         -> background job deleting those runs' per-segment
+                                                         scores only (never codes or run summaries). Every
+                                                         pair is re-checked against the prune rule first; one
+                                                         protected pair refuses the whole request (400)
+    GET  /api/storage/prune_status?job_id=..          -> poll a prune job
+    GET  /api/storage/compact_check                   -> {ok, required_bytes, available_bytes, ...} -- whether
+                                                         there's enough free disk space to compact
+    POST /api/storage/compact                         -> background VACUUM + WAL truncate, returning freed space
+                                                         to the disk (400 if disk space is short, or training/
+                                                         pruning is running)
+    GET  /api/storage/compact_status?job_id=..        -> poll a compact job
+
     GET  /api/export/codebook?scheme_id=<id>          -> writes schemes/themes/codes/model_runs to
                                                          exports/ as JSON+CSV (backup / publication
                                                          supplement); scheme_id optionally limits the
@@ -308,6 +328,7 @@ from coding_store import (
     schema,
     schemes,
     segments as segments_store,
+    storage,
     themes,
 )
 import paths as project_paths
@@ -670,6 +691,44 @@ def run_train_embeddings_job(job_id, registry):
     })
 
 
+# --- Storage maintenance jobs (Model tab's Storage panel) ---------------------------
+#
+# Pruning and compaction both write across the whole predictions table, and VACUUM
+# locks the entire database while it runs. maintenance_conflict() is the one place
+# that decides what may overlap: neither may start while training is running (or
+# while the other is), training may not start while either is running, and
+# switch_project() refuses while either is running, since get_conn() would
+# otherwise start pointing at a different coding.db halfway through.
+
+PRUNE_JOBS = JobRegistry()
+COMPACT_JOBS = JobRegistry()
+
+
+def maintenance_conflict(starting):
+    """An error string if `starting` ("prune" | "compact" | "train") would overlap
+    a job it mustn't, else None."""
+    if starting in ("prune", "compact") and (TRAIN_JOBS.has_running() or EMBED_TRAIN_JOBS.has_running()):
+        return "A training job is running -- wait for it to finish first."
+    if PRUNE_JOBS.has_running():
+        return "Old scores are being pruned -- wait for that to finish first."
+    if COMPACT_JOBS.has_running():
+        return "The database is being compacted -- wait for that to finish first."
+    return None
+
+
+def run_prune_job(job_id, registry, pairs, keep_latest):
+    def on_progress(event):
+        registry.update(job_id, pairs_done=event["index"], pairs_total=event["total"])
+    result = storage.prune_predictions(pairs, keep_latest=keep_latest, actor=CODER_NAME,
+                                       progress_callback=on_progress)
+    registry.update(job_id, status="done", pairs_done=result["pairs"], **result)
+
+
+def run_compact_job(job_id, registry):
+    result = storage.compact_database(actor=CODER_NAME)
+    registry.update(job_id, status="done", **result)
+
+
 # --- Installing the optional embedding-engine dependency (Model tab) ----------------
 #
 # A researcher can click a button rather than open a terminal -- runs the exact same
@@ -943,6 +1002,8 @@ def switch_project(new_dir):
         return "A download job is still running -- wait for it to finish before switching projects."
     if TRAIN_JOBS.has_running():
         return "A training job is still running -- wait for it to finish before switching projects."
+    if PRUNE_JOBS.has_running() or COMPACT_JOBS.has_running():
+        return "Storage maintenance is still running -- wait for it to finish before switching projects."
 
     with PROJECT_SWITCH_LOCK:
         try:
@@ -999,6 +1060,7 @@ STATIC_FILES = {
     "/coding.js": "coding.js",
     "/analytics.js": "analytics.js",
     "/model.js": "model.js",
+    "/storage.js": "storage.js",
     "/review.js": "review.js",
     "/appendix.js": "appendix.js",
     "/projects.js": "projects.js",
@@ -1320,6 +1382,9 @@ def get_coding_model_runs(req):
 
 @ROUTER.post("/api/model/train")
 def post_model_train(req):
+    conflict = maintenance_conflict("train")
+    if conflict:
+        return JsonResponse({"error": conflict}, status=400)
     job_id = TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
          "trained": [], "skipped": [], "model_version": None},
@@ -1370,6 +1435,9 @@ def post_model_train_embeddings(req):
             "error": f"No theme has reached the {readiness['trust_positives']}-positive "
                      "trust floor yet -- keep coding, then try again.",
         }, status=400)
+    conflict = maintenance_conflict("train")
+    if conflict:
+        return JsonResponse({"error": conflict}, status=400)
     job_id = EMBED_TRAIN_JOBS.start(
         {"themes_total": 0, "themes_done": 0, "current_theme": None,
          "trained": [], "skipped": [], "model_version": None},
@@ -1432,6 +1500,98 @@ def get_model_export_full_corpus(req):
         EXPORTS_DIR, scheme_id=scheme_id, model_version=model_version, engine=engine, actor=CODER_NAME,
     )
     return JsonResponse({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
+
+
+# --- Storage (Model tab's Storage panel) -------------------------------------------
+
+def _keep_latest_param(value):
+    try:
+        keep_latest = int(value if value is not None else storage.DEFAULT_KEEP_LATEST)
+    except (TypeError, ValueError):
+        raise ApiError("keep_latest must be an integer", status=400)
+    if keep_latest < 1:
+        raise ApiError("keep_latest must be at least 1", status=400)
+    return keep_latest
+
+
+@ROUTER.get("/api/storage/report")
+def get_storage_report(req):
+    return JsonResponse(storage.storage_report(keep_latest=_keep_latest_param(req.query.get("keep_latest"))))
+
+
+@ROUTER.post("/api/storage/pin", json_body=True, required=["model_version"])
+def post_storage_pin(req):
+    body = req.body
+    try:
+        storage.set_pin(body["model_version"], bool(body.get("pinned", True)),
+                        actor=body.get("coder") or CODER_NAME, note=body.get("note"))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True})
+
+
+@ROUTER.post("/api/storage/prune", json_body=True, required=["pairs"])
+def post_storage_prune(req):
+    body = req.body
+    conflict = maintenance_conflict("prune")
+    if conflict:
+        return JsonResponse({"error": conflict}, status=400)
+    keep_latest = _keep_latest_param(body.get("keep_latest"))
+    try:
+        pairs = [(p["model_version"], p["theme_id"]) for p in body["pairs"]]
+    except (TypeError, KeyError):
+        return JsonResponse({"error": "pairs must be a list of {model_version, theme_id}"}, status=400)
+    if not pairs:
+        return JsonResponse({"error": "nothing selected to prune"}, status=400)
+    # Checked up front so a protected pair is a plain 400 rather than a failed job;
+    # storage.prune_predictions() checks again at delete time.
+    prunable, _kept = storage.plan_prune(
+        model_runs.list_model_runs(), set(storage.list_pins()), keep_latest=keep_latest,
+    )
+    refused = [p for p in pairs if p not in prunable]
+    if refused:
+        return JsonResponse({
+            "error": f"{len(refused)} selected run(s) are protected (latest, recent, or pinned) -- "
+                     "refresh the Storage panel and try again.",
+        }, status=400)
+    job_id = PRUNE_JOBS.start({"pairs_done": 0, "pairs_total": len(pairs)}, run_prune_job, pairs, keep_latest)
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/storage/prune_status")
+def get_storage_prune_status(req):
+    job = PRUNE_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
+
+
+@ROUTER.get("/api/storage/compact_check")
+def get_storage_compact_check(req):
+    return JsonResponse(storage.compaction_check())
+
+
+@ROUTER.post("/api/storage/compact")
+def post_storage_compact(req):
+    conflict = maintenance_conflict("compact")
+    if conflict:
+        return JsonResponse({"error": conflict}, status=400)
+    check = storage.compaction_check()
+    if not check["ok"]:
+        return JsonResponse({
+            "error": f"Not enough free disk space to compact safely: needs about "
+                     f"{check['required_bytes'] / 1e9:.2f} GB free, {check['available_bytes'] / 1e9:.2f} GB available.",
+        }, status=400)
+    job_id = COMPACT_JOBS.start({}, run_compact_job)
+    return JsonResponse({"job_id": job_id})
+
+
+@ROUTER.get("/api/storage/compact_status")
+def get_storage_compact_status(req):
+    job = COMPACT_JOBS.get(req.query.get("job_id", ""))
+    if job is None:
+        return JsonResponse({"error": "unknown job_id"}, status=404)
+    return JsonResponse(job)
 
 
 # --- Web Appendix ----------------------------------------------------------------

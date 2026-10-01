@@ -990,6 +990,32 @@ button.btn-secondary {
   padding: 16px 24px;
 }
 #modelDetailContent.hidden { display: none; }
+#modelDetailEmpty.hidden { display: none; }
+
+/* Storage panel (storage.js) -- shares #modelDetail with the theme detail view */
+#modelStoragePanel.hidden { display: none; }
+#modelStoragePanel h2 { margin: 0 0 10px 0; font-size: 20px; }
+#modelStoragePanel h3 { font-size: 14px; margin: 22px 0 8px 0; }
+#modelStoragePanel > .hint { line-height: 1.5; margin-bottom: 10px; max-width: 760px; }
+#storageSummary {
+  padding: 10px 14px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+#storageControls { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; font-size: 13px; }
+#storageRunsTable { width: 100%; border-collapse: collapse; font-size: 12px; }
+#storageRunsTable th, #storageRunsTable td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#storageRunsTable th { color: var(--text-dim); font-weight: 600; }
+#storageRunsTable tr.storage-pinned td { background: var(--accent-dim); }
+#storagePruneBar { display: flex; align-items: center; gap: 12px; margin: 12px 0 4px 0; }
 #trainEmbeddingsBtn.hidden, #modelEngineToggle.hidden, #installEmbeddingsBtn.hidden { display: none; }
 #modelEngineToggle { margin-bottom: 8px; }
 .model-engine-btn.active { background: var(--accent); color: #fff; }

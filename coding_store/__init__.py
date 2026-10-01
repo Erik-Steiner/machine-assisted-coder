@@ -15,6 +15,8 @@ duplicates/dataset_status/activity_log together:
                        hyperparameters, and the codebook export.
   duplicates.py     -- near-duplicate detection (scripts/find_duplicates.py).
   dataset_status.py -- whole-dataset include/exclude/unload state.
+  storage.py        -- disk footprint: opt-in pruning of old runs' prediction
+                       scores, run pins, and database compaction.
 
 This is the only persistent database in the app -- Browse/Search & Export
 stay flat-JSON and in-memory, per docs/DEVELOPMENT.md. See docs/DEVELOPMENT.md for the

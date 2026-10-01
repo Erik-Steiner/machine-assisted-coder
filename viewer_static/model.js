@@ -114,6 +114,7 @@ async function selectModelTheme(themeId, engine) {
   renderModelThemeList(); // update the "selected" highlight
 
   document.getElementById("modelDetailEmpty").classList.add("hidden");
+  document.getElementById("modelStoragePanel").classList.add("hidden"); // storage.js's panel shares this area
   document.getElementById("modelDetailContent").classList.remove("hidden");
   document.getElementById("modelThemeName").textContent =
     (modelState.themes.find((t) => t.theme_id === themeId) || {}).name || themeId;

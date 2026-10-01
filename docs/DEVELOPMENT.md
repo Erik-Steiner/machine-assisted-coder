@@ -541,6 +541,37 @@ dependencies" button on the Model tab. Idempotent (pip no-ops if it's already
 installed), so the endpoint doesn't need to check `embedding_readiness()` first, only
 guard against two installs racing (`has_running()`).
 
+### Storage: pruning old runs' scores and compacting
+
+`predictions` grows by one row per in-scope segment for every theme in every training run,
+and nothing removes old runs automatically. Measured on a real project: about 280 bytes per
+row with indexes, or roughly 18 MB per trained theme per run. The Model tab's **Storage…**
+button (`viewer_static/storage.js`) opens a panel backed by `coding_store/storage.py`:
+
+- **The rule** is `storage.plan_prune(runs, pinned_versions, keep_latest)`, a pure function
+  covered by `tests/test_storage.py`. Runs are grouped by (theme, engine). Each group's newest
+  run is always kept ("latest"), the next `keep_latest - 1` are kept ("recent"), and any run in
+  `model_run_pins` is kept ("pinned"). Everything else is "prunable". `keep_latest` must be
+  at least 1.
+- **Pruning** (`POST /api/storage/prune`, a `PRUNE_JOBS` background job) deletes only
+  `predictions` rows for the (model_version, theme_id) pairs the researcher confirmed. It
+  re-checks every pair against a fresh `plan_prune()` both in the endpoint and inside
+  `prune_predictions()`, and one protected pair refuses the whole request. It never touches
+  `codes`, `negatives`, `themes`, `model_runs`, `model_top_terms`, or `model_run_params`, so a
+  pruned run keeps its metrics and history row. Logged as `predictions_prune`. Measured on a
+  copy of a real 1.24 GB database: 3.4M rows took about 160 s.
+- **Compacting** (`POST /api/storage/compact`, `COMPACT_JOBS`) runs `VACUUM` and then
+  `wal_checkpoint(TRUNCATE)`, because SQLite only reuses freed pages and never shrinks the file
+  on its own. It refuses unless free disk space is at least twice the live database size (WAL
+  mode writes the compacted copy through the WAL). Logged as `database_compact`. On that same
+  copy, after pruning, it took 7 s and shrank the file from 1,242 MB to 431 MB.
+- **Concurrency:** `viewer_server.maintenance_conflict()` is the single overlap rule. Prune and
+  compact never run together or alongside training, training won't start during either, and
+  `switch_project()` refuses while either runs.
+- **Sizes are estimates:** Python's bundled SQLite has no `dbstat`, so per-run sizes come from
+  average field widths (`_estimate_bytes_per_row()`). The space actually freed is measured
+  from `freelist_count` after the delete.
+
 ## Analytics subsystem
 
 A separate tab, Analytics, gives the researcher a corpus-level picture of scale and
