@@ -3,7 +3,9 @@
 Project-level guidance for Claude Code agents working in this repo. Read this first; it's the
 fast-orientation layer. [DEVELOPMENT.md](docs/DEVELOPMENT.md) has the full technical detail and is
 the place to go before changing anything non-trivial. [README.md](README.md) is the human
-setup/usage guide.
+setup/usage guide. [ROADMAP.md](docs/ROADMAP.md) is the agreed plan (and its standing
+decisions) for the classify → iterate → embed → explore workflow — check it before starting
+work on the Model/Review/Explore side.
 
 ## What this is
 
