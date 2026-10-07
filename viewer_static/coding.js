@@ -14,6 +14,7 @@ const codingState = {
               // renderThemeList()/buildChipsHtml() can build a tree client-side:
               // [{theme_id, name, description, color, code_count, scheme_id, parent_theme_id, depth}]
   pendingParentThemeId: null, // set by "+ Add sub-code"; read/cleared by addTheme()
+  codebookCompleteness: {}, // {theme_id: completeness} from /api/codebook/overview -- the rows' badges
   modelRuns: {}, // {theme_id: latest TF-IDF run: {f1, pr_auc, precision, recall, n_pos, model_version, trained_at, engine}}
   datasets: [], // [{id, label, count, source, created_at, status: "active"|"excluded"|"unloaded"}]
   itemId: null,
@@ -178,12 +179,16 @@ async function loadThemes() {
     renderSegments();
     return;
   }
-  const [themesRes, runsRes] = await Promise.all([
+  const [themesRes, runsRes, codebookRes] = await Promise.all([
     fetch(`/api/codebook/themes?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`),
     fetch("/api/coding/model_runs?engine=tfidf"),
+    fetch(`/api/codebook/overview?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`),
   ]);
   codingState.themes = await themesRes.json();
   codingState.modelRuns = await runsRes.json();
+  const overview = await codebookRes.json();
+  codingState.codebookCompleteness = Array.isArray(overview)
+    ? Object.fromEntries(overview.map((t) => [t.theme_id, t.completeness])) : {};
   renderThemeList();
   renderSegments(); // chip options changed
 }
@@ -205,6 +210,15 @@ function renderThemeList() {
   appendBranch(null);
 }
 
+// Tooltip text listing a theme's failed codebook-completeness checks (the
+// /api/codebook/overview "completeness" object). Shared with codebook.js.
+function missingText(completeness) {
+  return Object.keys(completeness)
+    .filter((k) => completeness[k] && completeness[k].label && !completeness[k].ok)
+    .map((k) => `${completeness[k].label}: ${completeness[k].detail}`)
+    .join("\n");
+}
+
 function renderThemeRow(t) {
   const row = document.createElement("div");
   row.className = "theme-row";
@@ -218,12 +232,19 @@ function renderThemeRow(t) {
     ? `<span class="model-badge" title="latest TF-IDF run (${escapeHtml(run.model_version)}), trained on ${run.n_pos} positives">` +
       `F1 ${run.f1.toFixed(2)} · PR-AUC ${run.pr_auc.toFixed(2)}</span>`
     : "";
+  // Codebook completeness (codebook.js / Train -> Codebook): advisory, click to complete it.
+  const cb = codingState.codebookCompleteness[t.theme_id];
+  const codebookBadge = cb
+    ? `<button type="button" class="theme-codebook-badge" data-id="${escapeHtml(t.theme_id)}" ` +
+      `title="${escapeHtml(missingText(cb) || "Complete")}">Codebook ${cb.score}/${cb.total}</button>`
+    : "";
   row.innerHTML =
     `<div class="theme-row-main">` +
     `<span class="theme-dot" style="background:${escapeHtml(t.color || "#6b7fd7")}"></span>` +
     `<span class="theme-row-name">${escapeHtml(t.name)}</span>` +
     `<span class="theme-row-count">${t.code_count}</span>` +
     badgeHtml +
+    codebookBadge +
     `<span class="theme-row-actions">` +
     `<button class="btn-secondary theme-add-sub-btn" data-id="${escapeHtml(t.theme_id)}">+ Add sub-code</button>` +
     `<button class="btn-secondary theme-edit-btn" data-id="${escapeHtml(t.theme_id)}">Edit</button>` +
@@ -1054,7 +1075,9 @@ function bindCodingEvents() {
   });
 
   document.getElementById("themeList").addEventListener("click", (e) => {
-    if (e.target.classList.contains("theme-add-sub-btn")) {
+    if (e.target.classList.contains("theme-codebook-badge")) {
+      openCodebookTheme(e.target.dataset.id); // codebook.js
+    } else if (e.target.classList.contains("theme-add-sub-btn")) {
       startAddSubTheme(e.target.dataset.id);
     } else if (e.target.classList.contains("theme-edit-btn")) {
       startEditUI(e.target.dataset.id);

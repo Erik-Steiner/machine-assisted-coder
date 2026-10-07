@@ -49,7 +49,8 @@ def list_themes(include_archived=False, scheme_id=None):
 
 
 def create_theme(name, description="", example_words="", color="#6b7fd7",
-                  scheme_id=None, parent_theme_id=None, actor=schema.DEFAULT_CODER):
+                  scheme_id=None, parent_theme_id=None, actor=schema.DEFAULT_CODER,
+                  inclusion_criteria=None, exclusion_criteria=None, boundary_notes=None):
     name = name.strip()
     if not name:
         raise ValueError("theme name is required")
@@ -78,10 +79,12 @@ def create_theme(name, description="", example_words="", color="#6b7fd7",
         conn.execute(
             """INSERT INTO themes (theme_id, name, description, example_words, color,
                                     status, scheme_id, parent_theme_id, depth, sort_order,
-                                    created_at, updated_at)
-               VALUES (?,?,?,?,?, 'active', ?,?,?,0, ?, ?)""",
+                                    created_at, updated_at,
+                                    inclusion_criteria, exclusion_criteria, boundary_notes)
+               VALUES (?,?,?,?,?, 'active', ?,?,?,0, ?, ?, ?,?,?)""",
             (theme_id, name, description, example_words, color,
-             scheme_id, parent_theme_id, depth, now, now),
+             scheme_id, parent_theme_id, depth, now, now,
+             inclusion_criteria, exclusion_criteria, boundary_notes),
         )
     activity_log.log_activity(actor, "theme_create", {
         "theme_id": theme_id, "name": name, "description": description,
@@ -119,7 +122,8 @@ def _descendant_ids(conn, theme_id, scheme_id):
 
 
 def update_theme(theme_id, fields, actor=schema.DEFAULT_CODER):
-    allowed = {"name", "description", "example_words", "color", "parent_theme_id", "sort_order"}
+    allowed = {"name", "description", "example_words", "color", "parent_theme_id", "sort_order",
+               "inclusion_criteria", "exclusion_criteria", "boundary_notes"}  # last three: CODEBOOK_PLAN K2
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_theme(theme_id)

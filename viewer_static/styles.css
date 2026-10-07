@@ -972,9 +972,89 @@ button.btn-secondary {
 #modelView {
   flex: 1;
   display: flex;
+  flex-direction: column; /* sub-page switcher above the active sub-page */
   min-height: 0;
 }
 #modelView.hidden { display: none; }
+
+/* Train tab sub-pages: Models (model.js) and Codebook (codebook.js) */
+#modelSubnav {
+  display: flex;
+  gap: 4px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.model-subnav-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+.model-subnav-btn.active { background: var(--accent-dim); color: var(--text); }
+.model-subpage { flex: 1; display: flex; min-height: 0; }
+.model-subpage.hidden { display: none; }
+
+#codebookSidebar {
+  width: 320px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+  padding: 12px;
+  overflow-y: auto;
+}
+#codebookThemeItems { display: flex; flex-direction: column; margin-top: 8px; }
+.codebook-theme-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  font-size: 13px;
+}
+.codebook-theme-item:hover { background: var(--panel-alt); }
+.codebook-theme-item.selected { background: var(--accent-dim); }
+.codebook-theme-item-name { flex: 1; font-weight: 600; }
+.codebook-score {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.codebook-score.complete { border-color: var(--accent); color: var(--text); }
+#codebookDetail { flex: 1; overflow-y: auto; padding: 16px 24px; }
+#codebookDetailEmpty.hidden, #codebookDetailContent.hidden { display: none; }
+#codebookDetailContent { max-width: 760px; }
+#codebookDetailContent h2 { margin: 0 0 10px 0; font-size: 20px; }
+#codebookChecklist { list-style: none; padding: 0; margin: 0 0 16px 0; font-size: 13px; }
+#codebookChecklist li { padding: 3px 0; }
+#codebookChecklist .check-ok { color: var(--accent); }
+#codebookChecklist .check-missing { color: var(--text-dim); }
+.codebook-field { display: block; font-size: 13px; font-weight: 600; margin-bottom: 12px; }
+.codebook-field textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font: inherit;
+  font-weight: normal;
+  resize: vertical;
+}
+.codebook-actions { display: flex; align-items: center; gap: 10px; }
+#modelCodebookNote:empty { display: none; }
+#modelCodebookNote a { cursor: pointer; text-decoration: underline; }
+.theme-codebook-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  background: transparent;
+}
 
 #modelSidebar {
   width: 320px;

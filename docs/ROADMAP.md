@@ -137,7 +137,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
 - [x] **B3 Explanations:** *(Done 2026-10-07: highlighting in Review cards and Train exemplars; score bars on Review cards.)* highlight the theme's top terms in the card; per-theme score bars.
-- [ ] **B4 Memos and codebook rigor:** editable `codes.note`; `themes.inclusion_criteria` /
+- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 onward next.)* editable `codes.note`; `themes.inclusion_criteria` /
   `exclusion_criteria`; `codes.is_exemplar`. **Expanded 2026-10-07 into
   [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K1–K5:** adds boundary notes, near misses
   (`negatives.is_near_miss`), a `boundary` queue mode, a completeness check that prompts the

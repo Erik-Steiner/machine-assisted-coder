@@ -369,7 +369,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def _now():
@@ -499,6 +499,31 @@ def _migrate(conn):
     review_cols = {row["name"] for row in conn.execute("PRAGMA table_info(item_reviews)")}
     if "recorded_at" not in review_cols:
         conn.execute("ALTER TABLE item_reviews ADD COLUMN recorded_at TEXT")
+
+    # schema_version 7: codebook rigor (docs/CODEBOOK_PLAN.md K1) -- what an external or
+    # embedding model needs beyond a one-line description. Criteria and boundary notes on
+    # themes; exemplar / near-miss flags (with their own notes, separate from the
+    # provenance text codes.note already carries) on the code / rejection row itself, so
+    # a flag can only exist on an active row and goes away with it if that row is
+    # soft-deleted; and a separate "read in full" confirmation on item_reviews that never
+    # touches marked_at (which decides which themes a mark covers, see labels.py).
+    theme_cols = {row["name"] for row in conn.execute("PRAGMA table_info(themes)")}
+    for col in ("inclusion_criteria", "exclusion_criteria", "boundary_notes"):
+        if col not in theme_cols:
+            conn.execute(f"ALTER TABLE themes ADD COLUMN {col} TEXT")
+    code_cols = {row["name"] for row in conn.execute("PRAGMA table_info(codes)")}
+    if "is_exemplar" not in code_cols:
+        conn.execute("ALTER TABLE codes ADD COLUMN is_exemplar INTEGER NOT NULL DEFAULT 0")
+    if "exemplar_note" not in code_cols:
+        conn.execute("ALTER TABLE codes ADD COLUMN exemplar_note TEXT")
+    neg_cols = {row["name"] for row in conn.execute("PRAGMA table_info(negatives)")}
+    if "is_near_miss" not in neg_cols:
+        conn.execute("ALTER TABLE negatives ADD COLUMN is_near_miss INTEGER NOT NULL DEFAULT 0")
+    if "near_miss_note" not in neg_cols:
+        conn.execute("ALTER TABLE negatives ADD COLUMN near_miss_note TEXT")
+    review_cols = {row["name"] for row in conn.execute("PRAGMA table_info(item_reviews)")}
+    if "read_in_full_confirmed_at" not in review_cols:
+        conn.execute("ALTER TABLE item_reviews ADD COLUMN read_in_full_confirmed_at TEXT")
 
 
 def _stamp_schema_version(conn):

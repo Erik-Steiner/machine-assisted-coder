@@ -325,6 +325,13 @@ expand **Datasets** in this tab and click **Segment** next to it (see "Get your 
 
 ### Model tab
 
+The Train tab has two pages, switched at the top: **Models** (below) and **Codebook**. On
+**Codebook**, pick a theme and fill in its **Definition**, **Include when**, **Exclude when** and
+**Boundary notes**. A checklist shows how ready the entry is to hand to a model (a 15+ word
+definition, both criteria, 3 exemplars from 2+ groups, 2 near misses, a positive in a read-in-full
+interview), and each theme shows a score like 2/5. These checks are advisory: training and export
+always work. The Code tab's theme rows show the same score; click it to open that theme.
+
 1. Click **Train / retrain this scheme's themes**. This retrains every theme in the active coding
    scheme (picked in the Code tab) that has at least 25 coded segments, in one background pass,
    and polls until done. There's no per-theme button. Tick **Train every scheme's themes

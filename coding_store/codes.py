@@ -48,7 +48,10 @@ def add_code(segment_id, theme_id, coder=schema.DEFAULT_CODER, source="manual", 
             return  # already active, no-op
         if existing:
             conn.execute(
-                "UPDATE codes SET deleted_at=NULL, source=?, note=?, created_at=? WHERE code_id=?",
+                # A re-applied code is a fresh decision: an old exemplar flag doesn't come back
+                # with it. (decisions.undo() restores rows itself, flag included, on purpose.)
+                "UPDATE codes SET deleted_at=NULL, source=?, note=?, created_at=?, is_exemplar=0, "
+                "exemplar_note=NULL WHERE code_id=?",
                 (source, note, now, existing["code_id"]),
             )
         else:
@@ -106,7 +109,8 @@ def add_negative(segment_id, theme_id, coder=schema.DEFAULT_CODER, source="manua
         if existing:
             # The table-level UNIQUE covers soft-deleted rows too, so reactivate in place.
             conn.execute(
-                "UPDATE negatives SET deleted_at=NULL, source=?, note=?, created_at=? WHERE negative_id=?",
+                "UPDATE negatives SET deleted_at=NULL, source=?, note=?, created_at=?, is_near_miss=0, "
+                "near_miss_note=NULL WHERE negative_id=?",
                 (source, note, now, existing["negative_id"]),
             )
         else:

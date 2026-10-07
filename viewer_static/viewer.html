@@ -370,129 +370,174 @@
 </div>
 
 <div id="modelView">
-  <aside id="modelSidebar">
-    <div id="modelTrainBar">
-      <button id="trainModelsBtn">Train / retrain this scheme's themes</button>
-      <label id="trainAllSchemesLabel" class="hint">
-        <input type="checkbox" id="trainAllSchemes"> Train every scheme's themes instead
-      </label>
-      <label id="trainNegativeModeLabel" class="hint">Negatives
-        <select id="trainNegativeMode">
-          <option value="reviewed">Only passages you've judged (recommended)</option>
-          <option value="all_uncoded">Every uncoded passage</option>
-        </select>
-      </label>
-      <div class="hint" id="trainNegativeModeHint">"Judged" means rejected, or uncoded in an interview
-        you marked fully coded (Code tab) after the theme was created. Unread passages are scored
-        but not trained on.</div>
-      <div id="modelTrainStatus" class="hint"></div>
-    </div>
-    <div id="modelExportBar">
-      <button id="exportFullCorpusBtn" class="btn-secondary">Export full corpus topic model</button>
-      <div id="modelExportStatus" class="hint"></div>
-    </div>
-    <div id="embeddingBar">
-      <div id="embeddingReadinessText" class="hint"></div>
-      <button id="installEmbeddingsBtn" class="btn-secondary hidden">Install embedding dependencies</button>
-      <div id="installEmbeddingsStatus" class="hint"></div>
-      <button id="trainEmbeddingsBtn" class="btn-secondary hidden">Bootstrap embedding topic model</button>
-      <div id="embeddingTrainStatus" class="hint"></div>
-    </div>
+  <nav id="modelSubnav">
+    <button type="button" class="model-subnav-btn active" data-subpage="models">Models</button>
+    <button type="button" class="model-subnav-btn" data-subpage="codebook">Codebook</button>
+  </nav>
+  <div id="modelModelsPage" class="model-subpage">
+    <aside id="modelSidebar">
+      <div id="modelTrainBar">
+        <button id="trainModelsBtn">Train / retrain this scheme's themes</button>
+        <label id="trainAllSchemesLabel" class="hint">
+          <input type="checkbox" id="trainAllSchemes"> Train every scheme's themes instead
+        </label>
+        <label id="trainNegativeModeLabel" class="hint">Negatives
+          <select id="trainNegativeMode">
+            <option value="reviewed">Only passages you've judged (recommended)</option>
+            <option value="all_uncoded">Every uncoded passage</option>
+          </select>
+        </label>
+        <div class="hint" id="trainNegativeModeHint">"Judged" means rejected, or uncoded in an interview
+          you marked fully coded (Code tab) after the theme was created. Unread passages are scored
+          but not trained on.</div>
+        <div id="modelTrainStatus" class="hint"></div>
+      </div>
+      <div id="modelExportBar">
+        <button id="exportFullCorpusBtn" class="btn-secondary">Export full corpus topic model</button>
+        <div id="modelExportStatus" class="hint"></div>
+      </div>
+      <div id="embeddingBar">
+        <div id="embeddingReadinessText" class="hint"></div>
+        <button id="installEmbeddingsBtn" class="btn-secondary hidden">Install embedding dependencies</button>
+        <div id="installEmbeddingsStatus" class="hint"></div>
+        <button id="trainEmbeddingsBtn" class="btn-secondary hidden">Bootstrap embedding topic model</button>
+        <div id="embeddingTrainStatus" class="hint"></div>
+      </div>
+      <div id="modelCodebookNote" class="hint"></div>
     <div id="modelStorageBar">
-      <button id="modelStorageBtn" class="btn-secondary">Storage…</button>
-    </div>
-    <div id="modelSchemeLabel" class="hint"></div>
-    <div id="modelBanner" class="hint"></div>
-    <div id="modelThemeItems"></div>
-  </aside>
-
-  <main id="modelDetail">
-    <div id="modelDetailEmpty" class="hint">Select a theme to see its metrics.</div>
-    <div id="modelStoragePanel" class="hidden">
-      <h2>Storage</h2>
-      <p class="hint">Every training run stores a score for every segment, for every theme it
-        trained, and those scores take up most of the database. Here you can delete the scores of
-        old runs. A run's metrics, top terms, and settings are always kept, and so are your codes.
-        Each theme's most recent runs and any pinned run are never deleted. Pin a run you cite or
-        exported from: deleted scores can't be recreated exactly once your codes have changed.</p>
-      <div id="storageSummary"></div>
-      <div id="storageControls">
-        <label>Keep the latest
-          <input id="storageKeepLatest" type="number" min="1" value="2" style="width:4em">
-          runs per theme and engine</label>
-        <button id="storageRefreshBtn" class="btn-secondary">Refresh</button>
+        <button id="modelStorageBtn" class="btn-secondary">Storage…</button>
       </div>
-      <table id="storageRunsTable">
-        <thead>
-          <tr>
-            <th></th><th>Trained</th><th>Run</th><th>Engine</th><th>Themes</th>
-            <th>Rows</th><th>Size (≈)</th><th>Can free (≈)</th><th></th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
-      <div id="storagePruneBar">
-        <button id="storagePruneBtn">Delete scores for selected runs</button>
-        <span id="storageSelectionText" class="hint"></span>
-      </div>
-      <div id="storagePruneStatus" class="hint"></div>
+      <div id="modelSchemeLabel" class="hint"></div>
+      <div id="modelBanner" class="hint"></div>
+      <div id="modelThemeItems"></div>
+    </aside>
 
-      <h3>Compact database</h3>
-      <p class="hint">Deleting scores frees space inside the database file, but the file itself
-        only shrinks after compacting. Compacting can take several minutes on a large database,
-        needs free disk space of up to twice the database's size while it runs, and blocks coding
-        and training until it finishes. If the project folder is synced (Dropbox, OneDrive…),
-        the whole database will re-sync afterwards.</p>
-      <button id="storageCompactBtn" class="btn-secondary">Compact database</button>
-      <div id="storageCompactStatus" class="hint"></div>
-
-      <h3>Embedding cache</h3>
-      <div id="storageEmbeddings" class="hint"></div>
-    </div>
-    <div id="modelDetailContent" class="hidden">
-      <h2 id="modelThemeName"></h2>
-      <div id="modelEngineToggle" class="hidden">
-        <button type="button" class="btn-secondary model-engine-btn" data-engine="tfidf">TF-IDF</button>
-        <button type="button" class="btn-secondary model-engine-btn" data-engine="embed">Embedding</button>
-      </div>
-      <div id="modelValueProp"></div>
-      <div id="modelCoverage" class="hint"></div>
-
-      <section id="modelMetricsSection">
-        <h3>Latest run</h3>
-        <div id="modelLatestMetrics"></div>
-        <h3>History</h3>
-        <table id="modelHistoryTable">
+    <main id="modelDetail">
+      <div id="modelDetailEmpty" class="hint">Select a theme to see its metrics.</div>
+      <div id="modelStoragePanel" class="hidden">
+        <h2>Storage</h2>
+        <p class="hint">Every training run stores a score for every segment, for every theme it
+          trained, and those scores take up most of the database. Here you can delete the scores of
+          old runs. A run's metrics, top terms, and settings are always kept, and so are your codes.
+          Each theme's most recent runs and any pinned run are never deleted. Pin a run you cite or
+          exported from: deleted scores can't be recreated exactly once your codes have changed.</p>
+        <div id="storageSummary"></div>
+        <div id="storageControls">
+          <label>Keep the latest
+            <input id="storageKeepLatest" type="number" min="1" value="2" style="width:4em">
+            runs per theme and engine</label>
+          <button id="storageRefreshBtn" class="btn-secondary">Refresh</button>
+        </div>
+        <table id="storageRunsTable">
           <thead>
             <tr>
-              <th>Trained</th><th>Version</th><th>n_pos</th><th>n_neg</th><th>Negatives</th><th>Precision</th>
-              <th>Recall</th><th>F1</th><th>PR-AUC</th><th>Threshold</th>
+              <th></th><th>Trained</th><th>Run</th><th>Engine</th><th>Themes</th>
+              <th>Rows</th><th>Size (≈)</th><th>Can free (≈)</th><th></th>
             </tr>
           </thead>
           <tbody></tbody>
         </table>
-      </section>
-
-      <section id="modelTermsSection">
-        <h3>Top predictive terms</h3>
-        <div class="model-terms-cols">
-          <div>
-            <h4>Pushes toward theme</h4>
-            <ul id="modelTermsPos"></ul>
-          </div>
-          <div>
-            <h4>Pushes away from theme</h4>
-            <ul id="modelTermsNeg"></ul>
-          </div>
+        <div id="storagePruneBar">
+          <button id="storagePruneBtn">Delete scores for selected runs</button>
+          <span id="storageSelectionText" class="hint"></span>
         </div>
-      </section>
+        <div id="storagePruneStatus" class="hint"></div>
 
-      <section id="modelExemplarsSection">
-        <h3>Top-scored segments</h3>
-        <div id="modelExemplars"></div>
-      </section>
-    </div>
-  </main>
+        <h3>Compact database</h3>
+        <p class="hint">Deleting scores frees space inside the database file, but the file itself
+          only shrinks after compacting. Compacting can take several minutes on a large database,
+          needs free disk space of up to twice the database's size while it runs, and blocks coding
+          and training until it finishes. If the project folder is synced (Dropbox, OneDrive…),
+          the whole database will re-sync afterwards.</p>
+        <button id="storageCompactBtn" class="btn-secondary">Compact database</button>
+        <div id="storageCompactStatus" class="hint"></div>
+
+        <h3>Embedding cache</h3>
+        <div id="storageEmbeddings" class="hint"></div>
+      </div>
+      <div id="modelDetailContent" class="hidden">
+        <h2 id="modelThemeName"></h2>
+        <div id="modelEngineToggle" class="hidden">
+          <button type="button" class="btn-secondary model-engine-btn" data-engine="tfidf">TF-IDF</button>
+          <button type="button" class="btn-secondary model-engine-btn" data-engine="embed">Embedding</button>
+        </div>
+        <div id="modelValueProp"></div>
+        <div id="modelCoverage" class="hint"></div>
+
+        <section id="modelMetricsSection">
+          <h3>Latest run</h3>
+          <div id="modelLatestMetrics"></div>
+          <h3>History</h3>
+          <table id="modelHistoryTable">
+            <thead>
+              <tr>
+                <th>Trained</th><th>Version</th><th>n_pos</th><th>n_neg</th><th>Negatives</th><th>Precision</th>
+                <th>Recall</th><th>F1</th><th>PR-AUC</th><th>Threshold</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </section>
+
+        <section id="modelTermsSection">
+          <h3>Top predictive terms</h3>
+          <div class="model-terms-cols">
+            <div>
+              <h4>Pushes toward theme</h4>
+              <ul id="modelTermsPos"></ul>
+            </div>
+            <div>
+              <h4>Pushes away from theme</h4>
+              <ul id="modelTermsNeg"></ul>
+            </div>
+          </div>
+        </section>
+
+        <section id="modelExemplarsSection">
+          <h3>Top-scored segments</h3>
+          <div id="modelExemplars"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+
+  <div id="codebookPage" class="model-subpage hidden">
+    <aside id="codebookSidebar">
+      <p class="hint">Prepare each theme for a model: what it is, when to code it, and the
+        researcher-chosen examples that show it. Gaps are flagged, never enforced: you can always
+        train or export.</p>
+      <div id="codebookSchemeLabel" class="hint"></div>
+      <div id="codebookThemeItems"></div>
+    </aside>
+    <main id="codebookDetail">
+      <div id="codebookDetailEmpty" class="hint">Select a theme to edit its codebook entry.</div>
+      <div id="codebookDetailContent" class="hidden">
+        <h2 id="codebookThemeName"></h2>
+        <ul id="codebookChecklist"></ul>
+
+        <label class="codebook-field">Definition <span id="codebookDefinitionCount" class="hint"></span>
+          <textarea id="codebookDefinition" rows="3"
+            placeholder="What the theme is, in a few sentences. E.g. &quot;Executives judging a model by a measure: a benchmark, usage figure or ranking, rather than by description.&quot;"></textarea>
+        </label>
+        <label class="codebook-field">Include when
+          <textarea id="codebookInclusion" rows="3"
+            placeholder="Concrete rules for coding it. E.g. &quot;cites a metric, benchmark, usage number or ranking to judge a model&quot;"></textarea>
+        </label>
+        <label class="codebook-field">Exclude when
+          <textarea id="codebookExclusion" rows="3"
+            placeholder="Cases that look close but aren't. E.g. &quot;a plain capability claim with no measure&quot;"></textarea>
+        </label>
+        <label class="codebook-field">Boundary notes
+          <textarea id="codebookBoundary" rows="3"
+            placeholder="Hard cases, and how this theme differs from its siblings. E.g. &quot;If the measure is about safety, prefer Safety and Ethics.&quot;"></textarea>
+        </label>
+        <div class="codebook-actions">
+          <button type="button" id="codebookSaveBtn">Save</button>
+          <span id="codebookSaveStatus" class="hint"></span>
+        </div>
+      </div>
+    </main>
+  </div>
 </div>
 
 <div id="reviewView">
@@ -571,6 +616,7 @@
 <script src="/analytics.js"></script>
 <script src="/model.js"></script>
 <script src="/storage.js"></script>
+<script src="/codebook.js"></script>
 <script src="/review.js"></script>
 <script src="/appendix.js"></script>
 </body>

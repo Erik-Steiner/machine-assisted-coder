@@ -120,16 +120,19 @@ SCHEME_EXPORT_FIELDS = ["scheme_id", "name", "description", "status", "created_a
 THEME_EXPORT_FIELDS = [
     "theme_id", "name", "description", "example_words", "color", "status",
     "merged_into", "scheme_id", "parent_theme_id", "depth", "sort_order",
-    "created_at", "updated_at",
+    "created_at", "updated_at", "inclusion_criteria", "exclusion_criteria", "boundary_notes",
 ]
 CODE_EXPORT_FIELDS = [
     "code_id", "segment_id", "theme_id", "coder", "source", "note", "created_at", "deleted_at",
+    "is_exemplar", "exemplar_note",
 ]
 NEGATIVE_EXPORT_FIELDS = [
     "negative_id", "segment_id", "theme_id", "coder", "source", "note", "created_at", "deleted_at",
+    "is_near_miss", "near_miss_note",
 ]
 ITEM_REVIEW_EXPORT_FIELDS = [
     "review_id", "dataset_id", "item_id", "scheme_id", "coder", "marked_at", "unmarked_at", "recorded_at",
+    "read_in_full_confirmed_at",
 ]
 SEGMENT_NONE_EXPORT_FIELDS = [
     "confirmation_id", "segment_id", "scheme_id", "coder", "confirmed_at", "unconfirmed_at",

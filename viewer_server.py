@@ -108,7 +108,13 @@ Endpoints:
                                                          parent_theme_id optional -- a hierarchical
                                                          sub-code under another theme in the same scheme)
     POST /api/codebook/themes/<id>/update            -> edit a theme's fields (name/description/
-                                                         example_words/color/parent_theme_id/sort_order)
+                                                         example_words/color/parent_theme_id/sort_order/
+                                                         inclusion_criteria/exclusion_criteria/boundary_notes)
+    GET  /api/codebook/overview?scheme_id=<id>        -> every active theme with its codebook fields,
+                                                         counts (positives, exemplars, near misses, read-in-
+                                                         full interviews with a positive) and completeness
+                                                         checks -- the Train tab's Codebook sub-page; see
+                                                         coding_store/codebook.py (advisory, never blocking)
     POST /api/codebook/themes/<id>/archive           -> soft-hide a theme
     POST /api/codebook/themes/<id>/restore           -> un-archive a theme
     POST /api/codebook/themes/<id>/merge_into         -> merge a theme's codes into another theme in
@@ -374,6 +380,7 @@ import classifier
 import corpus_analytics
 from coding_store import (
     activity_log,
+    codebook,
     codes as codes_store,
     dataset_status as dataset_status_store,
     decisions as decisions_store,
@@ -1089,6 +1096,7 @@ STATIC_FILES = {
     "/analytics.js": "analytics.js",
     "/model.js": "model.js",
     "/storage.js": "storage.js",
+    "/codebook.js": "codebook.js",
     "/review.js": "review.js",
     "/appendix.js": "appendix.js",
     "/projects.js": "projects.js",
@@ -1278,10 +1286,21 @@ def post_codebook_themes(req):
             scheme_id=body["scheme_id"],
             parent_theme_id=body.get("parent_theme_id") or None,
             actor=body.get("coder") or CODER_NAME,
+            inclusion_criteria=body.get("inclusion_criteria"),
+            exclusion_criteria=body.get("exclusion_criteria"),
+            boundary_notes=body.get("boundary_notes"),
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     return JsonResponse(theme, status=201)
+
+
+@ROUTER.get("/api/codebook/overview")
+def get_codebook_overview(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    return JsonResponse(codebook.overview(scheme_id))
 
 
 @ROUTER.post("/api/codebook/themes/<theme_id>/update", json_body=True, loaders={"theme_id": themes.get_theme})

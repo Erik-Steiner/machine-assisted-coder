@@ -486,6 +486,20 @@ below.
 
 ## Model subsystem
 
+**Train tab sub-pages.** `codebook.js` owns a Models | Codebook switcher (`#modelSubnav`) at the
+top of `#modelView`. The Models page is the original sidebar plus detail (`model.js`,
+`storage.js`). The Codebook page (docs/CODEBOOK_PLAN.md K2) edits each theme's definition
+(`themes.description`), `inclusion_criteria`, `exclusion_criteria` and `boundary_notes` (schema
+v7) through the existing `POST /api/codebook/themes/<id>/update`, and shows
+`GET /api/codebook/overview`: counts plus `coding_store/codebook.py`'s `theme_completeness()`
+checks (definition 15+ words, both criteria, 3+ exemplars from 2+ groups, 2+ near misses, a
+positive in a read-in-full interview). They are advisory and never block anything: the Models
+page shows a one-line note, and the Code tab's theme rows show a clickable "Codebook n/5" badge.
+Schema v7 also adds `codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss`/
+`near_miss_note` and `item_reviews.read_in_full_confirmed_at`. Flags count only on active rows,
+and a code or rejection re-applied after removal starts unflagged (`decisions.undo()` restores
+rows, flag included, on purpose). Tests: `tests/test_codebook.py`.
+
 The Model tab trains and monitors the per-theme classifiers built on top of
 the codebook -- read-only monitoring and interpretability, not an editing surface
 (no accept/reject-into-codebook actions; that would be a future active-learning
