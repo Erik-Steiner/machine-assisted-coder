@@ -954,12 +954,19 @@ function renderCodingMeta(rec) {
   if (!rec) {
     document.getElementById("codingPersonName").textContent = "";
     document.getElementById("codingItemTitle").textContent = "";
+    document.getElementById("codingItemId").innerHTML = "";
     document.getElementById("codingDupNotice").innerHTML = "";
     return;
   }
   document.getElementById("codingPersonName").textContent =
     `${rec.person_name} — ${rec.group_name} (${rec.person_title || "—"})`;
   document.getElementById("codingItemTitle").textContent = rec.item_title || "(untitled)";
+  // dataset_id:item_id -- the exact form "Mark as duplicate…" asks for, so it can be
+  // copied from one interview and pasted into another's duplicate form.
+  const fullId = `${state.datasetId}:${rec.item_id}`;
+  document.getElementById("codingItemId").innerHTML =
+    `ID <code id="codingItemIdText">${escapeHtml(fullId)}</code> ` +
+    `<button type="button" class="btn-secondary" id="copyItemIdBtn" data-id="${escapeHtml(fullId)}">Copy</button>`;
   document.getElementById("codingDupNotice").innerHTML = duplicateSectionHtml(rec);
 }
 
@@ -1065,6 +1072,23 @@ function bindCodingEvents() {
   });
 
   document.getElementById("segmentAllBtn").addEventListener("click", () => segmentDatasets(null));
+  document.getElementById("codingItemId").addEventListener("click", async (e) => {
+    if (e.target.id !== "copyItemIdBtn") return;
+    const btn = e.target;
+    try {
+      await navigator.clipboard.writeText(btn.dataset.id);
+      btn.textContent = "Copied";
+    } catch (err) {
+      // Clipboard API unavailable: select the text so Ctrl+C works instead.
+      const range = document.createRange();
+      range.selectNodeContents(document.getElementById("codingItemIdText"));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      btn.textContent = "Selected: press Ctrl+C";
+    }
+    setTimeout(() => { btn.textContent = "Copy"; }, 1500);
+  });
   document.getElementById("codingReviewBar").addEventListener("click", (e) => {
     if (e.target.id === "toggleFullyCodedBtn") toggleFullyCoded();
   });

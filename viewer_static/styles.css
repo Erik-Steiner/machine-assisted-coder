@@ -731,6 +731,10 @@ button.btn-secondary {
 #codingPositionCounter { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
 #codingPersonName { margin: 0 0 4px 0; font-size: 20px; }
 #codingItemTitle { font-size: 14px; color: var(--text-dim); }
+#codingItemId { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+#codingItemId:empty { display: none; }
+#codingItemId code { font-size: 12px; color: var(--text); user-select: all; }
+#codingItemId button { font-size: 11px; padding: 1px 8px; }
 
 #codingNavBar {
   display: flex;
