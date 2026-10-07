@@ -596,6 +596,30 @@ function buildChipsHtml(themeIds, themes, rejectedIds = []) {
     .join("");
 }
 
+// Highlights a model's top predictive terms in a passage (roadmap B3), returning
+// safe HTML. Terms are TF-IDF features -- lowercased 2+ character tokens, unigrams
+// or bigrams -- so matching is case-insensitive on whole words, and a bigram matches
+// its two words separated by spaces/punctuation. TF-IDF drops stopwords before
+// forming bigrams, so a bigram like "revenue growth" can come from "revenue and
+// growth", which won't highlight as a pair; its words still do if they're top terms
+// themselves. Shared by review.js (cards) and model.js (exemplars).
+function highlightTermsHtml(text, terms) {
+  text = text || "";
+  if (!terms || !terms.length) return escapeHtml(text);
+  const escapeRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const patterns = [...new Set(terms)]
+    .sort((a, b) => b.length - a.length) // longest first, so a bigram wins over its parts
+    .map((t) => t.split(/\s+/).map(escapeRe).join("[^\\p{L}\\p{N}_]+"));
+  const re = new RegExp(`(?<![\\p{L}\\p{N}_])(?:${patterns.join("|")})(?![\\p{L}\\p{N}_])`, "giu");
+  let out = "";
+  let last = 0;
+  for (const m of text.matchAll(re)) {
+    out += escapeHtml(text.slice(last, m.index)) + `<mark class="term-hit">${escapeHtml(m[0])}</mark>`;
+    last = m.index + m[0].length;
+  }
+  return out + escapeHtml(text.slice(last));
+}
+
 function postCode(segmentId, themeId, extra) {
   return fetch("/api/coding/codes", {
     method: "POST",

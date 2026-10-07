@@ -136,9 +136,12 @@ engine" depends on A4's engine-aware notion of "latest".
 - [x] **B2 Triage panel** *(Done 2026-10-01, `coding_store/decisions.py`. Accept/reject mean "is / isn't the theme" in every mode, so in the likely-mislabels queue reject removes a code; undo restores the original rows.)* in Review (the existing coded/predicted view stays). Keys:
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
-- [ ] **B3 Explanations:** highlight the theme's top terms in the card; per-theme score bars.
+- [x] **B3 Explanations:** *(Done 2026-10-07: highlighting in Review cards and Train exemplars; score bars on Review cards.)* highlight the theme's top terms in the card; per-theme score bars.
 - [ ] **B4 Memos and codebook rigor:** editable `codes.note`; `themes.inclusion_criteria` /
-  `exclusion_criteria`; `codes.is_exemplar`.
+  `exclusion_criteria`; `codes.is_exemplar`. **Expanded 2026-10-07 into
+  [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K1–K5:** adds boundary notes, near misses
+  (`negatives.is_near_miss`), a `boundary` queue mode, a completeness check that prompts the
+  researcher, and "confirm read in full" for bulk-marked interviews.
 - [ ] **B5 Corpus-wide segment search** (FTS5, falling back to `LIKE`), results as codeable
   cards.
 - [ ] **B6 Shortcuts** for sub-codes and themes past #9 (quick-pick palette).
@@ -158,7 +161,9 @@ engine" depends on A4's engine-aware notion of "latest".
 ## Phase D — Stage 6: external-score round trip
 
 - [ ] **D1 Scoring pack export:** every in-scope segment with its text and metadata, codebook
-  definitions and criteria, and labeled positives / rejects / gold. Format documented.
+  definitions and criteria, and labeled positives / rejects / gold. Format documented. The
+  codebook and labels part is specified in [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K6–K7
+  (`codebook_topic_themes.json` + `codebook_labels.csv`).
 - [ ] **D2 Import external scores:** `POST /api/model/import_scores` (`segment_id, theme_id,
   score`, optional `threshold`/`label`/`rationale`) → model version `ext_v1_<name>_<ts>`, with
   the file's SHA-256 and a method note in `model_run_params`. If no threshold is supplied,
@@ -213,7 +218,9 @@ engine" depends on A4's engine-aware notion of "latest".
 - `item_reviews`, `segment_none_confirmations` tables (A6) — shipped (new tables, no bump)
 - `item_reviews.recorded_at` (A6 bulk mark) — v6
 - `review_decisions` (B2)
-- `themes.inclusion_criteria`, `themes.exclusion_criteria`, `codes.is_exemplar` (B4)
+- `themes.inclusion_criteria`, `themes.exclusion_criteria`, `codes.is_exemplar` (B4), plus
+  `themes.boundary_notes`, `codes.exemplar_note`, `negatives.is_near_miss`/`near_miss_note`,
+  `item_reviews.read_in_full_confirmed_at` -- one bump, see CODEBOOK_PLAN.md K1
 - `segments_fts` FTS5 virtual table (B5)
 - `validation_samples`, `validation_sample_items` (C3)
 

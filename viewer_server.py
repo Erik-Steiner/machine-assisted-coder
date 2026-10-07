@@ -159,6 +159,12 @@ Endpoints:
            out-of-fold score disagrees with) | confusion (coded here, high for another
            theme in the scheme). {model_version, threshold, total, items} -- see
            coding_store/queues.py
+    GET  /api/review/segment_scores?segment_ids=<a,b>&scheme_id=<id>&engine=<tfidf>
+        -> {segment_id: {theme_id: {score, threshold, model_version}}} -- each scheme theme's
+           score for each segment from its latest run of `engine` (at most 300 segments per
+           call); backs the Review cards' per-theme score bars
+    GET  /api/model/top_terms?theme_id=<id>&model_version=<v>  -> {positive, negative} terms of
+                                                         one run (empty for embedding runs)
     POST /api/review/decisions                       -> {segment_id, theme_id, decision: accept|reject|skip,
                                                          mode, queue_theme_id, engine?, model_version?,
                                                          score?, oof_score?} -> apply (accept = code it,
@@ -1507,6 +1513,27 @@ def get_review_queue(req):
         return JsonResponse(queues.get_queue(theme_id, mode, engine=engine, offset=offset, limit=limit))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+
+
+MAX_SCORE_SEGMENTS = 300  # a page of Review cards, not a corpus -- keeps the GET URL and query small
+
+
+@ROUTER.get("/api/review/segment_scores")
+def get_review_segment_scores(req):
+    segment_ids = [s for s in (req.query.get("segment_ids") or "").split(",") if s][:MAX_SCORE_SEGMENTS]
+    scheme_id = req.query.get("scheme_id") or None
+    engine = req.query.get("engine") or "tfidf"
+    if engine not in model_runs.ENGINE_PREFIXES:
+        return JsonResponse({"error": f"unknown engine '{engine}'"}, status=400)
+    theme_ids = [t["theme_id"] for t in themes.list_themes(scheme_id=scheme_id)]
+    return JsonResponse(model_runs.get_scores_for_segments(segment_ids, theme_ids, engine=engine))
+
+
+@ROUTER.get("/api/model/top_terms")
+def get_model_top_terms(req):
+    theme_id = req.query.get("theme_id") or ""
+    model_version = req.query.get("model_version") or ""
+    return JsonResponse(model_runs.get_top_terms(model_version, theme_id))
 
 
 @ROUTER.post("/api/review/decisions", json_body=True,

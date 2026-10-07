@@ -16,6 +16,9 @@
 // triaged with Accept / Reject / Skip (keys a / r / s, j / k to move, u to undo),
 // recorded via POST /api/review/decisions (coding_store/decisions.py) with the
 // queue context, so roadmap C2 can compute per-round accept rates and precision.
+// Every card also explains itself (roadmap B3): the theme's top predictive terms
+// are highlighted in its text (coding.js's highlightTermsHtml), and small bars show
+// each scheme theme's score against its threshold (GET /api/review/segment_scores).
 //
 // Reuses coding.js's shared buildChipsHtml/postCode/deleteCode/postNegative/
 // deleteNegative/jumpToSegmentInCoding rather than reimplementing segment-card rendering
@@ -36,7 +39,58 @@ const reviewState = {
   focusIndex: 0, // which visible queue card the triage keys act on
   undoStack: [], // decisions made since the queue loaded, newest last: [{candidate, decision}]
   round: null, // {accept, reject, skip, total} for this queue's round (run + theme + mode)
+  termsCache: {}, // "model_version:theme_id" -> [term, ...] (a run's top terms never change)
 };
+
+const SCORE_BATCH = 300; // the server's per-call cap on /api/review/segment_scores
+
+// Fills candidate.scores ({theme_id: {score, threshold}}) for the score bars.
+async function attachScores(candidates) {
+  const scheme = codingState.activeSchemeId ? `&scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
+  for (let i = 0; i < candidates.length; i += SCORE_BATCH) {
+    const batch = candidates.slice(i, i + SCORE_BATCH);
+    const ids = batch.map((c) => c.segment_id).join(",");
+    const res = await fetch(
+      `/api/review/segment_scores?segment_ids=${encodeURIComponent(ids)}&engine=${encodeURIComponent(reviewState.engine)}${scheme}`,
+    );
+    const scores = await res.json();
+    batch.forEach((c) => { c.scores = scores[c.segment_id] || {}; });
+  }
+}
+
+async function topTermsFor(themeId, modelVersion) {
+  const key = `${modelVersion}:${themeId}`;
+  if (!(key in reviewState.termsCache)) {
+    const res = await fetch(
+      `/api/model/top_terms?theme_id=${encodeURIComponent(themeId)}&model_version=${encodeURIComponent(modelVersion)}`,
+    );
+    const data = await res.json();
+    reviewState.termsCache[key] = (data.positive || []).map((t) => t.term);
+  }
+  return reviewState.termsCache[key];
+}
+
+// One small bar per scheme theme the passage was scored for, in codebook order:
+// filled to the score, a tick at that theme's threshold, coloured when above it.
+function scoreBarsHtml(scores) {
+  if (!scores) return "";
+  const rows = reviewState.themes
+    .filter((t) => scores[t.theme_id])
+    .map((t) => {
+      const s = scores[t.theme_id];
+      const pct = (v) => Math.max(0, Math.min(100, v * 100)).toFixed(1);
+      const above = s.score >= s.threshold;
+      const color = escapeHtml(t.color || "#6b7fd7");
+      return `<div class="score-bar-row" title="${escapeHtml(t.name)}: ${s.score.toFixed(3)} ` +
+        `(threshold ${s.threshold.toFixed(3)}${above ? ", above" : ", below"})">` +
+        `<span class="score-bar-name">${escapeHtml(t.name)}</span>` +
+        `<span class="score-bar-track"><span class="score-bar-fill${above ? " above" : ""}" ` +
+        `style="width:${pct(s.score)}%;--bar-color:${color}"></span>` +
+        `<span class="score-bar-threshold" style="left:${pct(s.threshold)}%"></span></span>` +
+        `<span class="score-bar-value">${s.score.toFixed(2)}</span></div>`;
+    });
+  return rows.length ? `<div class="score-bars">${rows.join("")}</div>` : "";
+}
 
 const TRIAGE_KEYS_HINT = "Keys: j / k move · a accept · r reject · s skip · u undo.";
 
@@ -137,6 +191,9 @@ async function loadModeQueue(append) {
     return;
   }
   data.items = data.items.map((item) => queueItemToCandidate(item, data.model_version));
+  data.items.forEach((c) => { c.highlightTerms = data.top_terms || []; });
+  await attachScores(data.items);
+  if (request !== reviewState.queueRequest) return;
   if (append && reviewState.queue) {
     data.items = reviewState.queue.items.concat(data.items);
   } else {
@@ -375,7 +432,17 @@ async function loadReviewCandidates() {
     `/api/coding/review_candidates?theme_ids=${encodeURIComponent(themeIds)}` +
     `&predicted_limit=30&engine=${encodeURIComponent(reviewState.engine)}`,
   );
-  reviewState.candidates = await res.json();
+  const candidates = await res.json();
+  // Highlight the selected themes' top terms (from each theme's latest run of this engine).
+  const runsRes = await fetch(`/api/coding/model_runs?engine=${encodeURIComponent(reviewState.engine)}`);
+  const latest = await runsRes.json();
+  const terms = [];
+  for (const tid of reviewState.selectedThemeIds) {
+    if (latest[tid]) terms.push(...await topTermsFor(tid, latest[tid].model_version));
+  }
+  candidates.forEach((c) => { c.highlightTerms = terms; });
+  await attachScores(candidates);
+  reviewState.candidates = candidates;
   renderReviewQueue();
 }
 
@@ -464,7 +531,8 @@ function renderReviewCard(candidate) {
     roleBadge +
     `</div>` +
     `<div class="reason-pills">${reasonPillsHtml(candidate)}</div>` +
-    `<div class="exemplar-text">${escapeHtml(candidate.text)}</div>` +
+    `<div class="exemplar-text">${highlightTermsHtml(candidate.text, candidate.highlightTerms)}</div>` +
+    scoreBarsHtml(candidate.scores) +
     (isInterviewer ? "" : `<div class="segment-chips">${chips}</div>`) +
     `<button class="btn-secondary review-view-btn">View in Code</button>`;
 

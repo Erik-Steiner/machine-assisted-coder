@@ -185,6 +185,37 @@ def _select_predictions(theme_id, model_version, extra_where="", extra_params=()
     return out
 
 
+def get_scores_for_segments(segment_ids, theme_ids, engine="tfidf"):
+    """{segment_id: {theme_id: {"score", "threshold", "model_version"}}} -- each
+    theme's score for each given segment from that theme's latest run of `engine`
+    (see get_latest_model_runs()). Themes without such a run, and segments a run
+    didn't score, are simply absent. Backs the Review cards' per-theme score bars,
+    so it's batched for a page of segments, not a whole corpus."""
+    latest = get_latest_model_runs(engine=engine)
+    out = {}
+    if not segment_ids:
+        return out
+    batch_size = schema.SQLITE_MAX_VARIABLES - 2  # room for theme_id + model_version
+    with schema.get_conn() as conn:
+        for theme_id in theme_ids:
+            run = latest.get(theme_id)
+            if run is None:
+                continue
+            for i in range(0, len(segment_ids), batch_size):
+                batch = segment_ids[i:i + batch_size]
+                placeholders = ",".join("?" * len(batch))
+                rows = conn.execute(
+                    f"""SELECT segment_id, score FROM predictions
+                        WHERE theme_id=? AND model_version=? AND segment_id IN ({placeholders})""",
+                    (theme_id, run["model_version"], *batch),
+                ).fetchall()
+                for r in rows:
+                    out.setdefault(r["segment_id"], {})[theme_id] = {
+                        "score": r["score"], "threshold": run["threshold"], "model_version": run["model_version"],
+                    }
+    return out
+
+
 def get_top_predictions(theme_id, model_version, limit=15):
     """Top-scored segments for one theme's model run, joined with segment text
     and flagged for whether they're already coded/rejected -- exemplars for the

@@ -215,7 +215,7 @@ function renderModelDetail() {
   renderTermsList("modelTermsPos", data.top_terms.positive);
   renderTermsList("modelTermsNeg", data.top_terms.negative);
 
-  renderExemplars(data.exemplars);
+  renderExemplars(data.exemplars, (data.top_terms.positive || []).map((t) => t.term));
 }
 
 function renderTermsList(elementId, terms) {
@@ -242,7 +242,7 @@ function renderMetricsHistory() {
     .join("");
 }
 
-function renderExemplars(exemplars) {
+function renderExemplars(exemplars, highlightTerms) {
   const container = document.getElementById("modelExemplars");
   container.innerHTML = "";
   if (!exemplars.length) {
@@ -267,7 +267,7 @@ function renderExemplars(exemplars) {
       roleBadge +
       codedBadge +
       `</div>` +
-      `<div class="exemplar-text">${escapeHtml(ex.text)}</div>` +
+      `<div class="exemplar-text">${highlightTermsHtml(ex.text, highlightTerms)}</div>` +
       `<button class="btn-secondary exemplar-view-btn">View in Code</button>`;
     div.querySelector(".exemplar-view-btn").addEventListener("click", () => viewExemplarInCoding(ex));
     container.appendChild(div);

@@ -1173,6 +1173,41 @@ button.btn-secondary {
 #reviewModeHint { line-height: 1.5; max-width: 760px; }
 .reason-judged { background: var(--panel-alt); color: var(--text-dim); }
 .reason-oof { background: transparent; color: var(--text); border-style: dashed; }
+/* Card explanations (roadmap B3): highlighted top terms and per-theme score bars */
+mark.term-hit {
+  background: var(--accent-dim);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 2px;
+}
+.score-bars {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 2px 16px;
+  margin: 6px 0;
+}
+.score-bar-row { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+.score-bar-name { width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.score-bar-track {
+  position: relative;
+  flex: 1;
+  height: 6px;
+  background: var(--panel-alt);
+  border-radius: 3px;
+}
+.score-bar-fill {
+  position: absolute; left: 0; top: 0; bottom: 0;
+  border-radius: 3px;
+  background: var(--border);
+}
+.score-bar-fill.above { background: var(--bar-color, var(--accent)); }
+.score-bar-threshold {
+  position: absolute; top: -2px; bottom: -2px;
+  width: 2px;
+  background: var(--text-dim);
+}
+.score-bar-value { width: 30px; text-align: right; font-variant-numeric: tabular-nums; }
+
 /* Review-queue triage (review.js) */
 #reviewModeList .exemplar-card.focused { outline: 2px solid var(--accent); outline-offset: -2px; }
 #reviewModeList .exemplar-card.decided { opacity: 0.6; }

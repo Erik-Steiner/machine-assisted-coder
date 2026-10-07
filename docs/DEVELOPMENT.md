@@ -705,6 +705,15 @@ pure ordering rule, covered by `tests/test_queues.py`. Queue items reuse `render
 `queueItemToCandidate()`, which adds `judged` and `oof` reason pills. Measured on a real
 389k-segment project: about 0.2 s per page, and 0.8 s for `confusion`.
 
+**Card explanations (roadmap B3).** Every Review card (both views) and the Train tab's exemplars
+highlight the relevant run's top positive terms, via `coding.js`'s `highlightTermsHtml()`: whole
+words, case-insensitive, Unicode-aware, a bigram matching across punctuation, output HTML-escaped.
+Queue pages carry `top_terms` (empty for embedding runs). The recode view fetches each selected
+theme's terms via `GET /api/model/top_terms` and caches them per run. Review cards also show
+per-theme score bars from `GET /api/review/segment_scores` (`model_runs.get_scores_for_segments()`:
+each scheme theme's latest run of the selected engine, at most 300 segments per call), each with a
+threshold tick and the theme's colour when above it.
+
 **Triage decisions (roadmap B2).** In a queue, each card has Accept / Reject / Skip (keys `a` / `r` /
 `s`, `j` / `k` to move, `u` to undo), sent to `POST /api/review/decisions`
 (`coding_store/decisions.py`). Accept = `codes.add_code(source="review_accept")`, reject =

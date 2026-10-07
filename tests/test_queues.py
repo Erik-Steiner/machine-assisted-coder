@@ -99,6 +99,15 @@ class QueueEndToEndTests(unittest.TestCase):
         q = queues.get_queue(self.a, "confusion")
         self.assertEqual([i["segment_id"] for i in q["items"]], ["s0", "s2"])
 
+    def test_segment_scores_and_top_terms(self):
+        scores = model_runs.get_scores_for_segments(["s0", "s3"], [self.a, self.b, "unknown"])
+        self.assertEqual(scores["s0"][self.a]["score"], 0.9)
+        self.assertEqual(scores["s3"][self.b]["score"], 0.1)
+        self.assertEqual(set(scores["s0"]), {self.a, self.b})  # no run for "unknown" -> absent
+        self.assertEqual(model_runs.get_scores_for_segments(["s0"], [self.a], engine="embed"), {})
+        model_runs.save_top_terms("tfidf_v1_1", self.a, [("growth", 1.2), ("revenue", 0.9)], [("weather", -1.0)])
+        self.assertEqual(queues.get_queue(self.a, "top")["top_terms"], ["growth", "revenue"])
+
     def test_no_run_for_engine(self):
         q = queues.get_queue(self.a, "top", engine="embed")
         self.assertEqual((q["model_version"], q["items"]), (None, []))

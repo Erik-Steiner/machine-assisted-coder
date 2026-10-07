@@ -379,6 +379,12 @@ left out, except in *likely mislabels*:
 - **Overlap with other themes**: passages coded with this theme that score high for another theme
   in the scheme and haven't been coded or rejected for it.
 
+Every Review card explains why it's there: the theme's top predictive terms are highlighted in
+the text (also on the Train tab's top-scored segments), and small bars show each theme's score for
+the passage, with a tick at that theme's threshold (coloured when above it). Highlighting follows the
+model's own word splitting, so "didn" can light up inside "didn't". Weak terms like that are a sign
+the theme needs more coded examples.
+
 In these queues, triage each card with **Accept** (it *is* the theme: codes it), **Reject** (it
 *isn't*: records a rejection) or **Skip**, using the buttons or the keyboard: `a` / `r` / `s`,
 `j` / `k` to move, `u` to undo the latest decision. In the overlap queue, the decision is about the

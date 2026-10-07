@@ -105,7 +105,8 @@ def get_queue(theme_id, mode, engine="tfidf", offset=0, limit=DEFAULT_PAGE_SIZE)
     no items when the theme has no run for that engine yet. Each item is a full
     segment row plus score/oof_score (this theme, this run), theme_ids /
     rejected_theme_ids (current codes and rejections, for the chips), and mode
-    extras: label for suspect; other_theme_id/other_score for confusion."""
+    extras: label for suspect; other_theme_id/other_score for confusion. Also
+    top_terms: the run's top positive terms (empty for embedding runs)."""
     if mode not in QUEUE_MODES:
         raise ValueError(f"unknown queue mode '{mode}' -- expected one of {QUEUE_MODES}")
     theme = themes.get_theme(theme_id)
@@ -142,5 +143,8 @@ def get_queue(theme_id, mode, engine="tfidf", offset=0, limit=DEFAULT_PAGE_SIZE)
             continue  # prediction for a segment no longer in coding.db
         items.append({**seg, **r, "theme_ids": codes_by.get(r["segment_id"], []),
                       "rejected_theme_ids": rejected_by.get(r["segment_id"], [])})
+    # The run's most predictive terms, so the UI can highlight them in each card (B3).
+    # Empty for embedding runs, which have no interpretable terms.
+    top_terms = [t["term"] for t in model_runs.get_top_terms(run["model_version"], theme_id)["positive"]]
     return {**empty, "model_version": run["model_version"], "threshold": run["threshold"],
-            "total": len(ordered), "items": items}
+            "total": len(ordered), "items": items, "top_terms": top_terms}
