@@ -145,7 +145,9 @@ schema, not something to rename.
   another `{job_id: {...}}` dict or another recursive `setTimeout` poll loop.
 - `source`/`note`/`coder` fields on `codes` exist for provenance (e.g. `review.js` tags
   recode actions `source: "recoded"`). Prefer tagging new write paths this way over adding a
-  parallel audit table.
+  parallel audit table. The one deliberate exception is `review_decisions`
+  (`coding_store/decisions.py`): Review-queue skips and the queue context of each accept/reject
+  can't live on a codes row, and per-round precision estimates need them.
 
 ## Known drift / forward-looking schema
 

@@ -159,6 +159,17 @@ Endpoints:
            out-of-fold score disagrees with) | confusion (coded here, high for another
            theme in the scheme). {model_version, threshold, total, items} -- see
            coding_store/queues.py
+    POST /api/review/decisions                       -> {segment_id, theme_id, decision: accept|reject|skip,
+                                                         mode, queue_theme_id, engine?, model_version?,
+                                                         score?, oof_score?} -> apply (accept = code it,
+                                                         reject = record a rejection, skip = nothing) and
+                                                         record a triage decision; returns it plus the
+                                                         round's counts -- see coding_store/decisions.py
+    POST /api/review/decisions/undo                  -> {decision_id} -> restore the passage's previous
+                                                         state for that theme (its original code/rejection
+                                                         row, provenance intact) and mark the decision undone
+    GET  /api/review/round_summary?model_version=&theme_id=&mode=  -> {accept, reject, skip, total}
+                                                         for one queue round
     GET  /api/coding/model_runs?engine=<tfidf|embed>  -> latest classifier metrics per theme, each
                                                          row tagged with its "engine"; engine (optional)
                                                          restricts "latest" to that engine's runs --
@@ -359,6 +370,7 @@ from coding_store import (
     activity_log,
     codes as codes_store,
     dataset_status as dataset_status_store,
+    decisions as decisions_store,
     duplicates,
     model_runs,
     queues,
@@ -1495,6 +1507,44 @@ def get_review_queue(req):
         return JsonResponse(queues.get_queue(theme_id, mode, engine=engine, offset=offset, limit=limit))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+
+
+@ROUTER.post("/api/review/decisions", json_body=True,
+             required=["segment_id", "theme_id", "decision", "mode", "queue_theme_id"])
+def post_review_decision(req):
+    body = req.body
+    if body["mode"] not in queues.QUEUE_MODES:
+        return JsonResponse({"error": f"unknown queue mode '{body['mode']}'"}, status=400)
+    if themes.get_theme(body["theme_id"]) is None:
+        return JsonResponse({"error": f"unknown theme '{body['theme_id']}'"}, status=400)
+    try:
+        row = decisions_store.record_decision(
+            body["segment_id"], body["theme_id"], body["decision"], mode=body["mode"],
+            engine=body.get("engine"), model_version=body.get("model_version"),
+            queue_theme_id=body["queue_theme_id"], score=body.get("score"), oof_score=body.get("oof_score"),
+            coder=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    summary = decisions_store.round_summary(body.get("model_version"), body["queue_theme_id"], body["mode"])
+    return JsonResponse({"decision": row, "round": summary})
+
+
+@ROUTER.post("/api/review/decisions/undo", json_body=True, required=["decision_id"])
+def post_review_decision_undo(req):
+    try:
+        row = decisions_store.undo(int(req.body["decision_id"]), coder=req.body.get("coder") or CODER_NAME)
+    except (ValueError, TypeError) as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    summary = decisions_store.round_summary(row["model_version"], row["queue_theme_id"], row["mode"])
+    return JsonResponse({"decision": row, "round": summary})
+
+
+@ROUTER.get("/api/review/round_summary")
+def get_review_round_summary(req):
+    return JsonResponse(decisions_store.round_summary(
+        req.query.get("model_version"), req.query.get("theme_id"), req.query.get("mode"),
+    ))
 
 
 @ROUTER.get("/api/coding/model_runs")

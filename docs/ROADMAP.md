@@ -133,7 +133,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `top`, `uncertain` (near threshold), `audit` (seeded random above threshold),
   `suspect` (coded with low OOF score; rejected with high OOF score), `confusion` (coded A,
   high for sibling B). Excludes segments already decided for that theme. Paged.
-- [ ] **B2 Triage panel** in Review (the existing coded/predicted view stays). Keys:
+- [x] **B2 Triage panel** *(Done 2026-10-01, `coding_store/decisions.py`. Accept/reject mean "is / isn't the theme" in every mode, so in the likely-mislabels queue reject removes a code; undo restores the original rows.)* in Review (the existing coded/predicted view stays). Keys:
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
 - [ ] **B3 Explanations:** highlight the theme's top terms in the card; per-theme score bars.

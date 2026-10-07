@@ -123,6 +123,30 @@ CREATE TABLE IF NOT EXISTS item_reviews (
 );
 CREATE INDEX IF NOT EXISTS idx_item_reviews_lookup ON item_reviews(scheme_id, dataset_id, item_id);
 
+-- Triage decisions from the Review tab's queues (roadmap B2) -- see
+-- coding_store/decisions.py. One row per accept/reject/skip, with the queue context it
+-- was made in. Skips are recorded too: roadmap C2's precision estimate from the
+-- random-check queue needs every passage shown. Undo stamps undone_at; never deleted.
+CREATE TABLE IF NOT EXISTS review_decisions (
+    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id TEXT NOT NULL,          -- model_version:queue_theme_id:mode
+    segment_id TEXT NOT NULL,
+    theme_id TEXT NOT NULL,          -- the theme decided (the *other* theme in the overlap queue)
+    queue_theme_id TEXT NOT NULL,    -- the queue's own theme
+    mode TEXT NOT NULL,
+    engine TEXT,
+    model_version TEXT,
+    score REAL,                      -- the model's score for theme_id when the decision was made
+    oof_score REAL,
+    decision TEXT NOT NULL,          -- 'accept' | 'reject' | 'skip'
+    prev_state TEXT NOT NULL,        -- 'coded' | 'rejected' | 'none', for undo
+    coder TEXT NOT NULL,
+    decided_at TEXT NOT NULL,
+    undone_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_review_decisions_round ON review_decisions(round_id);
+CREATE INDEX IF NOT EXISTS idx_review_decisions_segment ON review_decisions(segment_id, theme_id);
+
 CREATE TABLE IF NOT EXISTS segment_none_confirmations (
     confirmation_id INTEGER PRIMARY KEY AUTOINCREMENT,
     segment_id TEXT NOT NULL,

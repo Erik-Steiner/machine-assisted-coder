@@ -379,6 +379,13 @@ left out, except in *likely mislabels*:
 - **Overlap with other themes**: passages coded with this theme that score high for another theme
   in the scheme and haven't been coded or rejected for it.
 
+In these queues, triage each card with **Accept** (it *is* the theme: codes it), **Reject** (it
+*isn't*: records a rejection) or **Skip**, using the buttons or the keyboard: `a` / `r` / `s`,
+`j` / `k` to move, `u` to undo the latest decision. In the overlap queue, the decision is about the
+*other* theme. Every decision, skips included, is recorded with the queue and run it was made in, and
+the summary line keeps a running count for the round. Undo restores exactly what was there before,
+including an original code's date and source.
+
 ### Web Appendix tab
 
 A read-only, chronological log of research actions: themes created/edited/archived/merged,

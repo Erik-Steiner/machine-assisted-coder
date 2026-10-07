@@ -705,6 +705,23 @@ pure ordering rule, covered by `tests/test_queues.py`. Queue items reuse `render
 `queueItemToCandidate()`, which adds `judged` and `oof` reason pills. Measured on a real
 389k-segment project: about 0.2 s per page, and 0.8 s for `confusion`.
 
+**Triage decisions (roadmap B2).** In a queue, each card has Accept / Reject / Skip (keys `a` / `r` /
+`s`, `j` / `k` to move, `u` to undo), sent to `POST /api/review/decisions`
+(`coding_store/decisions.py`). Accept = `codes.add_code(source="review_accept")`, reject =
+`codes.add_negative(source="review_reject")`, skip = no label change, in every mode. In
+`confusion` the decision targets the *other* theme (`theme_id`), while `queue_theme_id` names the
+queue. Each row in the new `review_decisions` table stores mode/engine/model_version/score/
+oof_score and `prev_state` ("coded" | "rejected" | "none"). `undo()` restores that state by
+reactivating the original code/rejection row (keeping its `created_at`/`source`) rather than
+writing a new one, and only the latest active decision on a passage+theme can be undone. A round
+is `round_id = model_version:queue_theme_id:mode`; `round_summary()` gives its active counts, shown
+in the queue's summary line. Skips are recorded because roadmap C2's precision estimate from the
+`audit` queue needs every passage shown. This table is the documented exception to "tag codes
+instead of adding an audit table" (CLAUDE.md). Decisions are included in the codebook export.
+Inside a queue, the per-pill "✕ Not this theme"/Undo buttons are hidden; the triage bar replaces
+them, so every queue action is recorded. The recode view is unchanged. Tests:
+`tests/test_decisions.py`.
+
 ## Web Appendix subsystem
 
 The Web Appendix tab is a chronological log of research actions -- meant to be

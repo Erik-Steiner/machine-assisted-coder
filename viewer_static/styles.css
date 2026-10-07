@@ -1169,6 +1169,14 @@ button.btn-secondary {
 #reviewModeHint { line-height: 1.5; max-width: 760px; }
 .reason-judged { background: var(--panel-alt); color: var(--text-dim); }
 .reason-oof { background: transparent; color: var(--text); border-style: dashed; }
+/* Review-queue triage (review.js) */
+#reviewModeList .exemplar-card.focused { outline: 2px solid var(--accent); outline-offset: -2px; }
+#reviewModeList .exemplar-card.decided { opacity: 0.6; }
+.triage-bar { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.triage-btn kbd { font-size: 10px; opacity: 0.75; margin-left: 4px; }
+.triage-done { font-size: 12px; font-weight: 600; }
+.triage-accept { color: var(--accent); }
+.triage-reject, .triage-skip { color: var(--text-dim); }
 
 /* --- Web Appendix tab ------------------------------------------------------------ */
 
