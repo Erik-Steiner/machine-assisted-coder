@@ -500,6 +500,18 @@ Schema v7 also adds `codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss
 and a code or rejection re-applied after removal starts unflagged (`decisions.undo()` restores
 rows, flag included, on purpose). Tests: `tests/test_codebook.py`.
 
+**Exemplars and near misses (CODEBOOK_PLAN K3).** `coding_store/examples.py` sets and lists the
+flags (`codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss`/`near_miss_note`). A flag
+needs an active row of the right kind (400 otherwise), and flagging warns about twins: an
+already-flagged passage of the same kind for the theme with word-set Jaccard ≥ 0.5 and the same
+`person_name` or near-duplicate cluster. The warning never blocks. The UI: `coding.js`'s
+`exemplarStarHtml()`/`toggleExemplar()` (a star after every coded chip, shared by the Code tab and
+Review), Review's `e`/`m` triage keys, which record accept/reject plus `review_decisions.flag`
+(schema v8, with `prev_flag`/`prev_flag_note` for undo), and the Codebook page's lists
+(`GET /api/codebook/examples`, with `twin_of`). Segment, queue and recode payloads carry
+`exemplar_theme_ids` for the stars. A Review queue's undo stack is keyed by
+`model_version:theme:mode`, so it survives the reload that happens when the tab is re-entered.
+
 The Model tab trains and monitors the per-theme classifiers built on top of
 the codebook -- read-only monitoring and interpretability, not an editing surface
 (no accept/reject-into-codebook actions; that would be a future active-learning

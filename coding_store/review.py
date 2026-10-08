@@ -4,7 +4,7 @@ fallback). Depends on codes.py (get_codes_for_segment_ids) and model_runs.py
 (get_latest_model_runs, get_top_predictions) -- this is the one submodule
 that reads across both.
 """
-from . import codes, labels, model_runs, schema
+from . import codes, examples, labels, model_runs, schema
 
 
 def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
@@ -82,9 +82,11 @@ def get_review_candidates(theme_ids, predicted_limit=30, engine="tfidf"):
     all_ids = list(candidates.keys())
     codes_by_segment = codes.get_codes_for_segment_ids(all_ids)
     rejections_by_segment = codes.get_negatives_for_segment_ids(all_ids)
+    exemplars_by_segment = examples.flagged_theme_ids(all_ids, "exemplar")
     for sid, c in candidates.items():
         c["theme_ids"] = codes_by_segment.get(sid, [])
         c["rejected_theme_ids"] = rejections_by_segment.get(sid, [])
+        c["exemplar_theme_ids"] = exemplars_by_segment.get(sid, [])
 
     return list(candidates.values())
 

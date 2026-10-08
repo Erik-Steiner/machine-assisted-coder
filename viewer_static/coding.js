@@ -582,7 +582,9 @@ async function unloadDataset(datasetId) {
 // A parent theme whose sub-code is coded (but which isn't coded itself) is marked
 // "implied": training counts that segment as a positive for the parent too (see
 // coding_store/labels.py). Display only -- nothing extra is stored.
-function buildChipsHtml(themeIds, themes, rejectedIds = []) {
+// exemplarIds (optional): coded themes the passage is flagged as an exemplar of. Every
+// coded chip gets a star button after it to flag / unflag (toggleExemplar()).
+function buildChipsHtml(themeIds, themes, rejectedIds = [], exemplarIds = []) {
   let topLevelIndex = 0;
   const parentOf = new Map(themes.map((t) => [t.theme_id, t.parent_theme_id || null]));
   const implied = new Set();
@@ -611,10 +613,51 @@ function buildChipsHtml(themeIds, themes, rejectedIds = []) {
         (rejected ? `title="Rejected for this segment. Click to code it instead." ` : "") +
         (isImplied ? `title="Implied by a coded sub-code: counts toward this theme in training." ` : "") +
         `style="--chip-color:${escapeHtml(t.color || "#6b7fd7")};margin-left:${marginPx}px">` +
-        `${num}${escapeHtml(t.name)}</button>`
+        `${num}${escapeHtml(t.name)}</button>` +
+        (active ? exemplarStarHtml(t, exemplarIds.includes(t.theme_id)) : "")
       );
     })
     .join("");
+}
+
+function exemplarStarHtml(theme, on) {
+  const title = on
+    ? `Exemplar of ${theme.name}: a clear, typical case. Click to unflag.`
+    : `Flag as an exemplar of ${theme.name}: a clear, typical case to show a model.`;
+  return `<button type="button" class="exemplar-star${on ? " on" : ""}" data-theme="${escapeHtml(theme.theme_id)}" ` +
+    `title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">${on ? "\u2605" : "\u2606"}</button>`;
+}
+
+// Flag or unflag `target` (a segment or Review candidate with segment_id and
+// exemplar_theme_ids) as an exemplar of themeId -- coding_store/examples.py. Flagging
+// asks for an optional note, and warns (never blocks) about a look-alike passage that's
+// already flagged. Shared by the Code tab and review.js.
+async function toggleExemplar(target, themeId, rerender) {
+  const on = (target.exemplar_theme_ids || []).includes(themeId);
+  let note = null;
+  if (!on) {
+    note = prompt("Flag as an exemplar. Optional: why is it a clear, typical case of this theme?", "");
+    if (note === null) return; // cancelled
+  }
+  const res = await fetch("/api/codebook/flag", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: target.segment_id, theme_id: themeId, kind: "exemplar", flagged: !on, note }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  const others = (target.exemplar_theme_ids || []).filter((id) => id !== themeId);
+  target.exemplar_theme_ids = on ? others : [...others, themeId];
+  rerender();
+  if (data.twins && data.twins.length) {
+    const t = data.twins[0];
+    alert(`Possible twin: this passage overlaps ${Math.round(t.similarity * 100)}% with an exemplar already ` +
+      `flagged for this theme:\n\n"${t.text}\u2026"\n\nBoth are kept. If they're the same passage, unflag one ` +
+      `on Train \u2192 Codebook so a model doesn't see it twice.`);
+  }
 }
 
 // Highlights a model's top predictive terms in a passage (roadmap B3), returning
@@ -756,11 +799,17 @@ function renderSegmentCard(seg, idx) {
   // Interviewer turns display for context but aren't coded -- no chip buttons
   // rendered at all, so the normal workflow can't touch them (coding_store.
   // add_code itself has no role check, this is a UI-level default only).
-  const chips = isInterviewer ? "" : buildChipsHtml(seg.theme_ids, codingState.themes, seg.rejected_theme_ids);
+  const chips = isInterviewer ? "" : buildChipsHtml(seg.theme_ids, codingState.themes, seg.rejected_theme_ids,
+    seg.exemplar_theme_ids);
 
   div.innerHTML = header + text + (isInterviewer ? "" : `<div class="segment-chips">${chips}</div>`);
 
   div.addEventListener("click", (e) => {
+    const star = e.target.closest(".exemplar-star");
+    if (star) {
+      toggleExemplar(seg, star.dataset.theme, () => { renderSegments(); setSegmentFocus(idx); });
+      return;
+    }
     const chip = e.target.closest(".theme-chip");
     if (chip) {
       toggleCode(seg, chip.dataset.theme);
@@ -778,6 +827,8 @@ async function toggleCode(seg, themeId) {
     ? seg.theme_ids.filter((id) => id !== themeId)
     : [...seg.theme_ids, themeId];
   if (!active) seg.rejected_theme_ids = (seg.rejected_theme_ids || []).filter((id) => id !== themeId);
+  // Removing a code removes its exemplar flag with it (the flag lives on the code row).
+  if (active) seg.exemplar_theme_ids = (seg.exemplar_theme_ids || []).filter((id) => id !== themeId);
   renderSegments();
   try {
     if (active) await deleteCode(seg.segment_id, themeId);

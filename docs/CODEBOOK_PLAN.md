@@ -1,7 +1,9 @@
-# Plan: codebook rigor, near misses, and the `codebook_topic_themes.json` export
+# Plan: codebook rigor, near misses, the codebook export, and in-app LLM topic coding
 
-Agreed 2026-10-07. This plan expands roadmap items **B4** (memos and codebook rigor) and
-**D1** (scoring-pack export) into buildable work, items K1–K8 below. It is written for a
+Agreed 2026-10-07; Part 2 added 2026-10-08. **Part 1** (K1–K8) expands roadmap items **B4**
+(memos and codebook rigor) and **D1** (scoring-pack export) into buildable work. **Part 2**
+(L1–L9) brings the LLM topic-coding procedure, first run by hand in `scripts/llm_topics/`,
+into the app (roadmap D4). Build Part 2 after K3–K7: it consumes everything they add. It is written for a
 developer-agent who has not seen the conversation that produced it. Read `CLAUDE.md` first;
 every hard rule there applies, especially 4 (segmentation constants), 5 (no hard deletes),
 6 and 11 (never write through the app against a real project). If this doc and the code
@@ -131,7 +133,18 @@ checks (thresholds are constants with a comment; confirm them with the researche
 | Near misses | at least 2 active near misses |
 | Gold | at least one read-in-full interview (K5) contains a positive for the theme |
 
-### K3 Marking exemplars and near misses while coding
+### K3 Marking exemplars and near misses while coding — done 2026-10-08
+
+**As built:** `coding_store/examples.py` (`set_flag()`, `list_flagged()`, `find_twins()`,
+`annotate_twins()`); `POST /api/codebook/flag`, `GET /api/codebook/examples`. A ☆ after every
+coded chip (Code tab and Review cards) flags an exemplar, with an optional note. In Review queues,
+`e` accepts and flags an exemplar and `m` rejects and flags a near miss (also as buttons). These
+are recorded as accept/reject plus `review_decisions.flag` (schema v8), so round counts are
+unchanged, and `prev_flag`/`prev_flag_note` let undo restore an earlier flag. The Codebook page
+lists each theme's exemplars and near misses with notes, a "possible twin" badge, Open in Code,
+note editing and Unflag. Twin warnings never block. The rule is word-set Jaccard ≥ 0.5 plus the
+same speaker or the same near-duplicate cluster. Undo history in a Review queue now survives
+leaving and re-entering the tab. The original spec follows.
 
 - **Coding tab:** a star toggle on each *coded* theme chip of a segment card marks or unmarks
   `is_exemplar`. Marking opens a one-line prompt for `exemplar_note` (optional, skippable).
@@ -347,7 +360,256 @@ them from `segment_topic_scores.csv`. Field mapping:
 | gold tier `read_in_full` (≥5 coded segments) | `item_read_in_full_status` in confirmed/interactive, or `inferred_by_coverage`, whichever the researcher chooses |
 
 Keep the old path working: the researcher's hand-edited file from October 2026 is research
-material.
+material. Whichever source it reads, stage 0's checks against current labels (the `usable`
+flags and the issue list in `codebook_resolved.json`) must still run. K8 is the bridge for
+the scripts; Part 2 replaces them in the app.
+
+## Part 2 — In-app LLM topic coding (L1–L9)
+
+Added 2026-10-08. Part 1 (K1–K8) makes the codebook complete and exportable. Part 2 brings
+the procedure that consumed it into the app: discover topics around the researcher's themes,
+pilot the coding against the researcher's own codes, then code every executive turn and
+produce the deliverables. It reverses the roadmap's standing decision to defer an LLM
+classifier: the researcher asked for it on 2026-10-08, after running the procedure by hand.
+
+### Where the procedure stands
+
+It was built and run outside the app as `scripts/llm_topics/` (October 2026). Each stage's
+module docstring explains its design. That code is the reference implementation: port its
+logic, don't redesign it, and keep its outputs readable by the new code.
+
+| Stage | Script | What it does | Status |
+|---|---|---|---|
+| 0 Prepare | `stage0_prepare.py` | Turn↔segment map; turn-level gold labels; rank scores; checks the researcher's codebook against current labels | Built and run |
+| 1 Discover | `stage1_discover.py` | Sonnet 5.5 proposes emergent topics around the locked themes (map → reduce) | Built and run (~$2) |
+| 2 Pilot | `stage2_pilot.py` + `coding.py` | Haiku 4.5 codes 19 gold + 12 random interviews; precision/recall against the researcher's codes | Built, not yet run |
+| 3 Full run | not written | Batch API over all ~26,200 executive answer turns; deliverables | Specified in L6 |
+
+Shared modules: `common.py` (paths, models, `STUDY_CONTEXT`), `llm.py` (every API call),
+`coding.py` (codebook, prompt, chunking, schema, response checks).
+
+### What the procedure taught (each one cost time or money to find)
+
+1. **Turns, not segments, are the unit an LLM should code.** A segment can be a fragment of
+   a turn, or several turns merged, and loses the question it answers. The deliverable is
+   keyed by turn (`comment_id`). Labels move from segments to turns by fixed rules: a turn is
+   positive if any of its segments is; negative only if every segment is a judged negative;
+   otherwise neutral. This needs K6.
+2. **The researcher's codebook is the source of truth, and no process may overwrite it.**
+   An earlier stage 0 regenerated its own exemplar picks next to the researcher's edited file.
+   It now reads the file, never writes it, and writes a separate resolved copy.
+3. **Check the codebook against the current labels on every run.** Coding continues while
+   the codebook is in use. In October 2026, a near miss (`702100_0006`) became a positive
+   when the researcher coded 3 of its 6 segments. An exemplar's interview (`615552`) was
+   dropped from scoring as a duplicate record. Such examples are flagged `usable: false` and
+   reported, never silently dropped or used.
+4. **Prompt examples, and their twins anywhere in the corpus, can't be test items.** Twins
+   are found by word-set Jaccard ≥ 0.5 between segments. That is enough even when two
+   transcripts of one video are chunked differently: the Daniela/Dario Amodei twin scored
+   0.76. Overlap-of-the-shorter (containment) was tried and rejected: it matches short
+   interviewer lines to everything.
+5. **One turn can be an exemplar for two themes.** Store example↔topic as a list, not a
+   single value.
+6. **Never show the old classifier's scores to the LLM; use them by rank only.** Inside the
+   judged interviews, the stored full-fit `score` has memorized the labels, so ranks there use
+   `oof_score`. Ranks serve two purposes: oversampling near the locked themes in discovery,
+   and a TF-IDF baseline in the pilot.
+7. **Keep the test set out of every step that shapes the codebook.** Discovery never samples
+   read-in-full interviews, so the pilot's precision and recall are measured on turns that no
+   codebook decision has seen.
+8. **Locked themes plus emergent topics.** The seed themes cover only a few percent of
+   executive talk. Without emergent topics, most turns would be "other". Discovery may only
+   add topics beside the locked themes, never redefine them. It dropped 5 of 139 candidates
+   for duplicating them.
+9. **API mechanics:**
+   - **Always stream.** The SDK refuses a non-streaming request whose `max_tokens` could
+     outrun its 10-minute timeout.
+   - **Take the request ID from the stream** (`stream.request_id`); a streamed message has no
+     `_request_id`.
+   - **Write each call's record as soon as it returns.** A crash while building it lost one
+     paid call.
+   - **Per-model settings:** Sonnet/Opus 5.x get `effort` plus the refusal fallback
+     (`fallbacks: "default"`). Haiku 4.5 rejects `effort`, doesn't need the fallback, and
+     takes `temperature: 0`.
+   - **Prompt caching:** the codebook system prompt (~18k tokens) is cached; Haiku 4.5 only
+     caches prefixes of at least 4,096 tokens.
+10. **Version everything by content hash.** A codebook edit gives a new `codebook_version`
+    and a fresh set of calls. Stored records are reused only for an identical prompt.
+
+### L1 Optional dependency and API key
+
+- `requirements-llm.txt` lists `anthropic`, `python-dotenv` and `pydantic`. As with
+  `requirements-embeddings.txt`: imported only when used, never installed by
+  `install.bat` / `install.command`, and installed from an in-app button that runs `pip`
+  as a `jobs.JobRegistry` job. Copy the `/api/model/install_embeddings_deps` pattern.
+- **The key is read from `ANTHROPIC_API_KEY`**, in the project's `.env` or the environment.
+  `.env` also holds the ceointerviews.ai `API_KEY` / `BASE_URL` that `query_api.py` uses;
+  they are different keys and must not be confused. The UI shows only "key found / not
+  found". The key never goes into `coding.db`, a log, a record or an export.
+
+### L2 Storage
+
+LLM output is a **prediction, never a code.** It must not be written to `codes` or
+`negatives` (rule 5's provenance argument applies): a researcher code always means the
+researcher decided. New tables via `CREATE TABLE IF NOT EXISTS`, so no version bump:
+
+| Table | Holds |
+|---|---|
+| `llm_runs` | run_id, kind (`discovery` / `pilot` / `full`), scheme_id, model, settings JSON, codebook_version, codebook snapshot JSON, study_context, status, cost, started/finished, coder |
+| `llm_calls` | run_id, request key, request JSON (system prompt stored once per run, by hash), response JSON, request_id, served_by_model, usage, created_at. This is `scripts/llm_topics/llm.py`'s record, moved into the database. |
+| `llm_turn_codes` | run_id, dataset_id, item_id, turn_index, primary_topic_id, secondary_topic_id, confidence, topic_summary, justification, coded_by (`model` / `rule`) |
+| `llm_topics` | run_id, topic_id, name, origin (`seed` / `emergent` / `fixed`), definition, include, exclude, boundary_notes, examples JSON, status (`proposed` / `accepted` / `rejected` / `merged_into`) |
+
+**Open question for the researcher:** where accepted emergent topics live.
+- **(a)** As themes in the scheme, with a new `themes.origin` column (schema bump). The
+  researcher can then code them, train on them, and flag exemplars like any theme.
+- **(b)** Only in `llm_topics`, for this run. Simpler, but they can't be coded by hand.
+
+Recommend (a), as the hybrid deductive–inductive design intends.
+
+**Projection for Review:** for each run and theme, write
+`predictions(model_version = "llm_<run_id>", segment_id, theme_id, score)`. A segment scores
+the highest confidence among its turns where the theme is primary or secondary (via K6), or
+0 otherwise. This reuses D2's import path (the `ext` / `llm` engine prefix), so Review's
+queues, top terms and score bars work unchanged. Pin these runs (A7) so pruning never drops
+them.
+
+### L3 Prepare (stage 0 in the app)
+
+There is no export step: the app already holds the codebook, labels and segments. Port, as
+pure functions in a new `coding_store/llm_prepare.py` (or similar):
+- turn-level labels from `labels.py` via K6
+- the read-in-full tier, from K5 status (`confirmed` / `interactive`), with the ≥5-coded
+  heuristic as a researcher-chosen fallback
+- rank scores from the latest TF-IDF run (`oof_score` where present)
+- codebook resolution with `usable` flags and a list of issues
+
+**Show the issues before any run.** Show them on the Codebook page, and require
+acknowledgement in the run dialog. Examples: "near miss X is now coded with this theme",
+"Diffusion has no near misses".
+
+### L4 Discover (stage 1)
+
+A "Discover topics" action on the Codebook page, run as a background job:
+- **Sampling:** as `stage1_discover.draw_sample()`:
+  - 1,500 executive turns of at least 20 words
+  - about 70% random, stratified by group with a floor
+  - about 30% from the top decile of a seed theme's rank, spread evenly over themes
+  - never from read-in-full interviews or prompt examples
+- **Calls:** map batches of 100 turns, then one reduce, on Sonnet 5.5. The prompts are in
+  `stage1_discover.py`.
+- **Researcher review:** the draft appears as `proposed` topics. Each can be accepted,
+  edited, merged into another, or rejected, and accepting creates the theme (L2 open
+  question).
+- **Example passages:** shown for every proposed topic. A passage becomes a researcher
+  exemplar only if the researcher codes and flags it (K3); the model's choice never makes
+  it one.
+- **What the review must show** (from the October 2026 run):
+  - each topic's approximate size; four topics came out at about 1% of the sample
+  - the model's notes on which boundaries were hard
+  - the candidates dropped for duplicating a locked theme, with reasons
+
+### L5 Pilot (stage 2)
+
+A "Pilot coding" action, as `stage2_pilot.py`:
+- **Interviews:** every read-in-full interview, plus 3 random interviews per group.
+- **Call settings:** the same prompt and chunking the full run will use (L7), on Haiku 4.5
+  at temperature 0.
+- **Report** (persisted in `llm_runs` and shown in the UI):
+  - per seed theme: precision, recall and F1 with 95% Wilson intervals, both for
+    primary-or-secondary and for primary only
+  - the TF-IDF baseline on the same turns
+  - confidence calibration by band
+  - the topic distribution, including the `other` share
+- **Disagreements go to Review, not a CSV.** Add a queue mode `llm_disagreement` (same
+  shape as K4's `boundary`):
+  - LLM yes, gold no: `a` = it is the theme (writes a code; the original coding missed it),
+    `r` = reject (confirms the gold)
+  - LLM no, gold yes: `a` = keep the code, `r` = the code was wrong
+  
+  Record every decision in `review_decisions` with `mode='llm_disagreement'`. Report
+  precision before and after adjudication: before, it's a lower bound.
+- **Gate:** the full run (L6) is offered only after a pilot on the current
+  `codebook_version`. If the codebook changes, the pilot must be re-run.
+
+### L6 Full run (stage 3)
+
+Not yet built anywhere; this is its spec.
+- **Message Batches API:** one batch request per interview chunk, keyed `custom_id` =
+  request key, polled by a `jobs.JobRegistry` job. Results come back in any order: key them
+  by `custom_id`, never by position.
+- **Batch limits:** the refusal fallback isn't accepted on batches (Haiku doesn't need it).
+  Caching inside a batch is best-effort.
+- **Validation:** check every result with `coding.check_codes()`. Re-send missing or invalid
+  turns as ordinary streamed calls, once. Report anything still missing.
+- **Cost:** with the October 2026 codebook (18k-token system prompt), the pilot estimate of
+  about $1 per 1,100 turns scales to about $24 for 26,200 turns at standard rates, about
+  $12–15 batched. Show the estimate in the run dialog, and spend only after the researcher
+  confirms.
+- **Logging:** `llm_run` start and finish (model, codebook_version, turns, cost) to
+  `activity_log`, with labels in `appendix.js`.
+- **Reliability (optional):** re-code a 5% random sample and report run-to-run agreement
+  (Cohen's kappa on the primary topic).
+
+### L7 The coding prompt and its rules
+
+Port `coding.py` as is. The rules it encodes are research decisions and must stay visible in
+the run's settings and snapshot:
+- **Codebook in prompt order:** seed themes (with all their usable exemplars and near
+  misses), then emergent topics (with up to 3 examples), then two fixed topics:
+  - `other`: substantive, but fits nothing
+  - `non_substantive`: no topical content
+- **Fields per turn, in this order:** `topic_summary` (≤25 words), `justification` (≤30
+  words, naming a ruled-out topic on close calls), `primary_topic_id`, `secondary_topic_id`
+  (or `none`), `confidence`. Reasoning comes before the labels.
+- **Topic IDs are an enum** in the output schema, so the model can't invent one.
+- **Confidence is about the primary topic only**, on a stated scale: about 0.9 for a clear
+  case, 0.7 for some ambiguity, 0.5 for borderline, under 0.4 for a guess. It means
+  something only once the pilot's calibration table supports it.
+- **`PRIORITIZE_SEED_THEMES`:** a clearly present seed theme takes a slot ahead of an
+  emergent topic. The researcher chooses this per run.
+- **Short answers** take their topic from the question they answer.
+- **Rule-coded turns:** executive turns under 5 words become `non_substantive` by rule,
+  without a call.
+- **Requests:** a stretch of one interview in spoken order. Up to 25 turns to code or 5,000
+  words, with the questions between them and 4 turns before as context. Context turns are
+  cut to 150 words; turns being coded never are.
+- **`STUDY_CONTEXT`:** the paragraph describing the corpus and study goes into every call.
+  Make it a per-scheme setting the researcher writes; it steers what counts as a topic.
+
+### L8 Deliverables
+
+An export button on the run, writing into `EXPORTS_DIR`:
+- **`<dataset>_interview_turns_coded.csv`:** every row of the turn export
+  (`scripts/export_interview_turns.py`'s columns), plus:
+  - `coded_scope` (`llm` / `rule_non_substantive` / `context_only` / `excluded_other`)
+  - `primary_topic_id`, `secondary_topic_id`, `confidence`, `topic_summary`,
+    `justification`, `coded_by`, `codebook_version`, `run_id`
+  
+  Rows outside the coding scope keep blank codes, and `coded_scope` says why.
+- **`topic_summary.csv`:** one row per topic: `topic_id`, `name`, `origin`, `description`,
+  `include`, `exclude`, `n_primary`, `n_secondary`, counts per group, mean confidence, two
+  example `comment_id`s. `topic_id` joins to both topic columns of the coded file.
+- **`methods_note.md`:** model and settings, codebook version, sample sizes, pilot metrics
+  before and after adjudication, cost. Written for a manuscript's supplementary material,
+  next to the Web Appendix.
+
+### L9 Verification
+
+- **Pure functions, unit-tested** (rule 8's label-building exception: they decide what the
+  model is graded against):
+  - turn↔segment map
+  - turn label roll-up
+  - codebook resolution and `usable` flags
+  - twin detection
+  - `check_codes()`
+  - Wilson intervals and precision/recall
+- **No API calls in tests.** Use stored records, as `parse_call` replays them; a run whose
+  calls are all recorded costs nothing.
+- **Reference parity:** on the October 2026 data, the in-app prepare step must reproduce
+  `turns_prepared.parquet`'s labels and flags and `codebook_resolved.json`'s issues exactly.
+- **Test project only** (rule 11). API calls cost money even against the test project. Use
+  a tiny dataset there, and confirm spend in the dialog every time.
 
 ## Tests
 
@@ -383,9 +645,10 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
 
 ## Out of scope
 
-- Calling any LLM or external model from the app. The roadmap defers an in-app LLM few-shot
-  classifier; the app's job is to export what such a model needs (D1) and import scores
-  back (D2).
+- In Part 1, calling any LLM or external model from the app: Part 1 only makes the codebook
+  complete and exportable. Part 2 adds the LLM calls, as separate items, built after K3–K7.
+- Writing LLM output into `codes` or `negatives`, ever (L2). Only the researcher writes codes;
+  an accepted disagreement in Review writes a code because the researcher decided it.
 - Changing segmentation constants, or re-segmenting.
 - Deleting or rewriting the existing `topic_seed_pack` / `segment_topic_scores` exports.
 
@@ -398,3 +661,10 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
 3. Should the export include archived themes by default, or only on request?
 4. Is there more than one coder? Codes, rejections and flags are per coder; the export
    currently assumes the default coder.
+5. Part 2: should accepted emergent topics become real themes in the scheme (L2 option a,
+   recommended) or stay inside one LLM run (option b)?
+6. Part 2: should `PRIORITIZE_SEED_THEMES` default to on? It favours the seed themes for the
+   two topic slots, which raises their recall and makes the emergent topics' counts less
+   comparable.
+7. Part 2: the run dialog's spending cap. Should runs over a threshold (say $25) need a
+   second confirmation?

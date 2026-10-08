@@ -15,7 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-from coding_store import codebook, codes, reviewed, schema, schemes, segments, themes  # noqa: E402
+from coding_store import codebook, codes, decisions, examples, reviewed, schema, schemes, segments, themes  # noqa: E402
 
 
 class CompletenessRuleTests(unittest.TestCase):
@@ -97,6 +97,76 @@ class CodebookDbTests(unittest.TestCase):
         rows = codebook.overview("s")
         self.assertEqual([r["theme_id"] for r in rows], [self.t])
         self.assertEqual(rows[0]["completeness"]["total"], 5)
+
+
+class ExampleFlagTests(unittest.TestCase):
+    """coding_store/examples.py and the flagged triage decisions (CODEBOOK_PLAN K3)."""
+
+    CTX = {"mode": "top", "engine": "tfidf", "model_version": "tfidf_v1_1", "queue_theme_id": "t"}
+
+    def setUp(self):
+        self._orig_db = schema.DB_PATH
+        self._tmp = tempfile.TemporaryDirectory()
+        schema.set_db_path(Path(self._tmp.name) / "coding.db")
+        text = "we doubled revenue this year and expanded into three new markets quickly"
+        segments.upsert_segments([
+            {"segment_id": "a", "item_id": "i1", "dataset_id": "d1", "seg_index": 0, "text": text,
+             "person_name": "P"},
+            {"segment_id": "a_twin", "item_id": "i2", "dataset_id": "d1", "seg_index": 0,
+             "text": text + " too", "person_name": "P"},
+            {"segment_id": "b", "item_id": "i3", "dataset_id": "d1", "seg_index": 0,
+             "text": "an unrelated remark about the weather", "person_name": "P"},
+        ])
+
+    def tearDown(self):
+        schema.DB_PATH = self._orig_db  # restore without init_db() -- never touch the real file
+        self._tmp.cleanup()
+
+    def flagged(self, kind):
+        return [r["segment_id"] for r in examples.list_flagged("t", kind)]
+
+    def test_flag_needs_an_active_decision(self):
+        with self.assertRaises(ValueError):
+            examples.set_flag("a", "t", "exemplar", True)  # not coded
+        codes.add_code("a", "t")
+        examples.set_flag("a", "t", "exemplar", True, note="clear case")
+        self.assertEqual(self.flagged("exemplar"), ["a"])
+        self.assertEqual(examples.list_flagged("t", "exemplar")[0]["note"], "clear case")
+        with self.assertRaises(ValueError):
+            examples.set_flag("a", "t", "near_miss", True)  # coded, not rejected
+        examples.set_flag("a", "t", "exemplar", False)
+        self.assertEqual(self.flagged("exemplar"), [])
+
+    def test_twin_warning_does_not_block(self):
+        codes.add_code("a", "t")
+        codes.add_code("a_twin", "t")
+        codes.add_code("b", "t")
+        examples.set_flag("a", "t", "exemplar", True)
+        result = examples.set_flag("a_twin", "t", "exemplar", True)
+        self.assertEqual([t["segment_id"] for t in result["twins"]], ["a"])
+        self.assertEqual(examples.set_flag("b", "t", "exemplar", True)["twins"], [])
+        self.assertEqual(sorted(self.flagged("exemplar")), ["a", "a_twin", "b"])  # warned, not blocked
+        annotated = {r["segment_id"]: r["twin_of"] for r in examples.annotate_twins(examples.list_flagged("t", "exemplar"))}
+        self.assertEqual(annotated, {"a": ["a_twin"], "a_twin": ["a"], "b": []})
+
+    def test_flagged_decisions_count_as_accept_reject_and_undo_restores_flags(self):
+        d = decisions.record_decision("a", "t", "accept", flag="exemplar", **self.CTX)
+        decisions.record_decision("b", "t", "reject", flag="near_miss", **self.CTX)
+        self.assertEqual((self.flagged("exemplar"), self.flagged("near_miss")), (["a"], ["b"]))
+        self.assertEqual(decisions.round_summary("tfidf_v1_1", "t", "top")["accept"], 1)
+        decisions.undo(d["decision_id"])
+        self.assertEqual(self.flagged("exemplar"), [])  # the code it created is gone
+        with self.assertRaises(ValueError):
+            decisions.record_decision("a", "t", "reject", flag="exemplar", **self.CTX)
+
+    def test_undo_puts_back_an_earlier_flag(self):
+        codes.add_code("a", "t")
+        examples.set_flag("a", "t", "exemplar", True, note="original note")
+        d = decisions.record_decision("a", "t", "reject", **self.CTX)  # unflags by removing the code
+        self.assertEqual(self.flagged("exemplar"), [])
+        decisions.undo(d["decision_id"])
+        rows = examples.list_flagged("t", "exemplar")
+        self.assertEqual([(r["segment_id"], r["note"]) for r in rows], [("a", "original note")])
 
 
 if __name__ == "__main__":

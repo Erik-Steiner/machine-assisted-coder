@@ -15,6 +15,7 @@ const codebookState = {
   overview: [], // GET /api/codebook/overview rows for the active scheme
   selectedThemeId: null,
   dirty: false, // unsaved edits in the form
+  examples: { exemplars: [], near_misses: [] }, // GET /api/codebook/examples for the selected theme
 };
 
 function switchModelSubpage(name) {
@@ -111,12 +112,85 @@ function renderCodebookDetail() {
   document.getElementById("codebookSaveStatus").textContent = "";
   renderCodebookChecklist(t.completeness);
   updateDefinitionCount();
+  loadCodebookExamples(t.theme_id);
+}
+
+// The theme's flagged exemplars and near misses (coding_store/examples.py), so the
+// whole set can be reviewed in one place before exporting it.
+async function loadCodebookExamples(themeId) {
+  const res = await fetch(`/api/codebook/examples?theme_id=${encodeURIComponent(themeId)}`);
+  const data = await res.json();
+  if (codebookState.selectedThemeId !== themeId || data.error) return;
+  codebookState.examples = data;
+  renderExampleList("codebookExemplars", "codebookExemplarCount", data.exemplars, "exemplar",
+    "None flagged yet.");
+  renderExampleList("codebookNearMisses", "codebookNearMissCount", data.near_misses, "near_miss",
+    "None flagged yet.");
+}
+
+function renderExampleList(listId, countId, rows, kind, emptyText) {
+  document.getElementById(countId).textContent = `(${rows.length})`;
+  const el = document.getElementById(listId);
+  if (!rows.length) {
+    el.innerHTML = `<div class="hint">${escapeHtml(emptyText)}</div>`;
+    return;
+  }
+  el.innerHTML = rows.map((r) => {
+    const twin = r.twin_of.length
+      ? `<span class="codebook-twin" title="Near-identical to another flagged passage (${escapeHtml(r.twin_of.join(", "))}). ` +
+        `A model would see it twice; consider unflagging one.">possible twin</span>` : "";
+    return `<div class="codebook-example" data-segment-id="${escapeHtml(r.segment_id)}" data-kind="${kind}">` +
+      `<div class="codebook-example-meta">${escapeHtml(r.person_name || "")}` +
+      `${r.group_name ? " \u2014 " + escapeHtml(r.group_name) : ""} ${twin}</div>` +
+      `<div class="codebook-example-text">${escapeHtml(r.text)}</div>` +
+      `<div class="codebook-example-note">${r.note ? "Note: " + escapeHtml(r.note) : '<span class="hint">No note</span>'}</div>` +
+      `<div class="codebook-example-actions">` +
+      `<button type="button" class="btn-secondary example-open-btn">Open in Code</button>` +
+      `<button type="button" class="btn-secondary example-note-btn">${r.note ? "Edit note" : "Add note"}</button>` +
+      `<button type="button" class="btn-secondary example-unflag-btn">Unflag</button>` +
+      `</div></div>`;
+  }).join("");
+}
+
+async function updateExampleFlag(segmentId, kind, flagged, note) {
+  const res = await fetch("/api/codebook/flag", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ segment_id: segmentId, theme_id: codebookState.selectedThemeId, kind, flagged, note }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  await loadCodebook(); // counts and checklist
+  loadCodebookExamples(codebookState.selectedThemeId);
+}
+
+function onExampleAction(e) {
+  const card = e.target.closest(".codebook-example");
+  if (!card) return;
+  const kind = card.dataset.kind;
+  const rows = kind === "exemplar" ? codebookState.examples.exemplars : codebookState.examples.near_misses;
+  const row = rows.find((r) => r.segment_id === card.dataset.segmentId);
+  if (!row) return;
+  if (e.target.classList.contains("example-open-btn")) {
+    jumpToSegmentInCoding(row); // coding.js
+  } else if (e.target.classList.contains("example-note-btn")) {
+    const question = kind === "exemplar"
+      ? "Why is this a clear, typical case of the theme?"
+      : "What makes this not the theme, even though it looks like it?";
+    const note = prompt(question, row.note || "");
+    if (note !== null) updateExampleFlag(row.segment_id, kind, true, note);
+  } else if (e.target.classList.contains("example-unflag-btn")) {
+    updateExampleFlag(row.segment_id, kind, false, null);
+  }
 }
 
 function renderCodebookChecklist(c) {
   const hints = {
-    exemplars: "Star coded passages in the Code tab, or press e in a Review queue (coming next).",
-    near_misses: "Press m on a rejected passage in a Review queue (coming next).",
+    exemplars: "Flag with the \u2606 next to a coded theme in the Code tab, or press e in a Review queue.",
+    near_misses: "Press m on a passage in a Review queue.",
     gold: "Mark an interview “fully coded” after reading it end to end, or confirm a bulk mark.",
   };
   document.getElementById("codebookChecklist").innerHTML =
@@ -201,6 +275,8 @@ function bindCodebookEvents() {
     });
   });
   document.getElementById("codebookSaveBtn").addEventListener("click", saveCodebookEntry);
+  document.getElementById("codebookExemplars").addEventListener("click", onExampleAction);
+  document.getElementById("codebookNearMisses").addEventListener("click", onExampleAction);
   document.getElementById("modelCodebookNote").addEventListener("click", (e) => {
     if (e.target.id === "openCodebookLink") switchModelSubpage("codebook");
   });

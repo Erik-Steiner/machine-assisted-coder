@@ -139,7 +139,8 @@ SEGMENT_NONE_EXPORT_FIELDS = [
 ]
 REVIEW_DECISION_EXPORT_FIELDS = [
     "decision_id", "round_id", "segment_id", "theme_id", "queue_theme_id", "mode", "engine",
-    "model_version", "score", "oof_score", "decision", "prev_state", "coder", "decided_at", "undone_at",
+    "model_version", "score", "oof_score", "decision", "prev_state", "flag", "prev_flag", "prev_flag_note",
+    "coder", "decided_at", "undone_at",
 ]
 MODEL_RUN_EXPORT_FIELDS = [
     "model_version", "theme_id", "trained_at", "n_pos", "n_neg",

@@ -28,7 +28,7 @@ model_runs, segments, codes, themes.
 """
 import random
 
-from . import codes, labels, model_runs, schema, segments, themes
+from . import codes, examples, labels, model_runs, schema, segments, themes
 
 QUEUE_MODES = ("top", "uncertain", "audit", "suspect", "confusion")
 DEFAULT_PAGE_SIZE = 25
@@ -136,13 +136,15 @@ def get_queue(theme_id, mode, engine="tfidf", offset=0, limit=DEFAULT_PAGE_SIZE)
     page_ids = list(seg_rows)
     codes_by = codes.get_codes_for_segment_ids(page_ids)
     rejected_by = codes.get_negatives_for_segment_ids(page_ids)
+    exemplar_by = examples.flagged_theme_ids(page_ids, "exemplar")
     items = []
     for r in page:
         seg = seg_rows.get(r["segment_id"])
         if seg is None:
             continue  # prediction for a segment no longer in coding.db
         items.append({**seg, **r, "theme_ids": codes_by.get(r["segment_id"], []),
-                      "rejected_theme_ids": rejected_by.get(r["segment_id"], [])})
+                      "rejected_theme_ids": rejected_by.get(r["segment_id"], []),
+                      "exemplar_theme_ids": exemplar_by.get(r["segment_id"], [])})
     # The run's most predictive terms, so the UI can highlight them in each card (B3).
     # Empty for embedding runs, which have no interpretable terms.
     top_terms = [t["term"] for t in model_runs.get_top_terms(run["model_version"], theme_id)["positive"]]

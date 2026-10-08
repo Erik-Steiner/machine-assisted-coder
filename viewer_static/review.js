@@ -37,7 +37,9 @@ const reviewState = {
   queue: null, // last /api/review/queue response, items accumulated across "Load more"
   queueRequest: 0, // bumped per load, so a slow response for an old selection is dropped
   focusIndex: 0, // which visible queue card the triage keys act on
-  undoStack: [], // decisions made since the queue loaded, newest last: [{candidate, decision}]
+  undoStack: [], // decided candidates in this queue (same run + theme + mode), newest last -- kept
+                 // across reloads, see loadModeQueue()
+  undoRoundKey: null, // "model_version:theme_id:mode" the undo stack belongs to
   round: null, // {accept, reject, skip, total} for this queue's round (run + theme + mode)
   termsCache: {}, // "model_version:theme_id" -> [term, ...] (a run's top terms never change)
 };
@@ -92,7 +94,8 @@ function scoreBarsHtml(scores) {
   return rows.length ? `<div class="score-bars">${rows.join("")}</div>` : "";
 }
 
-const TRIAGE_KEYS_HINT = "Keys: j / k move · a accept · r reject · s skip · u undo.";
+const TRIAGE_KEYS_HINT = "Keys: j / k move · a accept · r reject · s skip · e accept as exemplar · " +
+  "m reject as near miss · u undo.";
 
 const REVIEW_MODE_HINTS = {
   top: "Highest-scoring passages you haven't decided for this theme yet: the quickest way to find more.",
@@ -198,7 +201,11 @@ async function loadModeQueue(append) {
     data.items = reviewState.queue.items.concat(data.items);
   } else {
     reviewState.focusIndex = 0;
-    reviewState.undoStack = [];
+    // Keep undo history across reloads of the same queue (e.g. after visiting another
+    // tab); start fresh only when the run, theme or mode changes.
+    const roundKey = `${data.model_version}:${reviewState.queueThemeId}:${reviewState.mode}`;
+    if (reviewState.undoRoundKey !== roundKey) reviewState.undoStack = [];
+    reviewState.undoRoundKey = roundKey;
     reviewState.round = null;
     if (data.model_version) {
       const roundRes = await fetch(
@@ -247,7 +254,8 @@ function triageBarHtml(candidate) {
   const theme = reviewState.themes.find((t) => t.theme_id === candidate.decisionThemeId);
   const name = escapeHtml(theme ? theme.name : candidate.decisionThemeId);
   if (candidate.decision) {
-    const label = { accept: `accepted as ${name}`, reject: `rejected for ${name}`, skip: "skipped" }[candidate.decision];
+    const label = { accept: `accepted as ${name}`, reject: `rejected for ${name}`, skip: "skipped" }[candidate.decision] +
+      ({ exemplar: " \u2605 exemplar", near_miss: " \u00b7 near miss" }[candidate.decisionFlag] || "");
     return `<div class="triage-bar"><span class="triage-done triage-${candidate.decision}">${label}</span>` +
       `<span class="hint">u to undo the latest decision</span></div>`;
   }
@@ -255,6 +263,10 @@ function triageBarHtml(candidate) {
     `<button type="button" class="triage-btn" data-decision="accept">Accept: is ${name} <kbd>a</kbd></button>` +
     `<button type="button" class="btn-secondary triage-btn" data-decision="reject">Reject: not ${name} <kbd>r</kbd></button>` +
     `<button type="button" class="btn-secondary triage-btn" data-decision="skip">Skip <kbd>s</kbd></button>` +
+    `<button type="button" class="btn-secondary triage-btn" data-decision="accept" data-flag="exemplar" ` +
+    `title="Accept, and flag as a clear, typical case for the codebook">\u2605 Exemplar <kbd>e</kbd></button>` +
+    `<button type="button" class="btn-secondary triage-btn" data-decision="reject" data-flag="near_miss" ` +
+    `title="Reject, and flag as a useful contrast: looks like the theme but isn't">Near miss <kbd>m</kbd></button>` +
     `</div>`;
 }
 
@@ -262,7 +274,7 @@ function visibleQueueItems() {
   return reviewState.queue ? reviewState.queue.items.filter((c) => (c.word_count || 0) >= reviewState.minWords) : [];
 }
 
-async function decideFocused(decision) {
+async function decideFocused(decision, flag = null) {
   const items = visibleQueueItems();
   const candidate = items[reviewState.focusIndex];
   if (!candidate || candidate.decision) return;
@@ -273,6 +285,7 @@ async function decideFocused(decision) {
       segment_id: candidate.segment_id, theme_id: candidate.decisionThemeId, decision,
       mode: reviewState.mode, queue_theme_id: reviewState.queueThemeId, engine: reviewState.engine,
       model_version: reviewState.queue.model_version, score: candidate.decisionScore, oof_score: candidate.decisionOof,
+      flag,
     }),
   });
   const data = await res.json();
@@ -281,9 +294,21 @@ async function decideFocused(decision) {
     return;
   }
   candidate.decision = decision;
+  candidate.decisionFlag = flag;
   candidate.decisionId = data.decision.decision_id;
   candidate.prevState = data.decision.prev_state;
+  candidate.prevFlag = data.decision.prev_flag;
   applyDecisionLocally(candidate, decision);
+  if (flag === "exemplar") {
+    candidate.exemplar_theme_ids = [...(candidate.exemplar_theme_ids || []).filter((id) => id !== candidate.decisionThemeId),
+      candidate.decisionThemeId];
+  } else if (decision === "reject") {
+    candidate.exemplar_theme_ids = (candidate.exemplar_theme_ids || []).filter((id) => id !== candidate.decisionThemeId);
+  }
+  reviewState.twinWarning = (data.twins && data.twins.length)
+    ? `Possible twin: that passage overlaps ${Math.round(data.twins[0].similarity * 100)}% with one already flagged ` +
+      `for this theme. Both are kept; check Train \u2192 Codebook.`
+    : "";
   reviewState.undoStack.push(candidate);
   reviewState.round = data.round;
   // Move on to the next undecided card.
@@ -324,10 +349,21 @@ async function undoLastDecision() {
   candidate.theme_ids = candidate.prevState === "coded" ? [...without(candidate.theme_ids), tid] : without(candidate.theme_ids);
   candidate.rejected_theme_ids = candidate.prevState === "rejected"
     ? [...without(candidate.rejected_theme_ids), tid] : without(candidate.rejected_theme_ids);
+  // The exemplar star comes back only if the original code row had it (prev_flag).
+  const others = (candidate.exemplar_theme_ids || []).filter((id) => id !== tid);
+  candidate.exemplar_theme_ids = candidate.prevState === "coded" && candidate.prevFlag ? [...others, tid] : others;
   candidate.decision = null;
+  candidate.decisionFlag = null;
   candidate.decisionId = null;
   reviewState.round = data.round;
-  reviewState.focusIndex = Math.max(0, visibleQueueItems().indexOf(candidate));
+  const shownAt = visibleQueueItems().indexOf(candidate);
+  if (shownAt < 0) {
+    // Decided before the queue was reloaded, so its card isn't on screen any more:
+    // reload, and the undone passage reappears (it's undecided again).
+    await loadModeQueue(false);
+    return;
+  }
+  reviewState.focusIndex = shownAt;
   renderModeQueue();
 }
 
@@ -355,7 +391,8 @@ function renderModeQueue() {
   summaryEl.textContent =
     `Showing ${q.items.length} of ${q.total}` + (hiddenCount ? ` (${hiddenCount} hidden by min words)` : "") +
     ` · ${engineLabel} run ${q.model_version}, threshold ${q.threshold.toFixed(3)}` +
-    (r ? ` · this round so far: ${r.accept} accepted, ${r.reject} rejected, ${r.skip} skipped` : "");
+    (r ? ` · this round so far: ${r.accept} accepted, ${r.reject} rejected, ${r.skip} skipped` : "") +
+    (reviewState.twinWarning ? ` · ${reviewState.twinWarning}` : "");
   reviewState.focusIndex = Math.min(reviewState.focusIndex, Math.max(0, visible.length - 1));
   if (!q.total) {
     listEl.innerHTML = reviewState.mode === "suspect"
@@ -519,7 +556,8 @@ function renderReviewCard(candidate) {
   div.dataset.segmentId = candidate.segment_id;
   div.style.marginLeft = Math.min(candidate.depth || 0, 6) * 20 + "px";
 
-  const chips = isInterviewer ? "" : buildChipsHtml(candidate.theme_ids, reviewState.themes, candidate.rejected_theme_ids);
+  const chips = isInterviewer ? "" : buildChipsHtml(candidate.theme_ids, reviewState.themes, candidate.rejected_theme_ids,
+    candidate.exemplar_theme_ids);
   const roleBadge = isInterviewer
     ? '<span class="seg-role-badge seg-role-interviewer">interviewer — not coded</span>'
     : "";
@@ -542,9 +580,14 @@ function renderReviewCard(candidate) {
       reviewState.focusIndex = Number(div.dataset.idx);
       document.querySelectorAll("#reviewModeList .exemplar-card").forEach((c) => c.classList.toggle("focused", c === div));
       if (triage) {
-        decideFocused(triage.dataset.decision);
+        decideFocused(triage.dataset.decision, triage.dataset.flag || null);
         return;
       }
+    }
+    const star = e.target.closest(".exemplar-star");
+    if (star) {
+      toggleExemplar(candidate, star.dataset.theme, rerenderReview);
+      return;
     }
     const chip = e.target.closest(".theme-chip");
     if (chip) {
@@ -621,9 +664,13 @@ function bindReviewEvents() {
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const actions = { a: "accept", r: "reject", s: "skip" };
+    const flagged = { e: ["accept", "exemplar"], m: ["reject", "near_miss"] };
     if (actions[e.key]) {
       e.preventDefault();
       decideFocused(actions[e.key]);
+    } else if (flagged[e.key]) {
+      e.preventDefault();
+      decideFocused(...flagged[e.key]);
     } else if (e.key === "u") {
       e.preventDefault();
       undoLastDecision();

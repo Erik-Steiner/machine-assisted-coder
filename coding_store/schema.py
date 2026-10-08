@@ -140,6 +140,9 @@ CREATE TABLE IF NOT EXISTS review_decisions (
     oof_score REAL,
     decision TEXT NOT NULL,          -- 'accept' | 'reject' | 'skip'
     prev_state TEXT NOT NULL,        -- 'coded' | 'rejected' | 'none', for undo
+    flag TEXT,                       -- 'exemplar' (with accept) | 'near_miss' (with reject) | NULL (v8)
+    prev_flag INTEGER,               -- the decided row's flag before, for undo (v8)
+    prev_flag_note TEXT,
     coder TEXT NOT NULL,
     decided_at TEXT NOT NULL,
     undone_at TEXT
@@ -369,7 +372,7 @@ CREATE TABLE IF NOT EXISTS dataset_status (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 def _now():
@@ -524,6 +527,18 @@ def _migrate(conn):
     review_cols = {row["name"] for row in conn.execute("PRAGMA table_info(item_reviews)")}
     if "read_in_full_confirmed_at" not in review_cols:
         conn.execute("ALTER TABLE item_reviews ADD COLUMN read_in_full_confirmed_at TEXT")
+
+    # schema_version 8: Review triage can flag while deciding -- `e` accepts and flags an
+    # exemplar, `m` rejects and flags a near miss (CODEBOOK_PLAN K3). The decision stays
+    # accept/reject, so per-round accept counts are unaffected; `flag` records the flag,
+    # and prev_flag/prev_flag_note what the row had before, so undo can restore it.
+    decision_cols = {row["name"] for row in conn.execute("PRAGMA table_info(review_decisions)")}
+    if "flag" not in decision_cols:
+        conn.execute("ALTER TABLE review_decisions ADD COLUMN flag TEXT")
+    if "prev_flag" not in decision_cols:
+        conn.execute("ALTER TABLE review_decisions ADD COLUMN prev_flag INTEGER")
+    if "prev_flag_note" not in decision_cols:
+        conn.execute("ALTER TABLE review_decisions ADD COLUMN prev_flag_note TEXT")
 
 
 def _stamp_schema_version(conn):

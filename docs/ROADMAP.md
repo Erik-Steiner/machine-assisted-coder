@@ -35,8 +35,11 @@ fixed.
 
 - **Priority:** stages 4–5 first (Phases A → B → C), then D, then E. F runs alongside.
 - **Stage 6 scope:** keep the existing optional local-embeddings install and full-corpus
-  export; add only a **round-trip import of external scores** (D). A local model picker, API
-  embeddings, and an LLM few-shot classifier are deferred until users ask for them.
+  export; add only a **round-trip import of external scores** (D). A local model picker and
+  API embeddings are deferred until users ask for them. **Changed 2026-10-08:** the researcher
+  asked for an in-app LLM topic coder after running it by hand (`scripts/llm_topics/`). It is
+  now D4, specified in [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) Part 2. It stays an optional
+  install, and its output is always a prediction, never a code.
 - **Negatives:** configurable per training run (`negative_mode`). Default `reviewed`
   (explicit rejects + reviewed-but-uncoded segments are negatives, and unread segments are
   unlabeled); `all_uncoded` keeps today's behavior.
@@ -137,7 +140,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
 - [x] **B3 Explanations:** *(Done 2026-10-07: highlighting in Review cards and Train exemplars; score bars on Review cards.)* highlight the theme's top terms in the card; per-theme score bars.
-- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 onward next.)* editable `codes.note`; `themes.inclusion_criteria` /
+- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 exemplars/near misses done 2026-10-08 (schema v8); K5 next.)* editable `codes.note`; `themes.inclusion_criteria` /
   `exclusion_criteria`; `codes.is_exemplar`. **Expanded 2026-10-07 into
   [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K1–K5:** adds boundary notes, near misses
   (`negatives.is_near_miss`), a `boundary` queue mode, a completeness check that prompts the
@@ -171,6 +174,11 @@ engine" depends on A4's engine-aware notion of "latest".
   `engineOfVersion` and `topic_model_export._engine_prefix` the `ext` prefix.
 - [ ] **D3 Engine comparison** per theme: CV metrics, gold-sample metrics, pairwise agreement
   at each engine's threshold.
+- [ ] **D4 In-app LLM topic coding** (added 2026-10-08): discover emergent topics around the
+  researcher's themes, pilot the coding against the researcher's codes with disagreements
+  adjudicated in Review, then code every turn via the Batch API and export the coded turns,
+  a topic summary and a methods note. Spec and lessons from the hand-run version:
+  [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) L1–L9. Builds on K3–K7 and D2's import path.
 
 ## Phase E — Explore tab (stage 7)
 
@@ -207,7 +215,7 @@ engine" depends on A4's engine-aware notion of "latest".
 | M2 | A6, B1, B2 (the core active-learning loop) |
 | M3 | B3–B6 |
 | M4 | C1–C4 |
-| M5 | D1–D3 |
+| M5 | D1–D3, then D4 |
 | M6 | E3, E4, then E0, E1, E2, E5 |
 
 ## Schema changes (additive only)

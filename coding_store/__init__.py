@@ -9,6 +9,8 @@ duplicates/dataset_status/activity_log together:
   segments.py       -- speaker-turn segments (scripts/build_segments.py's output).
   themes.py         -- the researcher's codebook: create/edit/archive/merge.
   codes.py          -- codes applied to segments, and explicit rejections.
+  examples.py       -- exemplar / near-miss flags on code / rejection rows, and
+                       the twin check when flagging.
   codebook.py       -- codebook completeness: criteria, exemplars, near misses,
                        read-in-full coverage (advisory checks for the Codebook page).
   labels.py         -- effective labels: sub-code roll-up and rejection rules,

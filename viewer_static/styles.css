@@ -1044,6 +1044,39 @@ button.btn-secondary {
   resize: vertical;
 }
 .codebook-actions { display: flex; align-items: center; gap: 10px; }
+#codebookDetailContent h3 { font-size: 14px; margin: 24px 0 4px 0; }
+.codebook-examples { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.codebook-example {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: var(--panel);
+  font-size: 13px;
+}
+.codebook-example-meta { font-size: 11px; color: var(--text-dim); margin-bottom: 4px; }
+.codebook-example-text { line-height: 1.5; }
+.codebook-example-note { font-size: 12px; margin-top: 4px; font-style: italic; }
+.codebook-example-actions { display: flex; gap: 6px; margin-top: 6px; }
+.codebook-example-actions button { font-size: 11px; padding: 2px 8px; }
+.codebook-twin {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px dashed var(--text-dim);
+  margin-left: 6px;
+}
+/* Exemplar star after a coded chip (coding.js's exemplarStarHtml) */
+.exemplar-star {
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 2px;
+  margin-left: -4px;
+}
+.exemplar-star.on { color: #e0a800; }
+.exemplar-star:hover { color: #e0a800; }
 #modelCodebookNote:empty { display: none; }
 #modelCodebookNote a { cursor: pointer; text-decoration: underline; }
 .theme-codebook-badge {

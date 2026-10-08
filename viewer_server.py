@@ -110,6 +110,13 @@ Endpoints:
     POST /api/codebook/themes/<id>/update            -> edit a theme's fields (name/description/
                                                          example_words/color/parent_theme_id/sort_order/
                                                          inclusion_criteria/exclusion_criteria/boundary_notes)
+    POST /api/codebook/flag                          -> {segment_id, theme_id, kind: exemplar|near_miss,
+                                                         flagged: bool, note?} -> flag/unflag the active code
+                                                         (exemplar) or rejection (near miss); 400 if there's
+                                                         none. Returns twins: already-flagged look-alikes
+                                                         (a warning only) -- see coding_store/examples.py
+    GET  /api/codebook/examples?theme_id=<id>         -> {exemplars, near_misses}: the theme's flagged
+                                                         passages with notes and twin_of links
     GET  /api/codebook/overview?scheme_id=<id>        -> every active theme with its codebook fields,
                                                          counts (positives, exemplars, near misses, read-in-
                                                          full interviews with a positive) and completeness
@@ -173,7 +180,8 @@ Endpoints:
                                                          one run (empty for embedding runs)
     POST /api/review/decisions                       -> {segment_id, theme_id, decision: accept|reject|skip,
                                                          mode, queue_theme_id, engine?, model_version?,
-                                                         score?, oof_score?} -> apply (accept = code it,
+                                                         score?, oof_score?, flag?: exemplar (with accept) |
+                                                         near_miss (with reject)} -> apply (accept = code it,
                                                          reject = record a rejection, skip = nothing) and
                                                          record a triage decision; returns it plus the
                                                          round's counts -- see coding_store/decisions.py
@@ -384,6 +392,7 @@ from coding_store import (
     codes as codes_store,
     dataset_status as dataset_status_store,
     decisions as decisions_store,
+    examples as examples_store,
     duplicates,
     model_runs,
     queues,
@@ -1295,6 +1304,30 @@ def post_codebook_themes(req):
     return JsonResponse(theme, status=201)
 
 
+@ROUTER.post("/api/codebook/flag", json_body=True, required=["segment_id", "theme_id", "kind"])
+def post_codebook_flag(req):
+    body = req.body
+    try:
+        result = examples_store.set_flag(
+            body["segment_id"], body["theme_id"], body["kind"], bool(body.get("flagged", True)),
+            note=body.get("note"), coder=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, **result})
+
+
+@ROUTER.get("/api/codebook/examples")
+def get_codebook_examples(req):
+    theme_id = req.query.get("theme_id") or ""
+    if themes.get_theme(theme_id) is None:
+        return JsonResponse({"error": f"unknown theme '{theme_id}'"}, status=400)
+    return JsonResponse({
+        "exemplars": examples_store.annotate_twins(examples_store.list_flagged(theme_id, "exemplar")),
+        "near_misses": examples_store.annotate_twins(examples_store.list_flagged(theme_id, "near_miss")),
+    })
+
+
 @ROUTER.get("/api/codebook/overview")
 def get_codebook_overview(req):
     scheme_id = req.query.get("scheme_id") or ""
@@ -1353,9 +1386,12 @@ def get_coding_segments(req):
     segments = segments_store.get_segments_for_item(item_id)
     codes_by_segment = codes_store.get_codes_for_segment_ids([s["segment_id"] for s in segments])
     rejections_by_segment = codes_store.get_negatives_for_segment_ids([s["segment_id"] for s in segments])
+    exemplars_by_segment = examples_store.flagged_theme_ids([s["segment_id"] for s in segments], "exemplar",
+                                                             coder=CODER_NAME)
     for s in segments:
         s["theme_ids"] = codes_by_segment.get(s["segment_id"], [])
         s["rejected_theme_ids"] = rejections_by_segment.get(s["segment_id"], [])
+        s["exemplar_theme_ids"] = exemplars_by_segment.get(s["segment_id"], [])
     # "Reviewed" state for the requested scheme (roadmap A6) -- see coding_store/reviewed.py.
     item_review = None
     if scheme_id:
@@ -1568,12 +1604,13 @@ def post_review_decision(req):
             body["segment_id"], body["theme_id"], body["decision"], mode=body["mode"],
             engine=body.get("engine"), model_version=body.get("model_version"),
             queue_theme_id=body["queue_theme_id"], score=body.get("score"), oof_score=body.get("oof_score"),
-            coder=body.get("coder") or CODER_NAME,
+            coder=body.get("coder") or CODER_NAME, flag=body.get("flag") or None,
         )
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
     summary = decisions_store.round_summary(body.get("model_version"), body["queue_theme_id"], body["mode"])
-    return JsonResponse({"decision": row, "round": summary})
+    twins = examples_store.find_twins(body["segment_id"], body["theme_id"], row["flag"]) if row["flag"] else []
+    return JsonResponse({"decision": row, "round": summary, "twins": twins})
 
 
 @ROUTER.post("/api/review/decisions/undo", json_body=True, required=["decision_id"])

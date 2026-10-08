@@ -332,6 +332,14 @@ definition, both criteria, 3 exemplars from 2+ groups, 2 near misses, a positive
 interview), and each theme shows a score like 2/5. These checks are advisory: training and export
 always work. The Code tab's theme rows show the same score; click it to open that theme.
 
+**Exemplars and near misses.** Flag a coded passage as an *exemplar* (a clear, typical case) with the
+☆ right after its theme chip in the Code tab or on a Review card; you can add a note on why. In
+Review queues, press `e` to accept a passage and flag it as an exemplar, or `m` to reject it and
+flag it as a *near miss* (it looks like the theme but isn't). Each theme's Codebook page lists its
+exemplars and near misses, where you can open, annotate or unflag them. If a passage you flag is
+near-identical to one already flagged (the same video held twice, for example), you get a warning
+and the list marks it "possible twin". Nothing is blocked.
+
 1. Click **Train / retrain this scheme's themes**. This retrains every theme in the active coding
    scheme (picked in the Code tab) that has at least 25 coded segments, in one background pass,
    and polls until done. There's no per-theme button. Tick **Train every scheme's themes
