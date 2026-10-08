@@ -55,7 +55,7 @@ schema, not something to rename.
 | What counts as positive / negative (roll-up, rejections, "fully coded" and read-in-full marks) | `coding_store/labels.py`, `coding_store/reviewed.py`, `classifier.py`'s `NEGATIVE_MODES`/`training_labels`, `tests/test_labels.py` |
 | Disk footprint: pruning old runs' scores, pins, compaction | `coding_store/storage.py` (`plan_prune` is the deletion rule), `viewer_static/storage.js`, `tests/test_storage.py` |
 | Codebook page (Train → Codebook): criteria, completeness, exemplars, near misses | `viewer_static/codebook.js`, `coding_store/codebook.py` (`theme_completeness`), `coding_store/examples.py`, `tests/test_codebook.py`; the plan and what's left (K4, K6–K8, the `codebook_topic_themes.json` export) is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) |
-| LLM topic-coding pipeline (external, reads `exports/` only) | `scripts/llm_topics/` (`common.py`'s docstring first); its planned in-app version is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) Part 2 (L1–L9) |
+| LLM topic-coding pipeline (external, reads `exports/` only) | `scripts/llm_topics/` (`common.py`'s docstring first); its planned in-app version is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) Part 2 (L0–L9; L0 keeps it method-neutral so embedding clustering can join later) |
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
 | Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
@@ -147,6 +147,10 @@ schema, not something to rename.
   (`start`/`mutate`/`update`/`get`/`has_running`) on the backend, `pollBackgroundJob()` in
   `app.js` on the frontend. Use these for a new long-running action rather than hand-rolling
   another `{job_id: {...}}` dict or another recursive `setTimeout` poll loop.
+- Sub-tabs within a page (Train's Codebook | Models, Review's Queues | Recode) share one seam:
+  `app.js`'s `setupSubnav`/`showSubpage`/`currentSubpage`/`goToSubpage`, with
+  `.subnav-btn[data-subpage]` buttons and `.subpage[data-subpage]` panels. Use it for a new
+  sub-tab or deep link rather than another hand-rolled switcher.
 - `source`/`note`/`coder` fields on `codes` exist for provenance (e.g. `review.js` tags
   recode actions `source: "recoded"`). Prefer tagging new write paths this way over adding a
   parallel audit table. The one deliberate exception is `review_decisions`

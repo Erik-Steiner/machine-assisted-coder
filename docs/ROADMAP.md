@@ -165,6 +165,8 @@ engine" depends on A4's engine-aware notion of "latest".
   strip on both pages shows the round and what's stale, a Decide panel records each round's
   outcome, and hand-offs move the researcher round the loop. It gives C1–C4 and D3 their
   homes. Spec: [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) Part 3 (U1–U7). U1–U3 can go first.
+  *(U1 the shared sub-tab helper done 2026-10-08: Train is Codebook | Models, Review is
+  Queues | Recode. Runs and Evaluate arrive with U2 and U6.)*
 
 ## Phase D — Stage 6: external-score round trip
 
@@ -183,7 +185,9 @@ engine" depends on A4's engine-aware notion of "latest".
   researcher's themes, pilot the coding against the researcher's codes with disagreements
   adjudicated in Review, then code every turn via the Batch API and export the coded turns,
   a topic summary and a methods note. Spec and lessons from the hand-run version:
-  [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) L1–L9. Builds on K3–K7 and D2's import path.
+  [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) L0–L9. Storage, topic review and deliverables are
+  method-neutral (L0, 2026-10-08), so embedding clustering (E2) joins later as a second topic
+  method. Builds on K3–K7 and D2's import path.
 
 ## Phase E — Explore tab (stage 7)
 
@@ -201,7 +205,11 @@ engine" depends on A4's engine-aware notion of "latest".
 - [ ] **E2 Clustering:** `sklearn.cluster.HDBSCAN` / KMeans, corpus-wide or within one theme;
   writes the existing `cluster_runs`/`clusters`/`cluster_segments` tables; cluster labels from
   top terms and the passages nearest each centroid; "Promote to sub-code" → new child theme
-  + triage queue.
+  + triage queue. *(2026-10-08: this is also the second topic method of CODEBOOK_PLAN L0, the
+  embeddings-plus-clustering alternative to the Claude API. It plugs into D4's method-neutral
+  layer: proposed topics use the same review screen, accepted ones become themes, per-turn
+  assignments go to `topic_turn_codes`, and the L8 deliverables come out unchanged. Optional
+  `umap-learn` / `bertopic` in `requirements-explore.txt`.)*
 - [ ] **E5 Most- and least-typical passages:** rank coded segments by closeness to their
   theme's centroid; the most typical become exemplar candidates, the outliers feed `suspect`.
 

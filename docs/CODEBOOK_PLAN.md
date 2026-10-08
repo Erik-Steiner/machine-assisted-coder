@@ -2,8 +2,9 @@
 
 Agreed 2026-10-07; Part 2 added 2026-10-08. **Part 1** (K1–K8) expands roadmap items **B4**
 (memos and codebook rigor) and **D1** (scoring-pack export) into buildable work. **Part 2**
-(L1–L9) brings the LLM topic-coding procedure, first run by hand in `scripts/llm_topics/`,
-into the app (roadmap D4). Build Part 2 after K3–K7: it consumes everything they add.
+(L0–L9) brings the LLM topic-coding procedure, first run by hand in `scripts/llm_topics/`,
+into the app (roadmap D4). Its storage, topic review and deliverables are method-neutral (L0),
+so embedding clustering can join later as a second topic method (roadmap E2). Build Part 2 after K3–K7: it consumes everything they add.
 **Part 3** (U1–U7) reorganizes Train and Review into tabs around the iterative
 codebook → train → review → evaluate → decide cycle, and prompts the researcher round
 the loop. U1–U3 can start before Part 2, since they help the TF-IDF loop on their own. It is written for a
@@ -447,7 +448,7 @@ material. Whichever source it reads, stage 0's checks against current labels (th
 flags and the issue list in `codebook_resolved.json`) must still run. K8 is the bridge for
 the scripts; Part 2 replaces them in the app.
 
-## Part 2 — In-app LLM topic coding (L1–L9)
+## Part 2 — In-app LLM topic coding (L0–L9)
 
 Added 2026-10-08. Part 1 (K1–K8) makes the codebook complete and exportable. Part 2 brings
 the procedure that consumed it into the app: discover topics around the researcher's themes,
@@ -519,6 +520,55 @@ Shared modules: `common.py` (paths, models, `STUDY_CONTEXT`), `llm.py` (every AP
 10. **Version everything by content hash.** A codebook edit gives a new `codebook_version`
     and a fresh set of calls. Stored records are reused only for an identical prompt.
 
+### L0 One topic-run layer, more than one method
+
+Added 2026-10-08, at the researcher's request. There are two routes to an emergent topic model,
+and researchers should be able to choose either:
+- **The Claude API procedure** (this Part): an LLM discovers topics around the locked themes,
+  then codes every turn.
+- **Sentence embeddings plus clustering** (BERTopic-style, built later as roadmap E2): a local
+  encoder (MiniLM, BERT or similar) embeds the passages, clustering finds the topics, and each
+  turn gets its nearest topic.
+
+Both produce the same things: a run, proposed topics around the locked themes, a topic per
+turn with a confidence, and the L8 deliverables. **Build the storage, the topic review, the
+projection into Review, Evaluate and the deliverables once, method-neutral.** The LLM is the
+first method. Embedding clustering must later plug in as a second method with no new tables,
+screens or export format, and with nothing in this Part changing.
+
+**What each method supplies:**
+
+| Step | LLM (`llm`, this Part) | Embedding clustering (`embed_cluster`, later) |
+|---|---|---|
+| Prepare | L3, shared | L3, shared |
+| Discover | Sonnet proposes topics with definitions (map → reduce) | Embed segments, optionally reduce (UMAP), cluster (HDBSCAN / KMeans); label each topic by its distinctive terms (c-TF-IDF) and representative passages. The researcher writes the definition. |
+| Codebook guidance | Themes, exemplars and near misses go in the prompt | Theme centroids from the exemplars (and embedded definitions), near misses as contrast. Segments close to a locked theme go to it; clustering runs on the rest, so topics form *around* the locked themes, as in L4. |
+| Pilot | Codes the gold interviews; L5 metrics | Assigns topics on the same interviews; the same L5 metrics |
+| Full run | Batch API, behind a spending confirmation | Local compute, free; a background job |
+| Per-turn output | primary, secondary, confidence, summary, justification | primary = nearest topic, secondary = next nearest above a floor, confidence = membership probability or similarity; summary and justification blank |
+| Unit | Turn | Segment, rolled up to turns via K6 (a turn takes its segments' highest confidence). Segments (≤220 words) suit sentence encoders, whose input limit is about 256 word pieces; turns can be far longer and would be cut off. |
+| Optional install | `requirements-llm.txt` and an API key (L1) | `requirements-embeddings.txt` (exists), plus `umap-learn` and optionally `bertopic` in a `requirements-explore.txt`. scikit-learn's HDBSCAN and KMeans are already core. |
+| Reproducibility | Calls reused by content hash | Encoder name, seed and parameters in the run's settings JSON; vectors reused from the embeddings cache |
+
+**Rules for the shared layer:**
+- **One module per method,** behind a common interface: discover (sample, codebook, settings) →
+  proposed topics; code (turns, codebook, accepted topics, settings) → per-turn rows. Storage,
+  topic review, projection, Evaluate, deliverables and logging never branch on the method,
+  except to show what it supplied.
+- **A registry, not hard-coded lists.** The server lists each topic method (label, readiness:
+  dependencies installed, key found; whether it costs money) and each score engine (label and
+  `model_version` prefix, from `coding_store/model_runs.py`'s `ENGINE_PREFIXES`), through one
+  endpoint. The Models switcher, the run selector, the Runs tab and Evaluate read it. This
+  replaces `model.js`'s hard-coded `ENGINE_LABELS` and Review's fixed TF-IDF / Embedding
+  dropdown.
+- **Spending gates and the API key check belong to methods that cost money** and appear only
+  for them.
+- **Embedding classifier vs. embedding clustering.** The existing Embedding engine is a
+  supervised classifier; embedding clustering is a topic method. Label them so they can't be
+  confused, and list them in separate groups wherever both appear.
+- **Only the LLM method is built in this Part.** Embedding clustering is roadmap E2, built on
+  this layer when researchers ask for it.
+
 ### L1 Optional dependency and API key
 
 - `requirements-llm.txt` lists `anthropic`, `python-dotenv` and `pydantic`. As with
@@ -538,22 +588,28 @@ researcher decided. New tables via `CREATE TABLE IF NOT EXISTS`, so no version b
 
 | Table | Holds |
 |---|---|
-| `llm_runs` | run_id, kind (`discovery` / `pilot` / `full`), scheme_id, model, settings JSON, codebook_version, codebook snapshot JSON, study_context, status, cost, started/finished, coder |
-| `llm_calls` | run_id, request key, request JSON (system prompt stored once per run, by hash), response JSON, request_id, served_by_model, usage, created_at. This is `scripts/llm_topics/llm.py`'s record, moved into the database. |
-| `llm_turn_codes` | run_id, dataset_id, item_id, turn_index, primary_topic_id, secondary_topic_id, confidence, topic_summary, justification, coded_by (`model` / `rule`) |
-| `llm_topics` | run_id, topic_id, name, origin (`seed` / `emergent` / `fixed`), definition, include, exclude, boundary_notes, examples JSON, status (`proposed` / `accepted` / `rejected` / `merged_into`) |
+| `topic_runs` | run_id, method (`llm` / `embed_cluster`), kind (`discovery` / `pilot` / `full`), scheme_id, model (LLM or encoder), settings JSON, codebook_version, codebook snapshot JSON, study_context, status, cost (null for free methods), started/finished, coder |
+| `llm_calls` (LLM method only) | run_id, request key, request JSON (system prompt stored once per run, by hash), response JSON, request_id, served_by_model, usage, created_at. This is `scripts/llm_topics/llm.py`'s record, moved into the database. |
+| `topic_turn_codes` | run_id, dataset_id, item_id, turn_index, primary_topic_id, secondary_topic_id, confidence, topic_summary, justification (both blank for methods that write none), coded_by (`model` / `rule` / `cluster`) |
+| `topic_run_topics` | run_id, topic_id, name, origin (`seed` / `emergent` / `fixed`), definition, include, exclude, boundary_notes, keywords JSON (clustering's distinctive terms; may be empty for the LLM), examples JSON, size, status (`proposed` / `accepted` / `rejected` / `merged_into`) |
+
+These names are method-neutral on purpose (L0). Clustering detail with no LLM equivalent
+(segment-to-cluster membership, centroids) goes in the existing, so far unused `cluster_runs` /
+`clusters` / `cluster_segments` tables, joined on `run_id`.
 
 **Open question for the researcher:** where accepted emergent topics live.
-- **(a)** As themes in the scheme, with a new `themes.origin` column (schema bump). The
-  researcher can then code them, train on them, and flag exemplars like any theme.
-- **(b)** Only in `llm_topics`, for this run. Simpler, but they can't be coded by hand.
+- **(a)** As themes in the scheme, with new `themes.origin`, `origin_method` and
+  `origin_run_id` columns (one schema bump), so a theme records which method and run proposed
+  it. The researcher can then code them, train on them, and flag exemplars like any theme.
+- **(b)** Only in `topic_run_topics`, for this run. Simpler, but they can't be coded by hand.
 
 Recommend (a), as the hybrid deductive–inductive design intends.
 
 **Projection for Review:** for each run and theme, write
-`predictions(model_version = "llm_<run_id>", segment_id, theme_id, score)`. A segment scores
+`predictions(model_version = "<method prefix><run_id>", segment_id, theme_id, score)`, with
+one `ENGINE_PREFIXES` entry per method (`llm`, later `cluster`). A segment scores
 the highest confidence among its turns where the theme is primary or secondary (via K6), or
-0 otherwise. This reuses D2's import path (the `ext` / `llm` engine prefix), so Review's
+0 otherwise. This reuses D2's import path (the `ext` / method engine prefixes), so Review's
 queues, top terms and score bars work unchanged. Pin these runs (A7) so pruning never drops
 them.
 
@@ -573,7 +629,8 @@ acknowledgement in the run dialog. Examples: "near miss X is now coded with this
 
 ### L4 Discover (stage 1)
 
-A "Discover topics" action on the Codebook page, run as a background job:
+A "Discover topics" action on the Codebook page, run as a background job. It asks for a method
+(L0); only the LLM exists in this Part, and this is its spec:
 - **Sampling:** as `stage1_discover.draw_sample()`:
   - 1,500 executive turns of at least 20 words
   - about 70% random, stratified by group with a floor
@@ -581,7 +638,9 @@ A "Discover topics" action on the Codebook page, run as a background job:
   - never from read-in-full interviews or prompt examples
 - **Calls:** map batches of 100 turns, then one reduce, on Sonnet 5.5. The prompts are in
   `stage1_discover.py`.
-- **Researcher review:** the draft appears as `proposed` topics. Each can be accepted,
+- **Researcher review:** the draft appears as `proposed` topics. The review screen is
+  method-neutral: each topic shows its name, definition (if the method wrote one), keywords,
+  size and example passages. E2's clustering and its "Promote to sub-code" use the same screen. Each can be accepted,
   edited, merged into another, or rejected, and accepting creates the theme (L2 open
   question).
 - **Example passages:** shown for every proposed topic. A passage becomes a researcher
@@ -598,19 +657,19 @@ A "Pilot coding" action, as `stage2_pilot.py`:
 - **Interviews:** every read-in-full interview, plus 3 random interviews per group.
 - **Call settings:** the same prompt and chunking the full run will use (L7), on Haiku 4.5
   at temperature 0.
-- **Report** (persisted in `llm_runs` and shown in the UI):
+- **Report** (persisted in `topic_runs` and shown in the UI):
   - per seed theme: precision, recall and F1 with 95% Wilson intervals, both for
     primary-or-secondary and for primary only
   - the TF-IDF baseline on the same turns
   - confidence calibration by band
   - the topic distribution, including the `other` share
-- **Disagreements go to Review, not a CSV.** Add a queue mode `llm_disagreement` (same
+- **Disagreements go to Review, not a CSV.** Add a queue mode `pilot_disagreement` (same
   shape as K4's `boundary`):
-  - LLM yes, gold no: `a` = it is the theme (writes a code; the original coding missed it),
+  - model yes, gold no: `a` = it is the theme (writes a code; the original coding missed it),
     `r` = reject (confirms the gold)
-  - LLM no, gold yes: `a` = keep the code, `r` = the code was wrong
+  - model no, gold yes: `a` = keep the code, `r` = the code was wrong
   
-  Record every decision in `review_decisions` with `mode='llm_disagreement'`. Report
+  Record every decision in `review_decisions` with `mode='pilot_disagreement'`. Report
   precision before and after adjudication: before, it's a lower bound.
 - **Gate:** the full run (L6) is offered only after a pilot on the current
   `codebook_version`. If the codebook changes, the pilot must be re-run.
@@ -629,7 +688,7 @@ Not yet built anywhere; this is its spec.
   about $1 per 1,100 turns scales to about $24 for 26,200 turns at standard rates, about
   $12–15 batched. Show the estimate in the run dialog, and spend only after the researcher
   confirms.
-- **Logging:** `llm_run` start and finish (model, codebook_version, turns, cost) to
+- **Logging:** `topic_run` start and finish (method, model, codebook_version, turns, cost) to
   `activity_log`, with labels in `appendix.js`.
 - **Reliability (optional):** re-code a 5% random sample and report run-to-run agreement
   (Cohen's kappa on the primary topic).
@@ -669,7 +728,10 @@ An export button on the run, writing into `EXPORTS_DIR`:
   - `primary_topic_id`, `secondary_topic_id`, `confidence`, `topic_summary`,
     `justification`, `coded_by`, `codebook_version`, `run_id`
   
-  Rows outside the coding scope keep blank codes, and `coded_scope` says why.
+  Rows outside the coding scope keep blank codes, and `coded_scope` says why. The columns are
+  method-neutral: a method that writes no summary or justification leaves them blank, and
+  `coded_by` and `run_id` identify the method's output. `topic_summary.csv` adds `keywords` and
+  each topic's `origin_method`. `methods_note.md` is written from the run's method and settings.
 - **`topic_summary.csv`:** one row per topic: `topic_id`, `name`, `origin`, `description`,
   `include`, `exclude`, `n_primary`, `n_secondary`, counts per group, mean confidence, two
   example `comment_id`s. `topic_id` joins to both topic columns of the coded file.
@@ -739,8 +801,8 @@ the researcher says otherwise.
 
 | Tab | Decisions housed here | What moves in |
 |---|---|---|
-| Codebook (exists, K2/K3) | Definitions, criteria, exemplars, near misses; accept, edit, merge or reject proposed emergent topics (L4); acknowledge codebook issues (L3); export the codebook (K7) | Proposed-topics review; codebook issues |
-| Models | Which engine, with what settings, on which themes; then run it | An engine switcher **TF-IDF / Embedding / LLM** (segmented control). Each engine panel has its readiness (install button, API-key status), settings (negative mode for TF-IDF; model, `PRIORITIZE_SEED_THEMES` and study context for LLM), cost estimate and run button. The per-theme metrics view stays. |
+| Codebook (exists, K2/K3) | Definitions, criteria, exemplars, near misses; accept, edit, merge or reject proposed emergent topics from any topic method (L4, L0); acknowledge codebook issues (L3); export the codebook (K7) | Proposed-topics review; codebook issues |
+| Models | Which engine, with what settings, on which themes; then run it | An engine switcher **TF-IDF / Embedding / LLM** (segmented control), filled from the registry (L0): score engines (TF-IDF, the Embedding classifier) and topic methods (LLM; later Embedding clustering) in separate groups. Each engine panel has its readiness (install button, API-key status), settings (negative mode for TF-IDF; model, `PRIORITIZE_SEED_THEMES` and study context for LLM), cost estimate and run button. The per-theme metrics view stays. |
 | Runs (new) | Which run to trust, compare, pin or export | The run history across engines, with each run's codebook version; D3 comparison; C1 learning curves; pin/unpin (A7); the Storage panel; export of the full-corpus scores and the L8 deliverables |
 
 That clears the Models sidebar. Export, Storage and the embedding install bar move out, and
@@ -750,12 +812,12 @@ each engine's controls appear only when that engine is selected.
 
 | Tab | Decisions housed here | What moves in |
 |---|---|---|
-| Queues | Is each passage the theme or not; flag exemplars and near misses | Today's queue modes (top, borderline, random check, likely mislabels, overlap), plus `boundary` (K4) and `llm_disagreement` (L5). The `#reviewMode` dropdown loses its Recode option. |
+| Queues | Is each passage the theme or not; flag exemplars and near misses | Today's queue modes (top, borderline, random check, likely mislabels, overlap), plus `boundary` (K4) and `pilot_disagreement` (L5). The `#reviewMode` dropdown loses its Recode option. |
 | Recode | Existing coded + top-predicted list, unchanged | Today's `recode` view |
 | Evaluate (new) | Is this run good enough, and what next | The selected run's metrics against gold: per-theme precision/recall/F1 with intervals, the TF-IDF baseline, calibration, topic distribution, and before/after adjudication. A **Decide** panel at the bottom (U4). |
 
 The **"Model scores from"** selector becomes a **run selector** shared by all three Review
-tabs: any run of any engine, labelled engine · date · codebook version, defaulting to the
+tabs: any run of any engine or topic method in the registry (L0), labelled engine · date · codebook version, defaulting to the
 latest run. Queues and Evaluate act on the selected run.
 
 ### Wireframes
@@ -787,7 +849,26 @@ REVIEW  [ Queues | Recode | Evaluate ]      Run: LLM pilot · 10-08 · cb_00bf�
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### U1 One sub-tab helper for both pages
+### U1 One sub-tab helper for both pages — done 2026-10-08
+
+**As built:**
+- **Helper.** `app.js`'s `setupSubnav(tab, navEl, {initial, onChange, beforeChange})`, with
+  `showSubpage(tab, name)`, `currentSubpage(tab)` and `goToSubpage(tab, name)`. It's keyed by
+  top-level tab, not by nav element, so a deep link needs only names. Buttons are
+  `.subnav-btn[data-subpage]`; panels are `.subpage[data-subpage]`, and a page may mark several
+  panels with one name.
+- **Train:** Codebook | Models, opening on Models (the researcher's answer to question 8).
+  `codebook.js` registers it; its unsaved-edits prompt is the `beforeChange` hook.
+  `switchModelSubpage()` and `codebookState.subpage` are gone.
+- **Review:** Queues | Recode, opening on Recode, the page's previous default. `#reviewMode` lost
+  its Recode option and is now labelled "Queue". `reviewState.queueMode` remembers the queue while
+  Recode is showing, and `applyReviewMode()` derives `reviewState.mode` from the sub-tab.
+- **Not yet:** the Runs and Evaluate tabs. They arrive with U2 and U6, with their content.
+  `goToSubpage()` takes no options yet (the `{ run }` deep link waits for the run selector).
+
+Verified in the test project: every tab and sub-tab, every queue mode, the unsaved-edits prompt
+(cancel and discard), triage keys active on Queues only, and the Code tab's "Codebook n/5" deep
+link. No console errors. The original spec follows.
 
 `codebook.js` owns the Train switcher today (`codebookState.subpage`, `.model-subnav-btn`,
 `data-subpage`). Lift it into a small shared helper in `app.js`, e.g.
@@ -806,7 +887,7 @@ errors on every tab before going further.
   trained_at, `codebook_version`, negative mode, labels used (positives / negatives), headline
   metrics, pinned, and the round it belongs to.
 - **Record codebook_version on every run:** TF-IDF and embedding runs in `model_run_params`,
-  LLM runs in `llm_runs`. Without it the cycle strip can't tell whether the codebook changed
+  topic runs (any method) in `topic_runs`. Without it the cycle strip can't tell whether the codebook changed
   since a run.
 - **Comparison and history:** home for D3's engine comparison (two or more selected runs,
   same gold) and C1's learning curves.
@@ -823,7 +904,7 @@ errors on every tab before going further.
 | Codebook edited after the latest run (definition, criteria, exemplar or near-miss changes; compare `codebook_version`) | The run doesn't reflect the codebook | Retrain (Train › Models) |
 | Codes, rejections or "fully coded" marks added since the latest run | New labels not yet used | Retrain |
 | A run newer than any review decision on it | Not yet looked at | Review (Review › Queues) |
-| Unadjudicated `llm_disagreement` items | The run's precision is still a lower bound | Adjudicate (Review › Queues) |
+| Unadjudicated `pilot_disagreement` items | The run's precision is still a lower bound | Adjudicate (Review › Queues) |
 | No evaluation viewed or decision recorded for the latest run | The round is open | Evaluate & decide (Review › Evaluate) |
 | Codebook issues not acknowledged (L3) | Prompt examples may be wrong | Fix them (Train › Codebook) |
 
@@ -848,7 +929,7 @@ errors on every tab before going further.
   They can add a note, then "Record decision & go →".
 - **Store:** a new table (no version bump), e.g. `iteration_decisions(decision_id, scheme_id,
   round_no, run_ref, codebook_version, decision, note, coder, created_at)`. `run_ref` is a
-  `model_version` or an LLM `run_id`. Recording a decision closes the round, and the next run
+  `model_version` or a topic run's `run_id`. Recording a decision closes the round, and the next run
   opens round n+1.
 - **After recording,** the app navigates to the tab that decision implies:
   - refine codebook → Train › Codebook
@@ -861,8 +942,8 @@ errors on every tab before going further.
 ### U5 Hand-offs that prompt the next step
 
 - **When a run finishes** (any engine), the status line offers "Review this run →". That opens
-  Review › Evaluate with the run selected. If it is an LLM pilot with disagreements, it opens
-  the `llm_disagreement` queue instead.
+  Review › Evaluate with the run selected. If it is a pilot (any topic method) with disagreements, it opens
+  the `pilot_disagreement` queue instead.
 - **After a review session,** once decisions have been recorded since the run, Review shows
   "Retrain with N new decisions →" (Train › Models, same engine selected).
 - **After a codebook edit,** Train › Codebook shows "Codebook changed. Retrain →".
@@ -877,7 +958,8 @@ errors on every tab before going further.
 - **One unit for comparison.** Evaluate at the **turn** level, as `stage2_pilot.py` does: roll
   TF-IDF and embedding segment scores up to turns (max over a turn's segments, via K6).
   Then all engines are compared on the same items.
-- **Exclude prompt examples and their twins** for LLM runs, and training examples for
+- **Exclude prompt examples and their twins** for LLM runs, the exemplars a codebook-guided
+  clustering run seeded its centroids with (and their twins), and training examples for
   TF-IDF/embedding runs (use out-of-fold scores, as the pilot's baseline does).
 - **What it shows:** the metrics listed in L5, for any run. It works for TF-IDF alone before
   any LLM exists, so it is useful from the first round.
@@ -942,7 +1024,8 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
 
 - In Part 1, calling any LLM or external model from the app: Part 1 only makes the codebook
   complete and exportable. Part 2 adds the LLM calls, as separate items, built after K3–K7.
-- Writing LLM output into `codes` or `negatives`, ever (L2). Only the researcher writes codes;
+- Writing any model's output (LLM, clustering or classifier) into `codes` or `negatives`, ever
+  (L2). Only the researcher writes codes;
   an accepted disagreement in Review writes a code because the researcher decided it.
 - Changing segmentation constants, or re-segmenting.
 - Deleting or rewriting the existing `topic_seed_pack` / `segment_topic_scores` exports.
@@ -968,3 +1051,6 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
 9. Part 3: what counts as "good enough" for the Decide panel? A per-theme target F1 (or
    precision/recall floor) set by the researcher would let the strip say "target met" rather
    than leaving every round open-ended.
+10. Later, embedding clustering (L0, E2): which encoder by default (MiniLM is installed;
+    larger models are slower but usually better), and should clustering cover every executive
+    segment or only those not already close to a locked theme?
