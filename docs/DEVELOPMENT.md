@@ -579,6 +579,18 @@ the question is "does the model agree with this label?" (e.g. finding likely mis
 as "no honest score available", never as 0. The stored `oof_score`s reproduce the run's
 logged PR-AUC exactly. `segment_topic_scores` exports both columns.
 
+**Codebook export for models (CODEBOOK_PLAN K7).** `codebook_export.py` writes
+`codebook_topic_themes.json` (per topic: definition, criteria, boundary notes, completeness,
+counts, and the researcher-flagged exemplars and near misses with `turn_indices` and twins
+collapsed) and `codebook_labels.csv` (one row per known segment × theme label). It builds labels
+from `coding_store/labels.py` and only attributes each label's source; it never re-derives the
+rules. Positives roll up from sub-codes. Negatives are
+`reviewed_negative_segment_ids(read_in_full_only=True)` minus uncoded interviewer turns.
+`codebook_version` hashes everything in `topics` except `counts`/`completeness`. Turn indices
+come from `segmentation.segment_turn_indices()` on records loaded via `load_records` (the server
+passes `_load_dataset_records_with_turns`). Unlike `topic_seed_pack`, whose `exemplars` are the
+model's own top predictions, this export only ever contains passages the researcher chose.
+
 **Full-corpus application.** `predictions` already holds one score per (segment, theme,
 model_version) for the *entire* corpus a theme trained against -- `run_training_pass()`
 never capped it, only the UI's reads did (`get_top_predictions(..., limit=...)`).

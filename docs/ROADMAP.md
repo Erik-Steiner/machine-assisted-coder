@@ -140,7 +140,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
 - [x] **B3 Explanations:** *(Done 2026-10-07: highlighting in Review cards and Train exemplars; score bars on Review cards.)* highlight the theme's top terms in the card; per-theme score bars.
-- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 exemplars/near misses done 2026-10-08 (schema v8); K5 read-in-full confirmation, K4 the near-miss hunt queue and K6 segment→turn linkage done 2026-10-08.)* editable `codes.note`; `themes.inclusion_criteria` /
+- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 exemplars/near misses done 2026-10-08 (schema v8); K5 read-in-full confirmation, K4 the near-miss hunt queue, K6 segment→turn linkage and K7 the codebook export done 2026-10-08; K8 in progress.)* editable `codes.note`; `themes.inclusion_criteria` /
   `exclusion_criteria`; `codes.is_exemplar`. **Expanded 2026-10-07 into
   [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K1–K5:** adds boundary notes, near misses
   (`negatives.is_near_miss`), a `boundary` queue mode, a completeness check that prompts the
@@ -168,7 +168,7 @@ engine" depends on A4's engine-aware notion of "latest".
 
 ## Phase D — Stage 6: external-score round trip
 
-- [ ] **D1 Scoring pack export:** every in-scope segment with its text and metadata, codebook
+- [ ] **D1 Scoring pack export:** *(The codebook half is done: CODEBOOK_PLAN K7's `codebook_topic_themes.json` + `codebook_labels.csv`, 2026-10-08. Still open: every in-scope segment's text and metadata for external scoring.)* every in-scope segment with its text and metadata, codebook
   definitions and criteria, and labeled positives / rejects / gold. Format documented. The
   codebook and labels part is specified in [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K6–K7
   (`codebook_topic_themes.json` + `codebook_labels.csv`).

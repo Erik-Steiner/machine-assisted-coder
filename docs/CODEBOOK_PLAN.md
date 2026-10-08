@@ -290,7 +290,27 @@ script import it.
 Verify the `turn_id = index + 1` assumption against `export_interview_turns.py` before
 relying on it: check whether that script skips empty-content turns while numbering.
 
-### K7 The export: `codebook_topic_themes.json` and `codebook_labels.csv`
+### K7 The export: `codebook_topic_themes.json` and `codebook_labels.csv` — done 2026-10-08
+
+**As built:** `codebook_export.py` (`export_codebook_themes()`, `build_codebook_export()`),
+`GET /api/export/codebook_themes`, and an "Export codebook for models" button on the Codebook
+page and in the Web Appendix. Each button shows completeness first, with "Export anyway" always
+available. Settled during review:
+- **`codebook_version`** hashes the researcher-authored part of each topic only, leaving out
+  `counts` and `completeness` (`DERIVED_TOPIC_KEYS`). Coding more passages doesn't change it;
+  editing definitions, criteria, notes or flagged examples does.
+- **Negatives in `codebook_labels.csv`** come from read-in-full interviews only (confirmed or
+  interactive marks), plus explicit rejections and "none of these". Uncoded *interviewer* turns
+  in those interviews stay neutral, because they're never offered for coding. A rejection on one
+  is still a negative.
+- `label_source` precedence for negatives: `explicit_rejection` > `none_confirmed` >
+  `read_in_full_uncoded`.
+- Twins collapse transitively into the earliest-flagged passage's `twin_segment_ids`.
+  `counts.exemplars` is the raw flag count, so it can exceed the length of the exported list.
+- The JSON also carries `turn_indices_available` (outside `topics`, so not hashed).
+
+On a copy of the real database: 1.4 s, 1,298 label rows, all with `turn_indices`. Tests:
+`tests/test_codebook_export.py`. The original spec follows.
 
 Build a new top-level, read-only module `codebook_export.py`, in the same style as
 `topic_model_export.py` and `appendix_export.py`. The existing exports stay as they are

@@ -332,6 +332,15 @@ definition, both criteria, 3 exemplars from 2+ groups, 2 near misses, a positive
 interview), and each theme shows a score like 2/5. These checks are advisory: training and export
 always work. The Code tab's theme rows show the same score; click it to open that theme.
 
+**Export codebook for models.** On the Codebook page or in the Web Appendix, **Export codebook for
+models** writes two files to the project's `exports` folder. `codebook_topic_themes.json` has each
+theme's definition, criteria, boundary notes and your flagged exemplars and near misses, with a
+version that changes only when the codebook itself does. `codebook_labels.csv` has every known
+positive and negative label, with where it came from. A model such as an LLM pipeline can use them
+directly. You see each theme's completeness first, but the export always works. (This is different
+from the Models page's full-corpus topic-model export, whose "exemplars" are the model's own top
+predictions.)
+
 **Exemplars and near misses.** Flag a coded passage as an *exemplar* (a clear, typical case) with the
 ☆ right after its theme chip in the Code tab or on a Review card; you can add a note on why. In
 Review queues, press `e` to accept a passage and flag it as an exemplar, or `m` to reject it and
