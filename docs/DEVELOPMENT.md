@@ -500,6 +500,16 @@ Schema v7 also adds `codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss
 and a code or rejection re-applied after removal starts unflagged (`decisions.undo()` restores
 rows, flag included, on purpose). Tests: `tests/test_codebook.py`.
 
+**Read in full (CODEBOOK_PLAN K5).** `reviewed.mark_status()` classifies an active mark as
+`confirmed` (`read_in_full_confirmed_at`), `interactive` (`recorded_at == marked_at`),
+`bulk_unconfirmed`, or `unknown` (pre-v6, no `recorded_at`). Only the first two count as read in
+full (`READ_IN_FULL_STATUSES`; used by `read_in_full_items()`, the codebook's "gold" check, and
+`negative_mode="read_in_full"`). `inferred_by_coverage` (5+ coded segments in the scheme) is
+reported alongside but never changes the status. Confirming never touches `marked_at`. The segment
+payload's `item_review` carries `status`/`coded_segments`/`inferred_by_coverage`.
+`coding.js`'s `openInterviewInCoding()` opens an interview only if it's in Browse's current
+(filtered) list and reports otherwise; `openNextUnconfirmed()` walks the unconfirmed list in order.
+
 **Exemplars and near misses (CODEBOOK_PLAN K3).** `coding_store/examples.py` sets and lists the
 flags (`codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss`/`near_miss_note`). A flag
 needs an active row of the right kind (400 otherwise), and flagging warns about twins: an

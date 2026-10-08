@@ -50,13 +50,16 @@ CV_FOLDS = 5
 #                 plus uncoded segments in items marked "fully coded" / confirmed "none
 #                 of these" after the theme existed (coding_store/labels.py). Unread
 #                 segments are left out of fitting and metrics, but still scored.
+#   "read_in_full": like "reviewed", but an interview's uncoded segments only count when
+#                 its mark is read in full -- confirmed, or made interactively -- not an
+#                 unconfirmed bulk mark (CODEBOOK_PLAN K5; coding_store/reviewed.py).
 #   "all_uncoded": every uncoded segment in the corpus is a negative (the original
 #                 behavior). Simpler, but tells the model that every relevant passage
 #                 you haven't read yet is a counter-example, which pushes down exactly
 #                 the passages stage 4 is meant to find, and biases its precision.
-NEGATIVE_MODES = ("reviewed", "all_uncoded")
+NEGATIVE_MODES = ("reviewed", "read_in_full", "all_uncoded")
 DEFAULT_NEGATIVE_MODE = "reviewed"
-# In "reviewed" mode a theme needs this many judged negatives to train; below it the
+# In the "reviewed" and "read_in_full" modes a theme needs this many judged negatives to train; below it the
 # theme is skipped (status skipped_insufficient_negatives) rather than trained on a
 # handful of negatives -- the researcher can mark more interviews, or train that run
 # with "all_uncoded".
@@ -237,10 +240,10 @@ def training_labels(theme_id, segment_ids, negative_mode=DEFAULT_NEGATIVE_MODE):
     if negative_mode == "all_uncoded":
         y, n_pos = build_labels(theme_id, segment_ids)
         return np.arange(len(segment_ids)), y, n_pos, int(len(y) - n_pos)
-    if negative_mode != "reviewed":
+    if negative_mode not in ("reviewed", "read_in_full"):
         raise ValueError(f"unknown negative_mode '{negative_mode}' -- expected one of {NEGATIVE_MODES}")
     positive_ids = labels.effective_positive_segment_ids(theme_id)
-    negative_ids = labels.reviewed_negative_segment_ids(theme_id)
+    negative_ids = labels.reviewed_negative_segment_ids(theme_id, read_in_full_only=negative_mode == "read_in_full")
     row_idx, y = [], []
     for i, sid in enumerate(segment_ids):
         if sid in positive_ids:
@@ -259,7 +262,7 @@ def _skip_status(n_pos, n_neg, negative_mode, min_positives):
     if n_pos < min_positives:
         return "skipped_insufficient_positives" if min_positives == MIN_POSITIVES_ATTEMPT \
             else "skipped_below_trust_floor"
-    if negative_mode == "reviewed" and n_neg < MIN_NEGATIVES_REVIEWED:
+    if negative_mode in ("reviewed", "read_in_full") and n_neg < MIN_NEGATIVES_REVIEWED:
         return "skipped_insufficient_negatives"
     return None
 

@@ -355,6 +355,14 @@ grandparent, and so on). Training and the "x/25 coded" counts include those, and
 shows a dashed "implied" outline. Rejecting a theme also rejects its sub-codes, but rejecting a
 sub-code says nothing about its parent.
 
+**Read in full.** A "fully coded" mark only means the interview's uncoded passages are real
+negatives if you actually read it end to end. Marks you make yourself count. Marks from the bulk
+tool don't, until you confirm them: under an interview's title, click **Confirm read in full**, then
+**Next unconfirmed →** to move on. **Datasets → List unconfirmed marks** shows them all, noting the
+ones with 5+ coded passages, which were probably read in full. The Train tab's **Negatives** option
+*Judged passages, read-in-full interviews only* uses only confirmed or self-made marks, and the
+codebook's completeness check counts them the same way.
+
 **What counts as a negative.** Under the Train button, **Negatives** defaults to *Only passages
 you've judged*: a theme learns from your codes, your rejections, and uncoded passages in
 interviews you've marked **Mark fully coded** in the Code tab (or passages you've pressed `n` on:

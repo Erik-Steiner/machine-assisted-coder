@@ -917,6 +917,11 @@ button.btn-secondary {
 #codingReviewBar { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12px; }
 #codingReviewBar:empty { display: none; }
 .coding-review-done { color: var(--text); font-weight: 600; }
+.coding-review-unconfirmed { color: var(--text-dim); }
+#unconfirmedList.hidden { display: none; }
+#unconfirmedList { max-height: 260px; overflow-y: auto; margin-top: 8px; display: flex; flex-direction: column; gap: 4px; }
+.unconfirmed-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
+.unconfirmed-row button { font-size: 11px; padding: 1px 8px; }
 #trainNegativeModeLabel select { max-width: 100%; margin-top: 2px; }
 #backfillPanel.hidden { display: none; }
 #backfillPanel { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }

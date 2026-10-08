@@ -203,6 +203,17 @@
         </div>
         <button id="backfillMarkBtn">Mark selected as fully coded</button>
       </div>
+
+      <h3>Confirm which marked interviews you read in full</h3>
+      <p class="hint">A bulk mark (or one made before the app recorded how marks were made) doesn't
+        count as "read in full" until you confirm it: an interview with a single coded passage may
+        never have been read end to end. Open each one, and click <strong>Confirm read in full</strong>
+        under its title if you did read it against every theme. Training's default doesn't change; the
+        Train tab's "read-in-full interviews only" option and the codebook's completeness use only
+        confirmed or interactive marks.</p>
+      <button id="loadUnconfirmedBtn" class="btn-secondary">List unconfirmed marks</button>
+      <span id="unconfirmedStatus" class="hint"></span>
+      <div id="unconfirmedList" class="hidden"></div>
     </div>
 
     <div id="segmentBox">
@@ -384,6 +395,7 @@
         <label id="trainNegativeModeLabel" class="hint">Negatives
           <select id="trainNegativeMode">
             <option value="reviewed">Only passages you've judged (recommended)</option>
+          <option value="read_in_full">Judged passages, read-in-full interviews only</option>
             <option value="all_uncoded">Every uncoded passage</option>
           </select>
         </label>

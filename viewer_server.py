@@ -136,6 +136,12 @@ Endpoints:
                                                          uncoded segments become judged negatives for themes
                                                          that existed at that moment (coding_store/reviewed.py,
                                                          labels.reviewed_negative_segment_ids())
+    POST /api/coding/item_review/confirm             -> {dataset_id, item_id, scheme_id, confirmed: bool} ->
+                                                         confirm (or withdraw) that a marked interview was read
+                                                         in full; never changes marked_at (CODEBOOK_PLAN K5)
+    GET  /api/coding/unconfirmed_marks?scheme_id=<id> -> active marks that don't count as read in full yet
+                                                         (bulk_unconfirmed / unknown), with coded_segments,
+                                                         inferred_by_coverage and display labels
     GET  /api/coding/backfill_candidates?scheme_id=<id> -> interviews with codes in the scheme but no
                                                          "fully coded" mark yet, with code counts, last
                                                          coding time, and display labels
@@ -202,7 +208,8 @@ Endpoints:
            (default "tfidf"; never mixed across engines) -- see
            coding_store.review.get_review_candidates
 
-    POST /api/model/train                            -> {scheme_id?, negative_mode?: "reviewed"|"all_uncoded"}
+    POST /api/model/train                            -> {scheme_id?, negative_mode?: "reviewed"|"read_in_full"|
+                                                         "all_uncoded"}
                                                          (default "reviewed" -- see classifier.NEGATIVE_MODES)
                                                          -> kick off a background training
                                                          pass over that scheme's eligible themes (the Model
@@ -1400,6 +1407,13 @@ def get_coding_segments(req):
             s["none_confirmed"] = s["segment_id"] in confirmed
         if segments:
             item_review = reviewed_store.get_item_review(segments[0]["dataset_id"], item_id, scheme_id)
+            if item_review:
+                # How far the mark can be trusted as "read in full" (CODEBOOK_PLAN K5).
+                coded = reviewed_store.coded_segment_counts(scheme_id).get(
+                    (segments[0]["dataset_id"], str(item_id)), 0)
+                item_review = {**item_review, "status": reviewed_store.mark_status(item_review),
+                               "coded_segments": coded,
+                               "inferred_by_coverage": coded >= reviewed_store.READ_IN_FULL_MIN_CODED}
     return JsonResponse({"item_id": item_id, "segments": segments, "item_review": item_review})
 
 
@@ -1412,18 +1426,42 @@ def post_coding_item_review(req):
         body["dataset_id"], body["item_id"], body["scheme_id"], bool(body.get("reviewed", True)),
         coder=body.get("coder") or CODER_NAME,
     )
+    if review_row:
+        coded = reviewed_store.coded_segment_counts(body["scheme_id"]).get(
+            (body["dataset_id"], str(body["item_id"])), 0)
+        review_row = {**review_row, "status": reviewed_store.mark_status(review_row), "coded_segments": coded,
+                      "inferred_by_coverage": coded >= reviewed_store.READ_IN_FULL_MIN_CODED}
     return JsonResponse({"ok": True, "item_review": review_row})
 
 
-@ROUTER.get("/api/coding/backfill_candidates")
-def get_coding_backfill_candidates(req):
+@ROUTER.post("/api/coding/item_review/confirm", json_body=True, required=["dataset_id", "item_id", "scheme_id"])
+def post_coding_item_review_confirm(req):
+    body = req.body
+    try:
+        mark = reviewed_store.set_read_in_full_confirmed(
+            body["dataset_id"], body["item_id"], body["scheme_id"], bool(body.get("confirmed", True)),
+            coder=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "item_review": {**mark, "status": reviewed_store.mark_status(mark)}})
+
+
+@ROUTER.get("/api/coding/unconfirmed_marks")
+def get_coding_unconfirmed_marks(req):
     scheme_id = req.query.get("scheme_id") or ""
     if schemes.get_scheme(scheme_id) is None:
         return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
-    candidates = reviewed_store.backfill_candidates(scheme_id)
-    # Display labels come from each dataset's in-memory index (coding.db has no titles).
+    marks = reviewed_store.unconfirmed_marks(scheme_id)
+    _add_item_labels(marks)
+    return JsonResponse(marks)
+
+
+def _add_item_labels(rows):
+    """Adds dataset_label / person_name / item_title to rows with dataset_id + item_id,
+    from each dataset's in-memory index (coding.db holds no titles)."""
     index_by_dataset = {}
-    for c in candidates:
+    for c in rows:
         if c["dataset_id"] not in index_by_dataset:
             dataset = get_dataset(c["dataset_id"])
             index_by_dataset[c["dataset_id"]] = (
@@ -1431,9 +1469,17 @@ def get_coding_backfill_candidates(req):
                 {str(r.get("item_id")): r for r in (dataset or {}).get("index", [])},
             )
         label, records = index_by_dataset[c["dataset_id"]]
-        rec = records.get(c["item_id"], {})
+        rec = records.get(str(c["item_id"]), {})
         c.update(dataset_label=label, person_name=rec.get("person_name"), item_title=rec.get("item_title"))
-    return JsonResponse(candidates)
+    return rows
+
+
+@ROUTER.get("/api/coding/backfill_candidates")
+def get_coding_backfill_candidates(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    return JsonResponse(_add_item_labels(reviewed_store.backfill_candidates(scheme_id)))
 
 
 @ROUTER.post("/api/coding/item_reviews/bulk", json_body=True, required=["scheme_id", "items", "as_of"])

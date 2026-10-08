@@ -103,7 +103,7 @@ def effective_rejected_segment_ids(theme_id):
     return {r["segment_id"] for r in rows} - effective_positive_segment_ids(theme_id)
 
 
-def reviewed_negative_segment_ids(theme_id):
+def reviewed_negative_segment_ids(theme_id, read_in_full_only=False):
     """Every segment that counts as a negative for theme_id in training's `reviewed`
     negative mode (roadmap A6): its explicit rejections (effective_rejected_segment_ids:
     own or an ancestor's), plus every segment the researcher judged for this theme's
@@ -111,6 +111,12 @@ def reviewed_negative_segment_ids(theme_id):
     confirmed "none of these themes" on its own (coding_store/reviewed.py) -- minus
     anything effectively positive (a positive wins). A mark made before the theme
     existed says nothing about it: that theme was never considered.
+
+    read_in_full_only=True (training's "read_in_full" negative mode, CODEBOOK_PLAN K5)
+    only counts item marks that are read in full -- confirmed or interactive, not
+    unconfirmed bulk marks (coding_store/reviewed.py's mark_status()). "None of these"
+    confirmations and explicit rejections count either way: each is a judgment about
+    that one passage.
 
     Not filtered to the training corpus (interviewer turns, short fragments,
     duplicates): classifier.training_labels() intersects with that itself."""
@@ -125,10 +131,13 @@ def reviewed_negative_segment_ids(theme_id):
         # SQLite's comparison rules then convert r.item_id's text to a number, so mixed
         # storage still matches. A CAST would also match, but it disables the item_id
         # index: measured 1.7 s vs 0.008 s on a real 389k-segment database, same rows.
+        # Same rule as reviewed.mark_status(): confirmed, or interactive (recorded_at = marked_at).
+        strict = (" AND (r.read_in_full_confirmed_at IS NOT NULL"
+                  " OR (r.recorded_at IS NOT NULL AND r.recorded_at = r.marked_at))") if read_in_full_only else ""
         rows = conn.execute(
-            """SELECT s.segment_id FROM item_reviews r
+            f"""SELECT s.segment_id FROM item_reviews r
                JOIN segments s ON s.dataset_id = r.dataset_id AND s.item_id = r.item_id
-               WHERE r.scheme_id = ? AND r.unmarked_at IS NULL AND r.marked_at >= ?
+               WHERE r.scheme_id = ? AND r.unmarked_at IS NULL AND r.marked_at >= ?{strict}
                UNION
                SELECT segment_id FROM segment_none_confirmations
                WHERE scheme_id = ? AND unconfirmed_at IS NULL AND confirmed_at >= ?""",

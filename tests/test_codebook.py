@@ -15,7 +15,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-from coding_store import codebook, codes, decisions, examples, reviewed, schema, schemes, segments, themes  # noqa: E402
+import classifier  # noqa: E402
+from coding_store import codebook, codes, decisions, examples, labels, reviewed, schema, schemes, segments, themes  # noqa: E402
 
 
 class CompletenessRuleTests(unittest.TestCase):
@@ -97,6 +98,65 @@ class CodebookDbTests(unittest.TestCase):
         rows = codebook.overview("s")
         self.assertEqual([r["theme_id"] for r in rows], [self.t])
         self.assertEqual(rows[0]["completeness"]["total"], 5)
+
+
+class ReadInFullTests(unittest.TestCase):
+    """coding_store/reviewed.py's read-in-full statuses and the "read_in_full" negative
+    mode (CODEBOOK_PLAN K5)."""
+
+    def setUp(self):
+        self._orig_db = schema.DB_PATH
+        self._tmp = tempfile.TemporaryDirectory()
+        schema.set_db_path(Path(self._tmp.name) / "coding.db")
+        schemes.create_scheme("S")
+        self.t = themes.create_theme("T", scheme_id="s")["theme_id"]
+        segments.upsert_segments([
+            {"segment_id": f"{item}:{i}", "item_id": item, "dataset_id": "d1", "seg_index": i,
+             "text": "t", "word_count": 5}
+            for item in ("i1", "i2", "i3") for i in range(6)
+        ])
+        for i in range(5):
+            codes.add_code(f"i1:{i}", self.t)  # i1: 5 coded -> inferred_by_coverage
+        codes.add_code("i2:0", self.t)        # i2: 1 coded
+
+    def tearDown(self):
+        schema.DB_PATH = self._orig_db  # restore without init_db() -- never touch the real file
+        self._tmp.cleanup()
+
+    def test_statuses(self):
+        self.assertEqual(reviewed.read_in_full_status("d1", "i1", "s"), "none")
+        reviewed.bulk_mark_items([("d1", "i1"), ("d1", "i2")], "s", "last_code")
+        reviewed.set_item_review("d1", "i3", "s", True)
+        self.assertEqual([reviewed.read_in_full_status("d1", i, "s") for i in ("i1", "i2", "i3")],
+                         ["bulk_unconfirmed", "bulk_unconfirmed", "interactive"])
+        with schema.get_conn() as conn:  # a pre-v6 mark has no recorded_at
+            conn.execute("UPDATE item_reviews SET recorded_at=NULL WHERE item_id='i3'")
+        self.assertEqual(reviewed.read_in_full_status("d1", "i3", "s"), "unknown")
+
+    def test_confirm_keeps_marked_at_and_unconfirmed_list(self):
+        reviewed.bulk_mark_items([("d1", "i1"), ("d1", "i2")], "s", "last_code")
+        listed = {(m["item_id"], m["coded_segments"], m["inferred_by_coverage"]) for m in reviewed.unconfirmed_marks("s")}
+        self.assertEqual(listed, {("i1", 5, True), ("i2", 1, False)})
+        before = reviewed.get_item_review("d1", "i2", "s")["marked_at"]
+        mark = reviewed.set_read_in_full_confirmed("d1", "i2", "s", True)
+        self.assertEqual((reviewed.mark_status(mark), mark["marked_at"]), ("confirmed", before))
+        self.assertEqual([m["item_id"] for m in reviewed.unconfirmed_marks("s")], ["i1"])
+        self.assertEqual(reviewed.read_in_full_items("s"), {("d1", "i2")})
+        with self.assertRaises(ValueError):
+            reviewed.set_read_in_full_confirmed("d1", "i3", "s", True)  # not marked at all
+
+    def test_read_in_full_negative_mode(self):
+        reviewed.bulk_mark_items([("d1", "i1"), ("d1", "i2")], "s", "last_code")
+        reviewed.set_item_review("d1", "i3", "s", True)
+        reviewed.set_segment_none("i2:5", "s", True)
+        all_marks = labels.reviewed_negative_segment_ids(self.t)
+        strict = labels.reviewed_negative_segment_ids(self.t, read_in_full_only=True)
+        self.assertEqual(all_marks, {"i1:5", *(f"i2:{i}" for i in range(1, 6)), *(f"i3:{i}" for i in range(6))})
+        # Only the interactive mark (i3) plus the explicit "none of these" on i2:5.
+        self.assertEqual(strict, {"i2:5", *(f"i3:{i}" for i in range(6))})
+        ids = [f"{item}:{i}" for item in ("i1", "i2", "i3") for i in range(6)]
+        _, _, n_pos, n_neg = classifier.training_labels(self.t, ids, "read_in_full")
+        self.assertEqual((n_pos, n_neg), (6, 7))
 
 
 class ExampleFlagTests(unittest.TestCase):

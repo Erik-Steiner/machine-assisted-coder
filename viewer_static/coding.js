@@ -23,6 +23,7 @@ const codingState = {
   focusIndex: -1,
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
   backfillCandidates: [], // last /api/coding/backfill_candidates response (Datasets panel)
+  unconfirmedMarks: [], // last /api/coding/unconfirmed_marks response (Datasets panel)
   itemReview: null, // the current item's active "fully coded" mark for the active scheme, or null
                     // (coding_store/reviewed.py) -- see renderCodingReviewBar()
   minWords: 0, // live "min word count" filter -- segments below this are hidden, not deleted
@@ -724,6 +725,20 @@ function deleteNegative(segmentId, themeId) {
 // model.js's "View in Coding" and review.js's equivalent -- a segment shown
 // elsewhere in the app can belong to any dataset, not necessarily the one
 // currently selected in Browse.
+// Like jumpToSegmentInCoding() for a whole interview, but only moves if the interview is
+// in the current list -- it can be filtered out in Browse, or its dataset unloaded.
+// Returns whether it opened it.
+async function openInterviewInCoding(datasetId, itemId) {
+  await refreshDatasetList(datasetId);
+  await loadDataset(datasetId);
+  const idx = state.filtered.findIndex((r) => String(r.item_id) === String(itemId));
+  if (idx < 0) return false;
+  state.pos = idx;
+  codingState.pendingFocusSegmentId = null;
+  switchTab("coding"); // its onEnterCodingTab hook loads the interview
+  return true;
+}
+
 async function jumpToSegmentInCoding(target) {
   await refreshDatasetList(target.dataset_id);
   await loadDataset(target.dataset_id);
@@ -860,12 +875,107 @@ function renderCodingReviewBar() {
     return;
   }
   const r = codingState.itemReview;
-  el.innerHTML = r
-    ? `<span class="coding-review-done">✓ Fully coded for this scheme (${escapeHtml(r.marked_at.slice(0, 10))})</span> ` +
-      `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Unmark</button>`
-    : `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Mark fully coded</button> ` +
+  const unmark = `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Unmark</button>`;
+  if (!r) {
+    el.innerHTML =
+      `<button type="button" class="btn-secondary" id="toggleFullyCodedBtn">Mark fully coded</button> ` +
       `<span class="hint">Marks every uncoded passage here as judged: none of this scheme's current themes. ` +
       `Press <kbd>n</kbd> on a single passage to say the same about just that one.</span>`;
+    return;
+  }
+  // How far the mark can be trusted as "read in full" (CODEBOOK_PLAN K5; coding_store/reviewed.py).
+  const marked = escapeHtml(r.marked_at.slice(0, 10));
+  if (r.status === "interactive") {
+    el.innerHTML = `<span class="coding-review-done">✓ Fully coded and read in full (${marked})</span> ${unmark}`;
+  } else if (r.status === "confirmed") {
+    el.innerHTML =
+      `<span class="coding-review-done">✓ Fully coded (${marked}) · read in full, confirmed ` +
+      `${escapeHtml(r.read_in_full_confirmed_at.slice(0, 10))}</span> ` +
+      `<button type="button" class="btn-secondary" id="confirmReadInFullBtn" data-confirm="0">Unconfirm</button> ${unmark}`;
+  } else {
+    const how = r.status === "unknown" ? "an older mark" : `a bulk mark, as of ${marked}`;
+    const coverage = `${r.coded_segments} coded passage(s)` +
+      (r.inferred_by_coverage ? ", so probably read in full" : "");
+    el.innerHTML =
+      `<span class="coding-review-unconfirmed">Marked fully coded (${escapeHtml(how)}) · not confirmed as read in full ` +
+      `· ${escapeHtml(coverage)}</span> ` +
+      `<button type="button" id="confirmReadInFullBtn" data-confirm="1" title="You read this interview end to end ` +
+      `against every theme in the scheme, so its uncoded passages are real negatives">Confirm read in full</button> ` +
+      `<button type="button" class="btn-secondary" id="nextUnconfirmedBtn">Next unconfirmed \u2192</button> ${unmark}`;
+  }
+}
+
+async function setReadInFullConfirmed(confirmed) {
+  if (!codingState.activeSchemeId || !codingState.segments.length) return;
+  const res = await fetch("/api/coding/item_review/confirm", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      dataset_id: codingState.segments[0].dataset_id, item_id: codingState.itemId,
+      scheme_id: codingState.activeSchemeId, confirmed,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    alert(data.error);
+    return;
+  }
+  codingState.itemReview = { ...codingState.itemReview, ...data.item_review };
+  renderCodingReviewBar();
+}
+
+// Opens the next marked-but-unconfirmed interview, to work through the list one by one.
+async function openNextUnconfirmed() {
+  const res = await fetch(`/api/coding/unconfirmed_marks?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`);
+  const marks = await res.json();
+  if (marks.error) return;
+  // Walk the list in order starting after the current interview, skipping any that can't
+  // be opened (filtered out in Browse, or in an unloaded dataset).
+  const here = marks.findIndex((m) => m.item_id === String(codingState.itemId));
+  const ordered = [...marks.slice(here + 1), ...marks.slice(0, Math.max(here, 0))];
+  let skipped = 0;
+  for (const m of ordered) {
+    if (await openInterviewInCoding(m.dataset_id, m.item_id)) return;
+    skipped += 1;
+  }
+  alert(skipped
+    ? `No other unconfirmed interview can be opened: ${skipped} are hidden by your Browse filters or in unloaded datasets.`
+    : "No other unconfirmed marks in this scheme.");
+}
+
+// Datasets panel: every marked-but-unconfirmed interview, each opened and confirmed on its
+// own -- confirming is a statement about having read that interview, so there's no bulk confirm.
+async function loadUnconfirmedMarks() {
+  const statusEl = document.getElementById("unconfirmedStatus");
+  const listEl = document.getElementById("unconfirmedList");
+  if (!codingState.activeSchemeId) {
+    statusEl.textContent = "Pick a scheme first.";
+    return;
+  }
+  statusEl.textContent = "Looking…";
+  const res = await fetch(`/api/coding/unconfirmed_marks?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}`);
+  const marks = await res.json();
+  if (marks.error) {
+    statusEl.textContent = "Error: " + marks.error;
+    return;
+  }
+  codingState.unconfirmedMarks = marks;
+  if (!marks.length) {
+    listEl.classList.add("hidden");
+    statusEl.textContent = "Every marked interview in this scheme counts as read in full.";
+    return;
+  }
+  const likely = marks.filter((m) => m.inferred_by_coverage).length;
+  statusEl.textContent = `${marks.length} marked interview(s) not confirmed as read in full ` +
+    `(${likely} with ${5}+ coded passages).`;
+  listEl.innerHTML = marks.map((m, i) => {
+    const who = [m.person_name, m.item_title].filter(Boolean).join(" — ") || m.item_id;
+    return `<div class="unconfirmed-row" data-idx="${i}">` +
+      `<span>${escapeHtml(who)} <span class="hint">(${escapeHtml(m.dataset_label || m.dataset_id)}; ` +
+      `${m.coded_segments} coded${m.inferred_by_coverage ? ", probably read in full" : ""})</span></span>` +
+      `<button type="button" class="btn-secondary unconfirmed-open-btn">Open</button></div>`;
+  }).join("");
+  listEl.classList.remove("hidden");
 }
 
 async function toggleFullyCoded() {
@@ -1189,6 +1299,17 @@ function bindCodingEvents() {
   });
   document.getElementById("codingReviewBar").addEventListener("click", (e) => {
     if (e.target.id === "toggleFullyCodedBtn") toggleFullyCoded();
+    else if (e.target.id === "confirmReadInFullBtn") setReadInFullConfirmed(e.target.dataset.confirm === "1");
+    else if (e.target.id === "nextUnconfirmedBtn") openNextUnconfirmed();
+  });
+  document.getElementById("loadUnconfirmedBtn").addEventListener("click", loadUnconfirmedMarks);
+  document.getElementById("unconfirmedList").addEventListener("click", (e) => {
+    if (!e.target.classList.contains("unconfirmed-open-btn")) return;
+    const m = codingState.unconfirmedMarks[Number(e.target.closest(".unconfirmed-row").dataset.idx)];
+    if (!m) return;
+    openInterviewInCoding(m.dataset_id, m.item_id).then((opened) => {
+      if (!opened) alert("That interview isn't in the current list: it may be hidden by your Browse filters, or its dataset unloaded.");
+    });
   });
   document.getElementById("loadBackfillBtn").addEventListener("click", loadBackfillCandidates);
   document.getElementById("backfillMarkBtn").addEventListener("click", submitBackfill);

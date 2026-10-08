@@ -10,7 +10,7 @@ theme_completeness() is the one rule (pure), used by the UI endpoint and the exp
 alike, so they can't disagree. The thresholds were confirmed by the researcher on
 2026-10-07. Depends on schema, labels and themes.
 """
-from . import labels, schema, themes as themes_store
+from . import labels, reviewed, schema, themes as themes_store
 
 DEFINITION_MIN_WORDS = 15   # a sentence or two that actually says what the theme is
 EXEMPLARS_MIN = 3           # researcher-flagged typical cases...
@@ -54,19 +54,9 @@ def theme_completeness(theme, counts):
 
 
 def read_in_full_items(scheme_id):
-    """{(dataset_id, item_id)} of items whose active "fully coded" mark can be trusted as
-    read in full: confirmed (read_in_full_confirmed_at set), or made interactively
-    (recorded_at == marked_at -- not a back-dated bulk mark). Bulk marks and pre-v6
-    marks with no recorded_at don't count until confirmed (CODEBOOK_PLAN K5)."""
-    with schema.get_conn() as conn:
-        rows = conn.execute(
-            """SELECT dataset_id, item_id FROM item_reviews
-               WHERE scheme_id=? AND unmarked_at IS NULL
-                 AND (read_in_full_confirmed_at IS NOT NULL
-                      OR (recorded_at IS NOT NULL AND recorded_at = marked_at))""",
-            (scheme_id,),
-        ).fetchall()
-    return {(r["dataset_id"], str(r["item_id"])) for r in rows}
+    """Items whose mark counts as read in full -- the one rule lives in
+    coding_store/reviewed.py (confirmed or interactive marks, not bulk ones)."""
+    return reviewed.read_in_full_items(scheme_id)
 
 
 def theme_counts(theme_id, read_in_full=None):

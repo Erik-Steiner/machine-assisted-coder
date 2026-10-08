@@ -140,7 +140,7 @@ engine" depends on A4's engine-aware notion of "latest".
   `a` accept / `r` reject / `s` skip / `u` undo / `j`,`k`. Every decision is written to
   `review_decisions`.
 - [x] **B3 Explanations:** *(Done 2026-10-07: highlighting in Review cards and Train exemplars; score bars on Review cards.)* highlight the theme's top terms in the card; per-theme score bars.
-- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 exemplars/near misses done 2026-10-08 (schema v8); K5 next.)* editable `codes.note`; `themes.inclusion_criteria` /
+- [ ] **B4 Memos and codebook rigor:** *(Expanded into docs/CODEBOOK_PLAN.md K1–K8. K1 schema v7 and K2 the Train → Codebook page done 2026-10-07; K3 exemplars/near misses done 2026-10-08 (schema v8); K5 read-in-full confirmation done 2026-10-08; K4 next.)* editable `codes.note`; `themes.inclusion_criteria` /
   `exclusion_criteria`; `codes.is_exemplar`. **Expanded 2026-10-07 into
   [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) K1–K5:** adds boundary notes, near misses
   (`negatives.is_near_miss`), a `boundary` queue mode, a completeness check that prompts the
@@ -160,6 +160,11 @@ engine" depends on A4's engine-aware notion of "latest".
   excluded from training; reweighted precision/recall/prevalence.
 - [ ] **C4 Readiness panel** per theme: positives, explicit negatives, gold-sample F1, PR-AUC
   plateau over the last 3 runs, audit precision. Advisory; the 150-positive gate stays.
+- [ ] **C5 The iteration loop in the UI** (added 2026-10-08, researcher's request): Train
+  becomes Codebook | Models | Runs, and Review becomes Queues | Recode | Evaluate. A cycle
+  strip on both pages shows the round and what's stale, a Decide panel records each round's
+  outcome, and hand-offs move the researcher round the loop. It gives C1–C4 and D3 their
+  homes. Spec: [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) Part 3 (U1–U7). U1–U3 can go first.
 
 ## Phase D — Stage 6: external-score round trip
 
@@ -214,7 +219,7 @@ engine" depends on A4's engine-aware notion of "latest".
 | M1 | A3, A4, A7, A1, A5, A2 |
 | M2 | A6, B1, B2 (the core active-learning loop) |
 | M3 | B3–B6 |
-| M4 | C1–C4 |
+| M4 | C5 (U1–U3 first), then C1–C4 inside its tabs |
 | M5 | D1–D3, then D4 |
 | M6 | E3, E4, then E0, E1, E2, E5 |
 

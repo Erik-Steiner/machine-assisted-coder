@@ -120,6 +120,101 @@ def bulk_mark_items(items, scheme_id, as_of, coder=schema.DEFAULT_CODER):
     return {"marked": marked, "skipped": skipped}
 
 
+# --- "Read in full" (docs/CODEBOOK_PLAN.md K5) -----------------------------------------
+#
+# A "fully coded" mark only supports negatives if the interview was really read end to
+# end. Interactive marks were (the researcher clicked after reading); bulk backfill marks
+# often weren't (on the real project, 42 of 75 bulk-marked interviews had a single coded
+# segment). So each active mark has a status:
+#   confirmed         read_in_full_confirmed_at is set (the researcher confirmed it)
+#   interactive       made with "Mark fully coded": recorded_at == marked_at
+#   bulk_unconfirmed  a back-dated bulk mark (recorded_at > marked_at), not confirmed yet
+#   unknown           made before schema v6, so how it was made isn't recorded
+#   none              no active mark
+# Only confirmed and interactive count as read in full (READ_IN_FULL_STATUSES).
+# Separately -- never mixed into the status -- inferred_by_coverage reports the
+# researcher's own heuristic: READ_IN_FULL_MIN_CODED or more coded segments in the scheme.
+
+READ_IN_FULL_STATUSES = ("confirmed", "interactive")
+READ_IN_FULL_MIN_CODED = 5
+
+
+def mark_status(mark):
+    """Status of an item_reviews row (see above); "none" for None."""
+    if mark is None:
+        return "none"
+    if mark.get("read_in_full_confirmed_at"):
+        return "confirmed"
+    if mark.get("recorded_at") is None:
+        return "unknown"
+    return "interactive" if mark["recorded_at"] == mark["marked_at"] else "bulk_unconfirmed"
+
+
+def read_in_full_status(dataset_id, item_id, scheme_id):
+    return mark_status(get_item_review(dataset_id, item_id, scheme_id))
+
+
+def read_in_full_items(scheme_id):
+    """{(dataset_id, item_id)} whose active mark counts as read in full."""
+    with schema.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM item_reviews WHERE scheme_id=? AND unmarked_at IS NULL", (scheme_id,),
+        ).fetchall()
+    return {(r["dataset_id"], str(r["item_id"])) for r in rows if mark_status(dict(r)) in READ_IN_FULL_STATUSES}
+
+
+def coded_segment_counts(scheme_id):
+    """{(dataset_id, item_id): distinct segments with an active code in the scheme}."""
+    with schema.get_conn() as conn:
+        rows = conn.execute(
+            """SELECT s.dataset_id, CAST(s.item_id AS TEXT) AS item_id, COUNT(DISTINCT c.segment_id) AS n
+               FROM codes c JOIN segments s ON s.segment_id = c.segment_id
+               JOIN themes t ON t.theme_id = c.theme_id
+               WHERE c.deleted_at IS NULL AND t.scheme_id = ?
+               GROUP BY s.dataset_id, CAST(s.item_id AS TEXT)""",
+            (scheme_id,),
+        ).fetchall()
+    return {(r["dataset_id"], r["item_id"]): r["n"] for r in rows}
+
+
+def unconfirmed_marks(scheme_id):
+    """Active marks that don't count as read in full yet (bulk_unconfirmed / unknown),
+    with coded_segments and inferred_by_coverage -- the list the researcher works
+    through to confirm them. Oldest mark first."""
+    counts = coded_segment_counts(scheme_id)
+    with schema.get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM item_reviews WHERE scheme_id=? AND unmarked_at IS NULL ORDER BY marked_at",
+            (scheme_id,),
+        ).fetchall()
+    out = []
+    for r in rows:
+        mark = dict(r)
+        status = mark_status(mark)
+        if status in READ_IN_FULL_STATUSES:
+            continue
+        n = counts.get((mark["dataset_id"], str(mark["item_id"])), 0)
+        out.append({"dataset_id": mark["dataset_id"], "item_id": str(mark["item_id"]), "status": status,
+                    "marked_at": mark["marked_at"], "coded_segments": n,
+                    "inferred_by_coverage": n >= READ_IN_FULL_MIN_CODED})
+    return out
+
+
+def set_read_in_full_confirmed(dataset_id, item_id, scheme_id, confirmed, coder=schema.DEFAULT_CODER):
+    """Confirm (or withdraw the confirmation) that an already-marked item was read in
+    full. Never touches marked_at, which decides which themes the mark covers (A6).
+    Raises ValueError if the item has no active mark. Logged."""
+    mark = get_item_review(dataset_id, item_id, scheme_id)
+    if mark is None:
+        raise ValueError("this interview isn't marked fully coded for that scheme -- mark it first")
+    with schema.get_conn() as conn:
+        conn.execute("UPDATE item_reviews SET read_in_full_confirmed_at=? WHERE review_id=?",
+                     (schema._now() if confirmed else None, mark["review_id"]))
+    activity_log.log_activity(coder, "item_read_in_full_confirmed" if confirmed else "item_read_in_full_unconfirmed",
+                              {"dataset_id": dataset_id, "item_id": str(item_id), "scheme_id": scheme_id})
+    return get_item_review(dataset_id, item_id, scheme_id)
+
+
 def set_segment_none(segment_id, scheme_id, confirmed, coder=schema.DEFAULT_CODER):
     """Confirm (or withdraw) "none of this scheme's themes apply to this segment"."""
     now = schema._now()

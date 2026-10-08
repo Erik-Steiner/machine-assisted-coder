@@ -3,7 +3,10 @@
 Agreed 2026-10-07; Part 2 added 2026-10-08. **Part 1** (K1–K8) expands roadmap items **B4**
 (memos and codebook rigor) and **D1** (scoring-pack export) into buildable work. **Part 2**
 (L1–L9) brings the LLM topic-coding procedure, first run by hand in `scripts/llm_topics/`,
-into the app (roadmap D4). Build Part 2 after K3–K7: it consumes everything they add. It is written for a
+into the app (roadmap D4). Build Part 2 after K3–K7: it consumes everything they add.
+**Part 3** (U1–U7) reorganizes Train and Review into tabs around the iterative
+codebook → train → review → evaluate → decide cycle, and prompts the researcher round
+the loop. U1–U3 can start before Part 2, since they help the TF-IDF loop on their own. It is written for a
 developer-agent who has not seen the conversation that produced it. Read `CLAUDE.md` first;
 every hard rule there applies, especially 4 (segmentation constants), 5 (no hard deletes),
 6 and 11 (never write through the app against a real project). If this doc and the code
@@ -173,7 +176,24 @@ leaving and re-entering the tab. The original spec follows.
   
   `scripts/llm_topics/stage0_prepare.py` `near_duplicate()` is a working reference.
 
-### K5 Trustworthy "read in full"
+### K5 Trustworthy "read in full" — done 2026-10-08
+
+**As built:** `coding_store/reviewed.py` (`mark_status()`, `read_in_full_status()`,
+`read_in_full_items()`, `unconfirmed_marks()`, `set_read_in_full_confirmed()`,
+`READ_IN_FULL_MIN_CODED = 5`). `POST /api/coding/item_review/confirm`,
+`GET /api/coding/unconfirmed_marks`. The Code tab's interview header shows the mark's status,
+with **Confirm read in full** / **Unconfirm** and **Next unconfirmed →**. The Datasets panel
+lists unconfirmed marks, each opened and confirmed on its own; there's deliberately no bulk
+confirm. One deviation: instead of an interview-list filter (which would mean changing Browse's
+shared filters), the list plus "Next unconfirmed →" walks the researcher through them, skipping
+interviews hidden by Browse filters or in unloaded datasets.
+
+**The open decision, answered (2026-10-08):** training's default is unchanged. A third
+`negative_mode`, `"read_in_full"`, counts only confirmed/interactive marks
+(`labels.reviewed_negative_segment_ids(read_in_full_only=True)`), and is logged per run like
+the others. On the real project, all 83 bulk marks were unconfirmed (19 with 5+ coded segments),
+so this mode currently gives about 120–140 negatives per theme against about 5,600 in
+`"reviewed"`. It becomes useful as the researcher confirms interviews. The original spec follows.
 
 The problem: `item_reviews` mixes two kinds of marks, and only one supports negatives.
 - **Interactive marks** (`reviewed.set_item_review()`): the researcher clicked "Mark fully
@@ -611,6 +631,218 @@ An export button on the run, writing into `EXPORTS_DIR`:
 - **Test project only** (rule 11). API calls cost money even against the test project. Use
   a tiny dataset there, and confirm spend in the dialog every time.
 
+## Part 3 — The iteration loop in the UI (U1–U7)
+
+Added 2026-10-08, at the researcher's request. Getting a good model is not one run. The
+researcher refines the codebook, trains a model (TF-IDF, embedding or LLM), reviews and
+evaluates what it produced, then goes back: to the codebook, to more labels, or to a
+different model. This repeats until the output is good enough to export. The UI should
+show that cycle and prompt the next step. Every decision should live in a tab on the
+**Train** or **Review** page, so neither page shows everything at once.
+
+This moves existing controls, which the "additive features, don't change existing views"
+preference would normally rule out. The researcher asked for it explicitly. Move controls
+without changing what they do, and keep every existing element id the JS depends on, or
+update both sides together (rule 7's spirit).
+
+### The cycle
+
+```
+   ┌──────────────► 1 Codebook ───────────► 2 Train ──────────────┐
+   │                (Train › Codebook)      (Train › Models)      │
+   │                                                              ▼
+ 4 Decide  ◄──────────────── 3b Evaluate ◄────────────────── 3a Review
+ (Review › Evaluate)         (Review › Evaluate)           (Review › Queues / Recode)
+   │
+   └──► accept → export (Train › Runs)
+```
+
+A **round** is one pass around the loop for one scheme: the codebook as it stood, the run(s)
+trained on it, the review decisions made on those runs, the evaluation, and the researcher's
+decision about what to do next. Rounds are the provenance a methods section needs ("three
+rounds; the codebook changed in round 2 because…").
+
+Two facts the UI must make visible, because they connect the engines:
+- **Review decisions are researcher codes, so every engine benefits.** Adjudicating an LLM
+  disagreement writes a code (L5). That code then improves the next TF-IDF run as well.
+- **The TF-IDF model feeds the others.** Its ranks pick the LLM discovery sample (L4), and its
+  scores are the baseline every other engine must beat (L5, D3).
+
+### Tabs
+
+**Train**, in cycle order: **Codebook | Models | Runs**. Today the order is Models | Codebook.
+Reordering changes the default page: keep Models as the page the Train tab opens on, unless
+the researcher says otherwise.
+
+| Tab | Decisions housed here | What moves in |
+|---|---|---|
+| Codebook (exists, K2/K3) | Definitions, criteria, exemplars, near misses; accept, edit, merge or reject proposed emergent topics (L4); acknowledge codebook issues (L3); export the codebook (K7) | Proposed-topics review; codebook issues |
+| Models | Which engine, with what settings, on which themes; then run it | An engine switcher **TF-IDF / Embedding / LLM** (segmented control). Each engine panel has its readiness (install button, API-key status), settings (negative mode for TF-IDF; model, `PRIORITIZE_SEED_THEMES` and study context for LLM), cost estimate and run button. The per-theme metrics view stays. |
+| Runs (new) | Which run to trust, compare, pin or export | The run history across engines, with each run's codebook version; D3 comparison; C1 learning curves; pin/unpin (A7); the Storage panel; export of the full-corpus scores and the L8 deliverables |
+
+That clears the Models sidebar. Export, Storage and the embedding install bar move out, and
+each engine's controls appear only when that engine is selected.
+
+**Review**: **Queues | Recode | Evaluate**.
+
+| Tab | Decisions housed here | What moves in |
+|---|---|---|
+| Queues | Is each passage the theme or not; flag exemplars and near misses | Today's queue modes (top, borderline, random check, likely mislabels, overlap), plus `boundary` (K4) and `llm_disagreement` (L5). The `#reviewMode` dropdown loses its Recode option. |
+| Recode | Existing coded + top-predicted list, unchanged | Today's `recode` view |
+| Evaluate (new) | Is this run good enough, and what next | The selected run's metrics against gold: per-theme precision/recall/F1 with intervals, the TF-IDF baseline, calibration, topic distribution, and before/after adjudication. A **Decide** panel at the bottom (U4). |
+
+The **"Model scores from"** selector becomes a **run selector** shared by all three Review
+tabs: any run of any engine, labelled engine · date · codebook version, defaulting to the
+latest run. Queues and Evaluate act on the selected run.
+
+### Wireframes
+
+```
+TRAIN   [ Codebook | Models | Runs ]
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Round 3 · ① Codebook ✓ → ② Train ● → ③ Review → ④ Decide                │
+│ Codebook changed since the last run (2 themes edited). Retrain to use it.│
+├──────────────────────────────────────────────────────────────────────────┤
+│ Models › Engine [ TF-IDF | Embedding | LLM ]                             │
+│  LLM: claude-haiku-4-5 · key found · seed-theme priority [on]            │
+│  Pilot: 19 gold + 12 random interviews · ~$1  [Run pilot]                │
+│  Full run: needs a pilot on this codebook version                        │
+└──────────────────────────────────────────────────────────────────────────┘
+
+REVIEW  [ Queues | Recode | Evaluate ]      Run: LLM pilot · 10-08 · cb_00bf…
+┌──────────────────────────────────────────────────────────────────────────┐
+│ Round 3 · ① ✓ → ② ✓ → ③ Review ● → ④ Decide                             │
+│ 44 disagreements to adjudicate.  [Adjudicate →]                          │
+├──────────────────────────────────────────────────────────────────────────┤
+│ Evaluate                                                                 │
+│  theme            P [CI]           R [CI]          F1    TF-IDF F1       │
+│  Safety & Ethics  .81 [.70,.89]    .74 [.60,.84]   .77   .41             │
+│  …                                                                       │
+│ Decide: ( ) Refine codebook  ( ) More labels  ( ) Retrain                │
+│         ( ) Try another engine  ( ) Accept this run                      │
+│  Note: [_____________________________]   [Record decision & go →]        │
+└──────────────────────────────────────────────────────────────────────────┘
+```
+
+### U1 One sub-tab helper for both pages
+
+`codebook.js` owns the Train switcher today (`codebookState.subpage`, `.model-subnav-btn`,
+`data-subpage`). Lift it into a small shared helper in `app.js`, e.g.
+`setupSubnav(navEl, { onChange })`, which shows the matching `.subpage` and hides the rest.
+Use it for Train (three tabs) and Review (three tabs). Keep the script load order in
+CLAUDE.md: `app.js` loads first, so every page can use it.
+
+**Deep links:** `goToSubpage("review", "evaluate", { run })`, for the hand-offs (U5).
+
+Build U1 first, moving existing content with no behavior change, and check the console for
+errors on every tab before going further.
+
+### U2 Runs tab
+
+- **Run history** for the scheme, all engines, newest first. Each run shows: engine,
+  trained_at, `codebook_version`, negative mode, labels used (positives / negatives), headline
+  metrics, pinned, and the round it belongs to.
+- **Record codebook_version on every run:** TF-IDF and embedding runs in `model_run_params`,
+  LLM runs in `llm_runs`. Without it the cycle strip can't tell whether the codebook changed
+  since a run.
+- **Comparison and history:** home for D3's engine comparison (two or more selected runs,
+  same gold) and C1's learning curves.
+- **Storage and exports** move here unchanged: the Storage panel, and the full-corpus export.
+
+### U3 Iteration status and the cycle strip
+
+- **One read-only endpoint**, `GET /api/iteration/status?scheme_id=`, backed by a pure
+  function in `coding_store/iteration.py`. It returns the current round, each step's state
+  (`done` / `current` / `stale` / `todo`), and the reasons. The signals:
+
+| Signal | Means | Suggested next step |
+|---|---|---|
+| Codebook edited after the latest run (definition, criteria, exemplar or near-miss changes; compare `codebook_version`) | The run doesn't reflect the codebook | Retrain (Train › Models) |
+| Codes, rejections or "fully coded" marks added since the latest run | New labels not yet used | Retrain |
+| A run newer than any review decision on it | Not yet looked at | Review (Review › Queues) |
+| Unadjudicated `llm_disagreement` items | The run's precision is still a lower bound | Adjudicate (Review › Queues) |
+| No evaluation viewed or decision recorded for the latest run | The round is open | Evaluate & decide (Review › Evaluate) |
+| Codebook issues not acknowledged (L3) | Prompt examples may be wrong | Fix them (Train › Codebook) |
+
+- **The cycle strip** is a one-line bar at the top of both pages: the round number, four
+  steps with their state, and the single most important reason as a link to the tab that
+  resolves it.
+- **Advisory only.** Never block a step (same stance as C4). Never more than one line of
+  text; the full list is behind a "why?" toggle.
+- **Refresh** the strip whenever the page is entered (`window.onEnterTrainTab` /
+  `onEnterReviewTab`-style hooks, like `window.onEnterCodingTab`), and after any job
+  finishes.
+
+### U4 Decide panel and the round record
+
+- **Panel:** at the bottom of Review › Evaluate. The researcher picks one:
+  - refine codebook
+  - more labels
+  - retrain
+  - try another engine
+  - accept this run
+  
+  They can add a note, then "Record decision & go →".
+- **Store:** a new table (no version bump), e.g. `iteration_decisions(decision_id, scheme_id,
+  round_no, run_ref, codebook_version, decision, note, coder, created_at)`. `run_ref` is a
+  `model_version` or an LLM `run_id`. Recording a decision closes the round, and the next run
+  opens round n+1.
+- **After recording,** the app navigates to the tab that decision implies:
+  - refine codebook → Train › Codebook
+  - more labels → Review › Queues, `uncertain` mode
+  - retrain or try another engine → Train › Models
+  - accept → Train › Runs, with the export ready
+- **Log** `iteration_decision` to `activity_log`, and add its label to `appendix.js`. Phase F's
+  methods summary lists the rounds from this table.
+
+### U5 Hand-offs that prompt the next step
+
+- **When a run finishes** (any engine), the status line offers "Review this run →". That opens
+  Review › Evaluate with the run selected. If it is an LLM pilot with disagreements, it opens
+  the `llm_disagreement` queue instead.
+- **After a review session,** once decisions have been recorded since the run, Review shows
+  "Retrain with N new decisions →" (Train › Models, same engine selected).
+- **After a codebook edit,** Train › Codebook shows "Codebook changed. Retrain →".
+- **Show all three only through the cycle strip's slot**, so a page never shows more than one
+  prompt.
+
+### U6 Evaluate tab: what it measures, and on what
+
+- **Gold, until C3 exists:** turns or segments in read-in-full interviews (K5 status
+  `confirmed` / `interactive`). Say on the tab that this gold isn't blind or random. C3's gold
+  sample replaces it when built.
+- **One unit for comparison.** Evaluate at the **turn** level, as `stage2_pilot.py` does: roll
+  TF-IDF and embedding segment scores up to turns (max over a turn's segments, via K6).
+  Then all engines are compared on the same items.
+- **Exclude prompt examples and their twins** for LLM runs, and training examples for
+  TF-IDF/embedding runs (use out-of-fold scores, as the pilot's baseline does).
+- **What it shows:** the metrics listed in L5, for any run. It works for TF-IDF alone before
+  any LLM exists, so it is useful from the first round.
+
+### U7 Order and dependencies
+
+**U1 → U2 → U3 → U6 → U4 → U5**, then the LLM engine panel (with Part 2).
+- U1 and U2 are pure moves.
+- U3 and U6 are useful for TF-IDF alone.
+- U4 and U5 close the loop.
+
+In roadmap terms, Part 3 gives a home to work already planned:
+- **Runs tab:** C1 (learning curves) and D3 (engine comparison)
+- **Evaluate tab:** C2 (per-round stats) and C3 (gold sample)
+- **Cycle strip:** C4 (readiness)
+
+Build those items into these tabs rather than as separate panels.
+
+Verification: in the test project only (rule 11). Walk one full round by hand:
+1. edit the codebook
+2. retrain; the strip goes stale and then current
+3. triage some queue items
+4. open Evaluate
+5. record a decision
+6. confirm you land on the right tab and the round number advances
+
+Check the console on every tab.
+
 ## Tests
 
 Rule 8 allows narrow `unittest` coverage for label-building logic. These parts of K7 qualify,
@@ -668,3 +900,8 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
    comparable.
 7. Part 2: the run dialog's spending cap. Should runs over a threshold (say $25) need a
    second confirmation?
+8. Part 3: should the Train tab open on Codebook (first in the cycle) or stay on Models (the
+   current default)?
+9. Part 3: what counts as "good enough" for the Decide panel? A per-theme target F1 (or
+   precision/recall floor) set by the researcher would let the strip say "target met" rather
+   than leaving every round open-ended.

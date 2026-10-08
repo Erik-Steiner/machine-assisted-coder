@@ -302,7 +302,7 @@ function trainingRequestInit() {
 }
 
 // Short labels for classifier.NEGATIVE_MODES, shown in metrics and the run history.
-const NEGATIVE_MODE_LABELS = { reviewed: "judged only", all_uncoded: "all uncoded" };
+const NEGATIVE_MODE_LABELS = { reviewed: "judged only", read_in_full: "read in full only", all_uncoded: "all uncoded" };
 
 // "Done — ..." summary of a finished training job, breaking skipped themes down by
 // what they still need (job.skipped[].status -- see viewer_server._skipped_entry()).
