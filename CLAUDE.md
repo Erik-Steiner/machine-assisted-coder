@@ -27,7 +27,7 @@ it. Seven tabs, one server (`viewer_server.py`):
 
 No frontend framework, no build step, no bundler. `viewer_static/*.js` files are loaded as
 plain `<script>` tags in a fixed order (`app.js` → `projects.js` → `import.js` → `coding.js` →
-`analytics.js` → `model.js` → `storage.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
+`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
 rather than duplicating navigation logic. This is deliberate — see "Hard rules" below.
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
@@ -51,7 +51,11 @@ schema, not something to rename.
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
+| Review queue modes, triage decisions (a/r/s/e/m/u) | `coding_store/queues.py` (`order_queue` is the ordering rule), `coding_store/decisions.py`, `tests/test_queues.py`, `tests/test_decisions.py` |
+| What counts as positive / negative (roll-up, rejections, "fully coded" and read-in-full marks) | `coding_store/labels.py`, `coding_store/reviewed.py`, `classifier.py`'s `NEGATIVE_MODES`/`training_labels`, `tests/test_labels.py` |
 | Disk footprint: pruning old runs' scores, pins, compaction | `coding_store/storage.py` (`plan_prune` is the deletion rule), `viewer_static/storage.js`, `tests/test_storage.py` |
+| Codebook page (Train → Codebook): criteria, completeness, exemplars, near misses | `viewer_static/codebook.js`, `coding_store/codebook.py` (`theme_completeness`), `coding_store/examples.py`, `tests/test_codebook.py`; the plan and what's left (K4, K6–K8, the `codebook_topic_themes.json` export) is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) |
+| LLM topic-coding pipeline (external, reads `exports/` only) | `scripts/llm_topics/` (`common.py`'s docstring first); its planned in-app version is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) Part 2 (L1–L9) |
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
 | Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
