@@ -500,6 +500,14 @@ Schema v7 also adds `codes.is_exemplar`/`exemplar_note`, `negatives.is_near_miss
 and a code or rejection re-applied after removal starts unflagged (`decisions.undo()` restores
 rows, flag included, on purpose). Tests: `tests/test_codebook.py`.
 
+**Segment → turn linkage (CODEBOOK_PLAN K6).** Segments merge short same-speaker turns and split
+long ones, and the `segments` table doesn't record which turns each came from.
+`segmentation.segment_turn_indices(record)` does: `result[k]` is the list of 0-based indices into
+`record["turns"]` behind segment `seg_index` k. It shares `_segment_pieces()` with
+`segment_interview()`, so the segmentation itself is unchanged (rule 4 still applies to its
+constants). Turn exports (`scripts/export_interview_turns.py`) number turns 1-based over the
+whole list, so `turn_id = index + 1`. Tests: `tests/test_segmentation.py`.
+
 **Read in full (CODEBOOK_PLAN K5).** `reviewed.mark_status()` classifies an active mark as
 `confirmed` (`read_in_full_confirmed_at`), `interactive` (`recorded_at == marked_at`),
 `bulk_unconfirmed`, or `unknown` (pre-v6, no `recorded_at`). Only the first two count as read in

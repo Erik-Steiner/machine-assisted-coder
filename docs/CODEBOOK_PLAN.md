@@ -262,7 +262,17 @@ In this mode the triage actions mean:
 Record every decision in `review_decisions` with `mode='boundary'`, as B2 does. Add the mode
 to Review's mode selector with a one-line explanation, in the same style as the other modes.
 
-### K6 Segment → turn linkage
+### K6 Segment → turn linkage — done 2026-10-08
+
+**As built:** `segmentation.segment_turn_indices(record)` returns, for each segment of
+`segment_interview(record)` (same order), the 0-based indices into `record["turns"]` it came
+from. Both functions read from one private loop, `_segment_pieces()`, so they can't drift. The
+constants are unchanged, and the old and new `segment_interview()` gave identical output on all
+12,585 real records (394,040 segments). The assumption is verified:
+`scripts/export_interview_turns.py` numbers every turn with `enumerate(turns, start=1)`, skipping
+none, so **`turn_id = index + 1`**. `scripts/llm_topics/stage0_prepare.py`'s
+`build_turn_segment_map()` now uses the function, and gave identical output on the real company
+exports. Tests: `tests/test_segmentation.py`. The original spec follows.
 
 External pipelines often key on source turns (for example, the turn CSVs from
 `scripts/export_interview_turns.py`, where `turn_id` is the 1-based position in the record's

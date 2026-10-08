@@ -47,20 +47,23 @@ def _split_long(text):
     return chunks
 
 
-def segment_interview(record):
-    """record: one row from queries/*.json (needs item_id and turns;
-    group_name/person_name are copied through if present). Returns a list of
-    segment dicts (without dataset_id -- the caller, e.g.
-    scripts/build_segments.py, knows which dataset it's processing and adds
-    that field before storing)."""
-    item_id = record.get("item_id")
+def _segment_pieces(record):
+    """The merge/split algorithm itself, as (merged_turn, piece_text) pairs in
+    seg_index order. Each merged_turn carries `turn_indices`: the 0-based
+    positions in record["turns"] it was built from.
+
+    Both public functions below read from this one loop, so the segment texts
+    and the turn indices behind them can't drift apart. Indices count every
+    turn in the original list, including empty-content ones the loop skips,
+    so they line up with anything else that numbers record["turns"] directly.
+    """
     utterances = record.get("turns") or []
 
     # Pass 1: merge a short utterance forward into the next same-speaker one,
     # so caption-artifact fragments ("Right.") don't become their own segment
     # unless there's no same-speaker neighbor to merge into.
     merged = []
-    for u in utterances:
+    for turn_index, u in enumerate(utterances):
         content = (u.get("content") or "").strip()
         if not content:
             continue
@@ -68,6 +71,7 @@ def segment_interview(record):
         if (merged and merged[-1]["speaker_name"] == speaker
                 and _word_count(merged[-1]["content"]) < MERGE_MIN):
             merged[-1]["content"] = f"{merged[-1]['content']} {content}"
+            merged[-1]["turn_indices"].append(turn_index)
         else:
             merged.append({
                 "speaker_name": speaker,
@@ -76,11 +80,11 @@ def segment_interview(record):
                 "depth": u.get("depth"),
                 "timestamp": u.get("timestamp"),
                 "content": content,
+                "turn_indices": [turn_index],
             })
 
     # Pass 2: split turns that are still too long.
-    segments = []
-    seg_index = 0
+    out = []
     for u in merged:
         wc = _word_count(u["content"])
         pieces = _split_long(u["content"]) if wc > SPLIT_MAX else [u["content"]]
@@ -88,19 +92,46 @@ def segment_interview(record):
             piece = piece.strip()
             if not piece:
                 continue
-            segments.append({
-                "segment_id": f"{item_id}:{seg_index:04d}",
-                "item_id": item_id,
-                "group_name": record.get("group_name"),
-                "person_name": record.get("person_name"),
-                "seg_index": seg_index,
-                "speaker_name": u["speaker_name"],
-                "speaker_id": u["speaker_id"],
-                "speaker_role": u["speaker_role"],
-                "depth": u["depth"],
-                "timestamp": u["timestamp"],
-                "text": piece,
-                "word_count": _word_count(piece),
-            })
-            seg_index += 1
+            out.append((u, piece))
+    return out
+
+
+def segment_interview(record):
+    """record: one row from queries/*.json (needs item_id and turns;
+    group_name/person_name are copied through if present). Returns a list of
+    segment dicts (without dataset_id -- the caller, e.g.
+    scripts/build_segments.py, knows which dataset it's processing and adds
+    that field before storing)."""
+    item_id = record.get("item_id")
+    segments = []
+    for seg_index, (u, piece) in enumerate(_segment_pieces(record)):
+        segments.append({
+            "segment_id": f"{item_id}:{seg_index:04d}",
+            "item_id": item_id,
+            "group_name": record.get("group_name"),
+            "person_name": record.get("person_name"),
+            "seg_index": seg_index,
+            "speaker_name": u["speaker_name"],
+            "speaker_id": u["speaker_id"],
+            "speaker_role": u["speaker_role"],
+            "depth": u["depth"],
+            "timestamp": u["timestamp"],
+            "text": piece,
+            "word_count": _word_count(piece),
+        })
     return segments
+
+
+def segment_turn_indices(record):
+    """For each segment segment_interview(record) returns, the 0-based indices
+    into record["turns"] of the turns it came from -- a list of lists in the
+    same order, so result[k] belongs to seg_index k.
+
+    The `segments` table doesn't store this, but external pipelines key on
+    source turns (e.g. scripts/export_interview_turns.py's turn CSVs, whose
+    turn_id is index + 1). A merged segment lists several indices; a long turn
+    split into several segments repeats its index in each piece. Indices are
+    positions in the original list, so empty-content turns (never part of a
+    segment) still count. Pure: no DB, no I/O.
+    """
+    return [list(u["turn_indices"]) for u, _ in _segment_pieces(record)]
