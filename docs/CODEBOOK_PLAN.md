@@ -401,7 +401,31 @@ positive or negative). Don't re-derive the rules in the export module.
 Document both formats in docs/DEVELOPMENT.md, next to the topic-model export section, and in
 the README's export list.
 
-### K8 Point the LLM pipeline at the export
+### K8 Point the LLM pipeline at the export — done 2026-10-08
+
+**As built** (in the untracked `scripts/llm_topics/`):
+- **Options.** `stage0_prepare.py --codebook` accepts either file and detects the app export by
+  `"format": "codebook_topic_themes"` (`format_version` 1 only). `--labels` defaults to the
+  `codebook_labels.csv` next to it. `--read-in-full {status,coverage}` defaults to `status`, the
+  app's policy; `coverage` also counts `inferred_by_coverage` interviews, like the old rule. `--out`
+  sends outputs elsewhere for side runs.
+- **What comes from the export.** Themes come from its active topics (archived ones are listed as
+  issues), and labels from the CSV. Scores are now used for ranking only. App near misses
+  (segments) become one entry per executive answer turn they touch. The app's listed twins are
+  excluded from evaluation.
+- **comment_id** is `f"{item_id}_{index+1:04d}"`, verified against
+  `export_interview_turns.py`, with each example checked against the rebuilt turn map.
+- **Provenance.** `codebook_resolved.json` records the codebook format, path,
+  `codebook_version`, gold tier and labels hash. The report has a "Codebook source" section.
+- **Old path.** A run with the researcher's hand-edited codebook gives identical outputs: a
+  byte-identical `turns_prepared.parquet`, and only the new provenance keys added elsewhere.
+- **Fix in `stage2_pilot.py`.** `evaluate()` no longer crashes on a theme with no seed-pack
+  threshold (e.g. Solution Betting).
+- **Tests.** `tests/test_llm_topics_codebook.py`, untracked like the pipeline; it skips when the
+  scripts are absent.
+
+On the real export: the codebook issues it reports are no exemplars or near misses for any topic
+yet, and no criteria for Solution Betting. The original spec follows.
 
 Once K7 ships, make `scripts/llm_topics/stage0_prepare.py` accept `--codebook
 <path to codebook_topic_themes.json>` as an alternative to its own hand-edited
