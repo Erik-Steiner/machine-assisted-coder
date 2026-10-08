@@ -982,15 +982,15 @@ button.btn-secondary {
 }
 #modelView.hidden { display: none; }
 
-/* Train tab sub-pages: Models (model.js) and Codebook (codebook.js) */
-#modelSubnav {
+/* Sub-tabs (app.js's setupSubnav): Train's Codebook | Models, Review's Queues | Recode */
+.subnav {
   display: flex;
   gap: 4px;
   padding: 6px 12px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
-.model-subnav-btn {
+.subnav-btn {
   background: transparent;
   color: var(--text-dim);
   border: 1px solid transparent;
@@ -998,7 +998,8 @@ button.btn-secondary {
   padding: 4px 12px;
   cursor: pointer;
 }
-.model-subnav-btn.active { background: var(--accent-dim); color: var(--text); }
+.subnav-btn.active { background: var(--accent-dim); color: var(--text); }
+.subpage.hidden { display: none; }
 .model-subpage { flex: 1; display: flex; min-height: 0; }
 .model-subpage.hidden { display: none; }
 
@@ -1279,9 +1280,11 @@ button.btn-secondary {
 #reviewView {
   flex: 1;
   display: flex;
+  flex-direction: column; /* sub-tab switcher above the sidebar + main row */
   min-height: 0;
 }
 #reviewView.hidden { display: none; }
+#reviewBody { flex: 1; display: flex; min-height: 0; }
 
 #reviewSidebar {
   width: 300px;
@@ -1302,8 +1305,7 @@ button.btn-secondary {
 }
 #reviewQueue.hidden { display: none; }
 #reviewEmpty.hidden { display: none; }
-#reviewModeQueue.hidden, #reviewLoadMore.hidden, #reviewQueueThemeLabel.hidden,
-#reviewRecodeHint.hidden, #reviewThemeSelect.hidden { display: none; }
+#reviewLoadMore.hidden { display: none; }
 #reviewModeLabel, #reviewQueueThemeLabel { display: block; margin: 0 0 10px 0; }
 #reviewModeLabel select, #reviewQueueThemeLabel select { max-width: 100%; }
 #reviewModeList { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }

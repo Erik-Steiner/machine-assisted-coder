@@ -9,9 +9,11 @@
 // theme"), tagged source="review_reject", which keeps it out of that theme's
 // future queues (see coding_store/codes.py's add_negative()).
 //
-// Besides that recode view, the View selector offers per-theme queue modes from
-// GET /api/review/queue (coding_store/queues.py): highest scores, borderline,
-// random check, likely mislabels, and overlap with other themes -- paged, and
+// The page has two sub-tabs (app.js's setupSubnav, docs/CODEBOOK_PLAN.md U1): Recode,
+// that multi-theme view (still the default), and Queues. On Queues, the Queue selector
+// offers per-theme modes from GET /api/review/queue (coding_store/queues.py): highest
+// scores, borderline, random check, likely mislabels, near-miss hunt, and overlap with
+// other themes -- paged, and
 // skipping passages already decided for the theme. In those queues each card is
 // triaged with Accept / Reject / Skip (keys a / r / s, j / k to move, u to undo),
 // recorded via POST /api/review/decisions (coding_store/decisions.py) with the
@@ -32,7 +34,8 @@ const reviewState = {
   minWords: 0, // live "min word count" filter, same idea as coding.js's -- hides, never deletes
   engine: "tfidf", // whose predictions fill the "model-flagged" list -- one engine at a time,
                    // never mixed (see coding_store/review.py's get_review_candidates)
-  mode: "recode", // "recode" (the multi-theme view above) or a queues.py mode
+  mode: "recode", // "recode" (the Recode sub-tab) or a queues.py mode (Queues) -- set by applyReviewMode()
+  queueMode: "top", // the Queues sub-tab's selected mode, kept while Recode is showing
   queueThemeId: null, // the one theme a queue mode is for
   queue: null, // last /api/review/queue response, items accumulated across "Load more"
   queueRequest: 0, // bumped per load, so a slow response for an old selection is dropped
@@ -151,18 +154,13 @@ function renderReviewQueueThemeSelect() {
   if (reviewState.queueThemeId) select.value = reviewState.queueThemeId;
 }
 
-// Shows the recode view or a queue mode's view, then loads whichever is active.
+// Loads whichever sub-tab is showing: Recode, or the queue mode picked on Queues. The
+// sub-tab helper shows and hides each one's controls.
 function applyReviewMode() {
-  const recode = reviewState.mode === "recode";
-  document.getElementById("reviewThemeSelect").classList.toggle("hidden", !recode);
-  document.getElementById("reviewRecodeHint").classList.toggle("hidden", !recode);
-  document.getElementById("reviewQueueThemeLabel").classList.toggle("hidden", recode);
-  document.getElementById("reviewModeQueue").classList.toggle("hidden", recode);
-  if (recode) {
+  reviewState.mode = currentSubpage("review") === "recode" ? "recode" : reviewState.queueMode;
+  if (reviewState.mode === "recode") {
     loadReviewCandidates(); // clears the queue itself when nothing's selected
   } else {
-    document.getElementById("reviewEmpty").classList.add("hidden");
-    document.getElementById("reviewQueue").classList.add("hidden");
     loadModeQueue(false);
   }
 }
@@ -659,8 +657,12 @@ function bindReviewEvents() {
     applyReviewMode();
   });
   document.getElementById("reviewMode").addEventListener("change", (e) => {
-    reviewState.mode = e.target.value;
+    reviewState.queueMode = e.target.value;
     applyReviewMode();
+  });
+  setupSubnav("review", document.getElementById("reviewSubnav"), {
+    initial: "recode",
+    onChange: applyReviewMode,
   });
   document.getElementById("reviewQueueTheme").addEventListener("change", (e) => {
     reviewState.queueThemeId = e.target.value;

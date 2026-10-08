@@ -5,29 +5,19 @@
 // in a read-in-full interview). Completeness is advisory only: it's flagged here, on
 // the Models page and on the Code tab's theme rows, and never blocks training or export.
 //
-// Also owns the Train tab's Models | Codebook switcher. Shares codingState (the
-// active scheme) and themesByParent() from coding.js, escapeHtml()/switchTab() from
-// app.js, and extends model.js's window.onEnterModelTab. Loaded after model.js and
+// Also registers the Train tab's Codebook | Models sub-tabs with app.js's setupSubnav()
+// (Models stays the default). Shares codingState (the active scheme) and themesByParent()
+// from coding.js, escapeHtml()/goToSubpage()/showSubpage() from app.js, and extends
+// model.js's window.onEnterModelTab. Loaded after model.js and
 // storage.js. Also defines openCodebookThemesExport() (the K7 export dialog), which
 // appendix.js reuses.
 
 const codebookState = {
-  subpage: "models", // "models" | "codebook"
   overview: [], // GET /api/codebook/overview rows for the active scheme
   selectedThemeId: null,
   dirty: false, // unsaved edits in the form
   examples: { exemplars: [], near_misses: [] }, // GET /api/codebook/examples for the selected theme
 };
-
-function switchModelSubpage(name) {
-  codebookState.subpage = name;
-  document.getElementById("modelModelsPage").classList.toggle("hidden", name !== "models");
-  document.getElementById("codebookPage").classList.toggle("hidden", name !== "codebook");
-  document.querySelectorAll(".model-subnav-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.subpage === name);
-  });
-  if (name === "codebook") loadCodebook();
-}
 
 async function loadCodebook() {
   const schemeId = codingState.activeSchemeId;
@@ -324,19 +314,20 @@ async function openCodebookThemesExport(panel, onExported) {
 
 // Used by the Code tab's per-theme "Codebook n/5" badges (coding.js).
 function openCodebookTheme(themeId) {
-  switchTab("model");
-  switchModelSubpage("codebook");
+  goToSubpage("model", "codebook");
   codebookState.selectedThemeId = themeId;
   codebookState.dirty = false;
 }
 
 function bindCodebookEvents() {
-  document.getElementById("modelSubnav").addEventListener("click", (e) => {
-    const btn = e.target.closest(".model-subnav-btn");
-    if (!btn || btn.dataset.subpage === codebookState.subpage) return;
-    if (codebookState.dirty && !confirm("You have unsaved changes to a codebook entry. Discard them?")) return;
-    codebookState.dirty = false;
-    switchModelSubpage(btn.dataset.subpage);
+  setupSubnav("model", document.getElementById("modelSubnav"), {
+    initial: "models",
+    onChange: (name) => { if (name === "codebook") loadCodebook(); },
+    beforeChange: () => {
+      if (codebookState.dirty && !confirm("You have unsaved changes to a codebook entry. Discard them?")) return false;
+      codebookState.dirty = false;
+      return true;
+    },
   });
   document.getElementById("codebookThemeItems").addEventListener("click", (e) => {
     const item = e.target.closest(".codebook-theme-item");
@@ -356,7 +347,7 @@ function bindCodebookEvents() {
   document.getElementById("codebookExemplars").addEventListener("click", onExampleAction);
   document.getElementById("codebookNearMisses").addEventListener("click", onExampleAction);
   document.getElementById("modelCodebookNote").addEventListener("click", (e) => {
-    if (e.target.id === "openCodebookLink") switchModelSubpage("codebook");
+    if (e.target.id === "openCodebookLink") showSubpage("model", "codebook");
   });
   // Extend model.js's Train-tab entry hook: keep the note (and an open Codebook page) current.
   const enterModels = window.onEnterModelTab;

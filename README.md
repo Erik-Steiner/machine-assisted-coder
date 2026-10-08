@@ -386,6 +386,10 @@ suggestive, not final, until a theme has more codes.
 
 ### Review tab
 
+Review has two sub-tabs: **Recode** (the page it opens on) and **Queues**.
+
+On **Recode**:
+
 1. Check one or more themes. A queue builds below, split into **Currently coded** (every segment
    coded under any of the selected themes) and **Model-flagged, not yet coded** (each selected
    theme's top-scored segments that aren't coded under it yet).
@@ -397,7 +401,7 @@ suggestive, not final, until a theme has more codes.
 This tab is for revisiting/refining an existing codebook (e.g. two themes turning out to
 overlap), not for first-pass coding — do that in the Coding tab.
 
-The **View** selector at the top of the sidebar also offers queues for one theme at a time, from its
+On **Queues**, the **Queue** selector at the top of the sidebar offers queues for one theme at a time, from its
 latest run (25 at a time, with **Load more**). Passages you've already decided for that theme are
 left out, except in *likely mislabels*:
 

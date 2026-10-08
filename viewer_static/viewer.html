@@ -381,11 +381,11 @@
 </div>
 
 <div id="modelView">
-  <nav id="modelSubnav">
-    <button type="button" class="model-subnav-btn active" data-subpage="models">Models</button>
-    <button type="button" class="model-subnav-btn" data-subpage="codebook">Codebook</button>
+  <nav id="modelSubnav" class="subnav">
+    <button type="button" class="subnav-btn" data-subpage="codebook">Codebook</button>
+    <button type="button" class="subnav-btn active" data-subpage="models">Models</button>
   </nav>
-  <div id="modelModelsPage" class="model-subpage">
+  <div id="modelModelsPage" class="model-subpage subpage" data-subpage="models">
     <aside id="modelSidebar">
       <div id="modelTrainBar">
         <button id="trainModelsBtn">Train / retrain this scheme's themes</button>
@@ -513,7 +513,7 @@
     </main>
   </div>
 
-  <div id="codebookPage" class="model-subpage hidden">
+  <div id="codebookPage" class="model-subpage subpage hidden" data-subpage="codebook">
     <aside id="codebookSidebar">
       <p class="hint">Prepare each theme for a model: what it is, when to code it, and the
         researcher-chosen examples that show it. Gaps are flagged, never enforced: you can always
@@ -566,25 +566,33 @@
 </div>
 
 <div id="reviewView">
+  <nav id="reviewSubnav" class="subnav">
+    <button type="button" class="subnav-btn" data-subpage="queues">Queues</button>
+    <button type="button" class="subnav-btn active" data-subpage="recode">Recode</button>
+  </nav>
+  <div id="reviewBody">
   <aside id="reviewSidebar">
     <h3>Review themes</h3>
-    <label id="reviewModeLabel">View
-      <select id="reviewMode">
-        <option value="recode">Recode: coded + top predictions</option>
-        <option value="top">Queue: highest scores</option>
-        <option value="uncertain">Queue: borderline</option>
-        <option value="audit">Queue: random check</option>
-        <option value="suspect">Queue: likely mislabels</option>
-        <option value="boundary">Queue: near-miss hunt</option>
-        <option value="confusion">Queue: overlap with other themes</option>
-      </select>
-    </label>
-    <p class="hint" id="reviewRecodeHint">Pick one or more themes to build a recode queue -- every segment already
-      coded under them, plus segments a trained model top-scores for them but that aren't
-      coded yet.</p>
     <div id="reviewSchemeLabel" class="hint"></div>
-    <div id="reviewThemeSelect" class="checkbox-list"></div>
-    <label id="reviewQueueThemeLabel" class="hidden">Theme <select id="reviewQueueTheme"></select></label>
+    <div class="subpage hidden" data-subpage="queues">
+      <label id="reviewModeLabel">Queue
+        <select id="reviewMode">
+          <option value="top">Highest scores</option>
+          <option value="uncertain">Borderline</option>
+          <option value="audit">Random check</option>
+          <option value="suspect">Likely mislabels</option>
+          <option value="boundary">Near-miss hunt</option>
+          <option value="confusion">Overlap with other themes</option>
+        </select>
+      </label>
+      <label id="reviewQueueThemeLabel">Theme <select id="reviewQueueTheme"></select></label>
+    </div>
+    <div class="subpage" data-subpage="recode">
+      <p class="hint" id="reviewRecodeHint">Pick one or more themes to build a recode queue -- every segment already
+        coded under them, plus segments a trained model top-scores for them but that aren't
+        coded yet.</p>
+      <div id="reviewThemeSelect" class="checkbox-list"></div>
+    </div>
     <label id="reviewEngineLabel">Model scores from
       <select id="reviewEngine">
         <option value="tfidf">TF-IDF</option>
@@ -594,24 +602,27 @@
     <label id="reviewMinWordsLabel">Min words <input id="reviewMinWords" type="number" min="0" placeholder="0" style="width:4em"></label>
   </aside>
   <main id="reviewMain">
-    <div id="reviewEmpty" class="hint">Select one or more themes to build a recode queue.</div>
-    <div id="reviewQueue" class="hidden">
-      <section class="review-section">
-        <h3>Currently coded (<span id="reviewCodedCount">0</span>)</h3>
-        <div id="reviewCodedList"></div>
-      </section>
-      <section class="review-section">
-        <h3>Model-flagged, not yet coded (<span id="reviewPredictedCount">0</span>)</h3>
-        <div id="reviewPredictedList"></div>
-      </section>
+    <div class="subpage" data-subpage="recode">
+      <div id="reviewEmpty" class="hint">Select one or more themes to build a recode queue.</div>
+      <div id="reviewQueue" class="hidden">
+        <section class="review-section">
+          <h3>Currently coded (<span id="reviewCodedCount">0</span>)</h3>
+          <div id="reviewCodedList"></div>
+        </section>
+        <section class="review-section">
+          <h3>Model-flagged, not yet coded (<span id="reviewPredictedCount">0</span>)</h3>
+          <div id="reviewPredictedList"></div>
+        </section>
+      </div>
     </div>
-    <div id="reviewModeQueue" class="hidden">
+    <div id="reviewModeQueue" class="subpage hidden" data-subpage="queues">
       <p id="reviewModeHint" class="hint"></p>
       <div id="reviewModeSummary" class="hint"></div>
       <div id="reviewModeList"></div>
       <button id="reviewLoadMore" class="btn-secondary hidden">Load more</button>
     </div>
   </main>
+  </div>
 </div>
 
 <div id="appendixView">

@@ -486,7 +486,16 @@ below.
 
 ## Model subsystem
 
-**Train tab sub-pages.** `codebook.js` owns a Models | Codebook switcher (`#modelSubnav`) at the
+**Sub-tabs (CODEBOOK_PLAN U1).** Train (Codebook | Models, opening on Models) and Review
+(Queues | Recode, opening on Recode) share one helper in `app.js`: `setupSubnav(tab, navEl,
+{initial, onChange, beforeChange})` shows the `.subpage[data-subpage]` elements of the nav's page
+that match the clicked `.subnav-btn[data-subpage]`, and hides the rest. A page can mark several
+elements with one name (Review marks sidebar controls and main panes). `showSubpage(tab, name)`,
+`currentSubpage(tab)` and `goToSubpage(tab, name)` (switch top-level tab and sub-tab in one step,
+for deep links) work from any later script. `beforeChange` returning false keeps the current
+sub-tab (the Codebook page's unsaved-edits prompt).
+
+**Train tab sub-pages.** `codebook.js` registers the Codebook | Models sub-tabs (`#modelSubnav`) at the
 top of `#modelView`. The Models page is the original sidebar plus detail (`model.js`,
 `storage.js`). The Codebook page (docs/CODEBOOK_PLAN.md K2) edits each theme's definition
 (`themes.description`), `inclusion_criteria`, `exclusion_criteria` and `boundary_notes` (schema
@@ -746,7 +755,7 @@ card stays on screen with Undo until the queue reloads, after which `get_review_
 skips that segment for that theme. Every candidate carries `rejected_theme_ids` alongside
 `theme_ids`.
 
-**Queue modes (roadmap B1).** The sidebar's View selector switches between that recode view and
+**Queue modes (roadmap B1).** The Queues sub-tab's Queue selector (`#reviewMode`) picks one of the
 per-theme queues from `GET /api/review/queue` (`coding_store/queues.py`), each over the theme's
 latest run of the selected engine, paged 25 at a time: `top`, `uncertain` (nearest the
 threshold), `boundary` (the near-miss hunt, CODEBOOK_PLAN K4: judged negatives from read-in-full interviews,
