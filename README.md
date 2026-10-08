@@ -399,6 +399,9 @@ left out, except in *likely mislabels*:
   accept estimates the model's real precision.
 - **Likely mislabels**: passages you've already decided where the model most disagrees, using
   scores from a model that never saw them. Possible miscodes, or a theme definition that has drifted.
+- **Near-miss hunt**: passages judged *not* the theme (rejected, "none of these", or uncoded in an
+  interview read in full), the ones the model most thinks *are* the theme first. Press `a` if it's the
+  theme after all, or `m` to flag it as a near miss for the codebook.
 - **Overlap with other themes**: passages coded with this theme that score high for another theme
   in the scheme and haven't been coded or rejected for it.
 

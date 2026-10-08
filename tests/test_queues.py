@@ -16,7 +16,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HERE))
 
-from coding_store import codes, model_runs, queues, reviewed, schema, schemes, segments, themes  # noqa: E402
+from coding_store import codes, examples, model_runs, queues, reviewed, schema, schemes, segments, themes  # noqa: E402
 
 
 def rows(*triples):
@@ -47,6 +47,11 @@ class OrderQueueTests(unittest.TestCase):
         out = queues.order_queue("suspect", self.ROWS, 0.5, positives={"b", "e"}, negatives={"d"})
         self.assertEqual(self.ids(out), ["b", "d"])  # coded b at 0.1 (0.9 off), judged-negative d at 0.7
         self.assertEqual([r["label"] for r in out], ["positive", "negative"])  # e has no oof -> left out
+
+    def test_boundary_is_negatives_only_ranked_by_oof(self):
+        out = queues.order_queue("boundary", self.ROWS, 0.5, positives={"a"}, negatives={"a", "c", "d", "e"})
+        # a is positive (excluded); d's oof 0.7 > c's 0.6; e has no oof, so its score 0.1 ranks it.
+        self.assertEqual([r["segment_id"] for r in out], ["d", "c", "e"])
 
     def test_unknown_mode(self):
         with self.assertRaises(ValueError):
@@ -107,6 +112,16 @@ class QueueEndToEndTests(unittest.TestCase):
         self.assertEqual(model_runs.get_scores_for_segments(["s0"], [self.a], engine="embed"), {})
         model_runs.save_top_terms("tfidf_v1_1", self.a, [("growth", 1.2), ("revenue", 0.9)], [("weather", -1.0)])
         self.assertEqual(queues.get_queue(self.a, "top")["top_terms"], ["growth", "revenue"])
+
+    def test_boundary_uses_trusted_negatives_and_skips_flagged_near_misses(self):
+        reviewed.bulk_mark_items([("d1", "i1")], "s", "last_code")  # unconfirmed bulk mark: not trusted
+        self.assertEqual(queues.get_queue(self.a, "boundary")["total"], 1)  # only the explicit rejection s1
+        reviewed.set_item_review("d1", "i1", "s", False)
+        reviewed.set_item_review("d1", "i1", "s", True)  # interactive: trusted
+        q = queues.get_queue(self.a, "boundary")
+        self.assertEqual(sorted(i["segment_id"] for i in q["items"]), ["s1", "s3", "s4", "s5"])
+        examples.set_flag("s1", self.a, "near_miss", True)
+        self.assertNotIn("s1", [i["segment_id"] for i in queues.get_queue(self.a, "boundary")["items"]])
 
     def test_no_run_for_engine(self):
         q = queues.get_queue(self.a, "top", engine="embed")

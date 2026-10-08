@@ -175,8 +175,10 @@ Endpoints:
         -> one page of a review queue for one theme, from its latest run of `engine`.
            mode: top (highest undecided) | uncertain (nearest the threshold) | audit
            (fixed random sample above threshold) | suspect (decided passages the
-           out-of-fold score disagrees with) | confusion (coded here, high for another
-           theme in the scheme). {model_version, threshold, total, items} -- see
+           out-of-fold score disagrees with) | boundary (judged negatives from
+           read-in-full interviews, rejections and "none of these", highest out-of-fold
+           first: the near-miss hunt) | confusion (coded here, high for another theme in
+           the scheme). {model_version, threshold, total, items} -- see
            coding_store/queues.py
     GET  /api/review/segment_scores?segment_ids=<a,b>&scheme_id=<id>&engine=<tfidf>
         -> {segment_id: {theme_id: {score, threshold, model_version}}} -- each scheme theme's

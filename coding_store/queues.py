@@ -13,6 +13,13 @@ question in the code -> train -> review loop:
              Uses oof_score (A3) -- a model that never saw the passage -- because the
              final model has memorized its own training labels. Possible miscodes, or
              a theme whose definition has drifted.
+  boundary   Passages judged NOT to be the theme -- explicit rejections, "none of these"
+             confirmations, and uncoded passages in read-in-full interviews (confirmed or
+             interactive marks; unconfirmed bulk marks are left out) -- highest
+             out-of-fold score first, skipping ones already flagged as near misses
+             (CODEBOOK_PLAN K4). Surfaces missed positives (accept codes them) and good
+             contrast examples (m flags a near miss). Unlike suspect it is negatives only,
+             and its main output is near misses.
   confusion  Passages coded with this theme that score at or above threshold for a
              different theme in the same scheme (excluding its own ancestors and
              sub-codes, which overlap by design) and aren't explicitly decided for that
@@ -30,7 +37,7 @@ import random
 
 from . import codes, examples, labels, model_runs, schema, segments, themes
 
-QUEUE_MODES = ("top", "uncertain", "audit", "suspect", "confusion")
+QUEUE_MODES = ("top", "uncertain", "audit", "suspect", "boundary", "confusion")
 DEFAULT_PAGE_SIZE = 25
 
 
@@ -62,6 +69,12 @@ def order_queue(mode, rows, threshold, positives, negatives, seed=""):
             elif r["segment_id"] in negatives:
                 out.append({**r, "label": "negative", "disagreement": r["oof_score"]})
         return sorted(out, key=lambda r: (-r["disagreement"], r["segment_id"]))
+    if mode == "boundary":
+        # `negatives` is the caller's boundary pool (see get_queue()). Rank by the honest
+        # out-of-fold score when there is one (the passage was fitted on), else the score.
+        out = [{**r, "rank_score": r["oof_score"] if r.get("oof_score") is not None else r["score"]}
+               for r in rows if r["segment_id"] in negatives and r["segment_id"] not in positives]
+        return sorted(out, key=lambda r: (-r["rank_score"], r["segment_id"]))
     raise ValueError(f"unknown queue mode '{mode}' -- expected one of {QUEUE_MODES}")
 
 
@@ -127,7 +140,12 @@ def get_queue(theme_id, mode, engine="tfidf", offset=0, limit=DEFAULT_PAGE_SIZE)
             own = by_id.get(r["segment_id"], {})
             r.update(score=own.get("score"), oof_score=own.get("oof_score"))
     else:
-        negatives = labels.reviewed_negative_segment_ids(theme_id)
+        if mode == "boundary":
+            # Only negatives the researcher can stand behind, minus near misses already flagged.
+            flagged = {r["segment_id"] for r in examples.list_flagged(theme_id, "near_miss")}
+            negatives = labels.reviewed_negative_segment_ids(theme_id, read_in_full_only=True) - flagged
+        else:
+            negatives = labels.reviewed_negative_segment_ids(theme_id)
         ordered = order_queue(mode, rows, run["threshold"], positives, negatives,
                               seed=f"{run['model_version']}:{theme_id}")
 

@@ -106,6 +106,10 @@ const REVIEW_MODE_HINTS = {
   suspect: "Passages you've already decided where the model most disagrees: coded passages it scores " +
     "low, and judged negatives it scores high. Scores come from cross-validation, so the model never " +
     "saw the passage. Possible miscodes, or a theme definition that has drifted.",
+  boundary: "Passages judged not to be this theme (rejected, confirmed \u201cnone of these\u201d, or uncoded in " +
+    "an interview read in full), the ones the model most thinks are the theme first. Press a if it is the " +
+    "theme after all (a missed positive), m to keep it out and flag it as a near miss for the codebook, " +
+    "r to keep it out, s to skip.",
   confusion: "Passages coded with this theme that score above the threshold for a different theme in " +
     "the scheme, and haven't been coded or rejected for it: where theme boundaries may overlap.",
 };
@@ -228,7 +232,12 @@ function queueItemToCandidate(item, modelVersion) {
     type: "predicted", theme_id: themeId, score, engine: reviewState.engine, model_version: version,
   });
   let reasons;
-  if (reviewState.mode === "suspect") {
+  if (reviewState.mode === "boundary") {
+    reasons = [
+      { type: "judged", theme_id: tid },
+      { type: "oof", theme_id: tid, score: item.rank_score },
+    ];
+  } else if (reviewState.mode === "suspect") {
     reasons = [
       { type: item.label === "positive" ? "coded" : "judged", theme_id: tid },
       { type: "oof", theme_id: tid, score: item.oof_score },

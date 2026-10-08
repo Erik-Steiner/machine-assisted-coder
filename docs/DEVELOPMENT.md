@@ -729,7 +729,9 @@ skips that segment for that theme. Every candidate carries `rejected_theme_ids` 
 **Queue modes (roadmap B1).** The sidebar's View selector switches between that recode view and
 per-theme queues from `GET /api/review/queue` (`coding_store/queues.py`), each over the theme's
 latest run of the selected engine, paged 25 at a time: `top`, `uncertain` (nearest the
-threshold), `audit` (undecided passages above threshold, shuffled with a seed of model_version +
+threshold), `boundary` (the near-miss hunt, CODEBOOK_PLAN K4: judged negatives from read-in-full interviews,
+explicit rejections and "none of these", minus flagged near misses, highest `oof_score` first),
+`audit` (undecided passages above threshold, shuffled with a seed of model_version +
 theme_id so pages are stable within a run), `suspect` (decided passages ranked by how far their
 `oof_score` disagrees with the label; needs a run with out-of-fold scores), and `confusion`
 (coded here, at or above another theme's threshold in the same scheme, excluding the theme's own

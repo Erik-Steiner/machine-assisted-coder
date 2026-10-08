@@ -229,7 +229,16 @@ marks? That changes what every model learns. Ship K5 with training unchanged, th
 the answer is yes, add it as an option alongside `negative_mode` and log it per run, not as
 a silent change.
 
-### K4 Near-miss discovery queue
+### K4 Near-miss discovery queue — done 2026-10-08
+
+**As built:** queue mode `boundary` in `coding_store/queues.py` ("Queue: near-miss hunt" in
+Review). Its pool is `labels.reviewed_negative_segment_ids(theme, read_in_full_only=True)`
+(explicit rejections, "none of these", uncoded segments in confirmed/interactive interviews)
+minus near misses already flagged, ranked by `oof_score` (falling back to `score` for a passage
+the run didn't fit on). No new keys were needed: B2/K3's `a` / `m` / `r` / `s` already mean
+missed positive / near miss / plain rejection / skip, recorded with `mode='boundary'`. On the
+real project the pool is about 120–140 passages per theme, and it grows as interviews are
+confirmed read in full. The original spec follows.
 
 Add a queue mode, e.g. `boundary`, to `coding_store/queues.py` `QUEUE_MODES`. It lists judged
 negatives for the theme, highest `oof_score` first:
