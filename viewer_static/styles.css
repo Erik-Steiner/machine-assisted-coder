@@ -1070,6 +1070,25 @@ button.btn-secondary {
   border: 1px dashed var(--text-dim);
   margin-left: 6px;
 }
+/* "Export codebook for models" dialog (codebook.js's openCodebookThemesExport), rendered
+   inline in the Codebook sidebar and the Web Appendix bar */
+#codebookExportThemesBtn { margin-top: 12px; width: 100%; }
+.codebook-export-panel {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-alt);
+  font-size: 13px;
+  max-width: 760px;
+}
+.codebook-export-panel.hidden { display: none; }
+.codebook-export-panel .hint { margin: 4px 0; }
+.codebook-export-list { list-style: none; padding: 0; margin: 8px 0; max-height: 260px; overflow-y: auto; }
+.codebook-export-list li { padding: 2px 0; }
+.codebook-export-list .check-ok { color: var(--accent); }
+.codebook-export-list .check-missing { color: var(--text-dim); }
+.codebook-export-panel .codebook-actions { flex-wrap: wrap; }
 /* Exemplar star after a coded chip (coding.js's exemplarStarHtml) */
 .exemplar-star {
   border: none;

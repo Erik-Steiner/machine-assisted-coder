@@ -6,7 +6,8 @@
 // coding_store.get_appendix_feed() and downloadable as a self-contained
 // HTML file for a manuscript's supplementary material (appendix_export.py).
 //
-// Loaded last, after review.js. Shares app.js's escapeHtml/switchTab; adds
+// Loaded last, after review.js. Shares app.js's escapeHtml/switchTab and codebook.js's
+// openCodebookThemesExport() (the "Export codebook for models" dialog); adds
 // no new shared state of its own since this tab is read-mostly.
 
 const ACTION_LABELS = {
@@ -30,6 +31,20 @@ const ACTION_LABELS = {
   duplicate_override_removed: "Duplicate override removed",
   codebook_export: "Codebook exported",
   topic_model_export: "Full-corpus topic model exported",
+  codebook_themes_export: "Codebook exported for models",
+  item_marked_fully_coded: "Interview marked fully coded",
+  item_unmarked_fully_coded: "Interview unmarked as fully coded",
+  items_bulk_marked_fully_coded: "Interviews bulk-marked fully coded",
+  item_read_in_full_confirmed: "Interview confirmed read in full",
+  item_read_in_full_unconfirmed: "Read-in-full confirmation withdrawn",
+  run_pin: "Training run pinned",
+  run_unpin: "Training run unpinned",
+  predictions_prune: "Old runs' scores pruned",
+  database_compact: "Database compacted",
+  dataset_excluded: "Dataset excluded from analysis",
+  dataset_unloaded: "Dataset unloaded",
+  dataset_restored: "Dataset restored",
+  segments_built: "Datasets segmented",
   filter_snapshot: "Browse filter snapshot",
 };
 
@@ -98,6 +113,9 @@ function summarizeAppendixRow(actionType, details) {
     case "topic_model_export":
       return `Exported full-corpus topic model (${details.engine || "?"}, ` +
         `${details.themes_exported ?? "?"} theme(s), ${details.segment_rows ?? "?"} rows)`;
+    case "codebook_themes_export":
+      return `Exported codebook for models: scheme ${details.scheme_id || "?"}, ${details.topics ?? "?"} theme(s), ` +
+        `${details.label_rows ?? "?"} label row(s), version ${(details.codebook_version || "?").slice(0, 19)}…`;
     case "filter_snapshot":
       return "Browse filters active at export/citation time";
     default:
@@ -146,6 +164,11 @@ function bindAppendixEvents() {
     } catch (err) {
       statusEl.textContent = "Export failed — is the server running?";
     }
+  });
+
+  // The K7 export dialog lives in codebook.js (shared with the Train -> Codebook page).
+  document.getElementById("appendixExportThemesBtn").addEventListener("click", () => {
+    openCodebookThemesExport(document.getElementById("appendixThemesExportPanel"), () => loadAppendixLog());
   });
 
   window.onEnterAppendixTab = () => loadAppendixLog();

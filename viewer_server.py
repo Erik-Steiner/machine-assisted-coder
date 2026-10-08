@@ -270,6 +270,15 @@ Endpoints:
                                                          exports/ as JSON+CSV (backup / publication
                                                          supplement); scheme_id optionally limits the
                                                          themes/codes export to one scheme
+    GET  /api/export/codebook_themes?scheme_id=<id>   -> writes codebook_topic_themes.json (definitions, criteria,
+                                                         researcher-flagged exemplars / near misses with twins
+                                                         collapsed, completeness, codebook_version) and
+                                                         codebook_labels.csv (every known pos/neg label per segment
+                                                         and theme, with its source) to exports/ -- the codebook
+                                                         for an external model (CODEBOOK_PLAN K7); see
+                                                         codebook_export.py. {exported_to, files, codebook_version,
+                                                         label_rows, completeness: [{theme_id, name, status, score,
+                                                         total, missing}]}. Never blocked by completeness
     GET  /api/appendix/log?action_type=<t>&since=<ts>  -> the assembled research-action log
     POST /api/appendix/filter_snapshot                -> log the current Browse filter state
     GET  /api/appendix/export                        -> download the log as a self-contained HTML file
@@ -394,6 +403,7 @@ from urllib.parse import urlparse, parse_qs
 
 import appendix_export
 import classifier
+import codebook_export
 import corpus_analytics
 from coding_store import (
     activity_log,
@@ -1935,6 +1945,23 @@ def get_export_codebook(req):
     paths = activity_log.export_codebook(EXPORTS_DIR, scheme_id=req.query.get("scheme_id"))
     activity_log.log_activity(CODER_NAME, "codebook_export", {"files": [p.name for p in paths]})
     return JsonResponse({"exported_to": str(EXPORTS_DIR), "files": [p.name for p in paths]})
+
+
+@ROUTER.get("/api/export/codebook_themes")
+def get_export_codebook_themes(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    # Records come straight off disk with `turns` intact (get_dataset() strips them),
+    # only for datasets whose segments appear in the export -- for turn_indices (K6).
+    result = codebook_export.export_codebook_themes(
+        EXPORTS_DIR, scheme_id, load_records=_load_dataset_records_with_turns, actor=CODER_NAME,
+    )
+    return JsonResponse({
+        "exported_to": str(EXPORTS_DIR), "files": [p.name for p in result["paths"]],
+        "codebook_version": result["codebook_version"], "label_rows": result["label_rows"],
+        "turn_indices_available": result["turn_indices_available"], "completeness": result["completeness"],
+    })
 
 
 @ROUTER.get("/api/appendix/log")

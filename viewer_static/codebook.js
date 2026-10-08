@@ -8,7 +8,8 @@
 // Also owns the Train tab's Models | Codebook switcher. Shares codingState (the
 // active scheme) and themesByParent() from coding.js, escapeHtml()/switchTab() from
 // app.js, and extends model.js's window.onEnterModelTab. Loaded after model.js and
-// storage.js.
+// storage.js. Also defines openCodebookThemesExport() (the K7 export dialog), which
+// appendix.js reuses.
 
 const codebookState = {
   subpage: "models", // "models" | "codebook"
@@ -247,6 +248,80 @@ function renderCodebookNote() {
     : "";
 }
 
+// "Export codebook for models" (CODEBOOK_PLAN K7): codebook_topic_themes.json +
+// codebook_labels.csv via codebook_export.py. Shared by this page's sidebar and the Web
+// Appendix tab (appendix.js, loaded later), each passing its own inline panel element.
+// First shows every theme's completeness, then exports on click -- "Export anyway" is
+// always there, since completeness is advisory and never blocks an export.
+async function openCodebookThemesExport(panel, onExported) {
+  const schemeId = codingState.activeSchemeId;
+  panel.classList.remove("hidden");
+  if (!schemeId) {
+    panel.innerHTML = '<div class="hint">Pick a coding scheme first (Code tab).</div>';
+    return;
+  }
+  panel.innerHTML = '<div class="hint">Checking codebook completeness…</div>';
+  const res = await fetch(`/api/codebook/overview?scheme_id=${encodeURIComponent(schemeId)}`);
+  const rows = await res.json();
+  if (rows.error) {
+    panel.innerHTML = `<div class="hint">Error: ${escapeHtml(rows.error)}</div>`;
+    return;
+  }
+  const scheme = (codingState.schemes || []).find((s) => s.scheme_id === schemeId);
+  const incomplete = rows.filter((t) => t.completeness.score < t.completeness.total);
+  const list = rows.map((t) => {
+    const c = t.completeness;
+    const done = c.score === c.total;
+    const missing = Object.keys(c).filter((k) => c[k] && c[k].label && !c[k].ok).map((k) => c[k].label.toLowerCase());
+    return `<li class="${done ? "check-ok" : "check-missing"}" title="${escapeHtml(missingText(c))}">` +
+      `${escapeHtml(t.name)} ${c.score}/${c.total}${done ? "" : ": missing " + escapeHtml(missing.join(", "))}</li>`;
+  }).join("");
+  panel.innerHTML =
+    `<div><strong>Export codebook for models</strong>${scheme ? " — " + escapeHtml(scheme.name) : ""}</div>` +
+    `<div class="hint">Writes codebook_topic_themes.json (definitions, criteria, your flagged exemplars and ` +
+    `near misses) and codebook_labels.csv (every known positive / negative label) to the project's exports folder. ` +
+    (incomplete.length
+      ? `${incomplete.length} of ${rows.length} theme(s) are incomplete; you can still export.`
+      : "Every theme's codebook entry is complete.") + `</div>` +
+    (rows.length ? `<ul class="codebook-export-list">${list}</ul>` : '<div class="hint">No active themes in this scheme.</div>') +
+    `<div class="codebook-actions">` +
+    `<button type="button" class="codebook-export-go">${incomplete.length ? "Export anyway" : "Export"}</button>` +
+    `<button type="button" class="btn-secondary codebook-export-cancel">Cancel</button>` +
+    `<span class="hint codebook-export-status"></span></div>`;
+  panel.querySelector(".codebook-export-cancel").addEventListener("click", () => {
+    panel.classList.add("hidden");
+    panel.innerHTML = "";
+  });
+  panel.querySelector(".codebook-export-go").addEventListener("click", async (e) => {
+    const statusEl = panel.querySelector(".codebook-export-status");
+    e.target.disabled = true;
+    statusEl.textContent = "Exporting…";
+    try {
+      const r = await fetch(`/api/export/codebook_themes?scheme_id=${encodeURIComponent(schemeId)}`);
+      const data = await r.json();
+      if (data.error) {
+        statusEl.textContent = "Error: " + data.error;
+        e.target.disabled = false;
+        return;
+      }
+      panel.querySelector(".codebook-actions").innerHTML =
+        `<span class="hint">Saved ${escapeHtml(data.files.join(", "))} to ${escapeHtml(data.exported_to)} ` +
+        `(${data.completeness.length} theme(s), ${data.label_rows} label row(s); ` +
+        `version ${escapeHtml(data.codebook_version.slice(0, 19))}…)` +
+        (data.turn_indices_available ? "" : ". Turn indices weren't available, so they're left empty") +
+        `.</span> <button type="button" class="btn-secondary codebook-export-cancel">Close</button>`;
+      panel.querySelector(".codebook-export-cancel").addEventListener("click", () => {
+        panel.classList.add("hidden");
+        panel.innerHTML = "";
+      });
+      if (onExported) onExported(data);
+    } catch (err) {
+      statusEl.textContent = "Export failed — is the server running?";
+      e.target.disabled = false;
+    }
+  });
+}
+
 // Used by the Code tab's per-theme "Codebook n/5" badges (coding.js).
 function openCodebookTheme(themeId) {
   switchTab("model");
@@ -275,6 +350,9 @@ function bindCodebookEvents() {
     });
   });
   document.getElementById("codebookSaveBtn").addEventListener("click", saveCodebookEntry);
+  document.getElementById("codebookExportThemesBtn").addEventListener("click", () => {
+    openCodebookThemesExport(document.getElementById("codebookExportPanel"));
+  });
   document.getElementById("codebookExemplars").addEventListener("click", onExampleAction);
   document.getElementById("codebookNearMisses").addEventListener("click", onExampleAction);
   document.getElementById("modelCodebookNote").addEventListener("click", (e) => {
