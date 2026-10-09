@@ -1000,6 +1000,35 @@ button.btn-secondary {
 }
 .subnav-btn.active { background: var(--accent-dim); color: var(--text); }
 .subpage.hidden { display: none; }
+
+/* Cycle strip (cycle.js, CODEBOOK_PLAN U3): one line under the Train and Review sub-tabs */
+.cycle-strip {
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+}
+.cycle-strip.hidden { display: none; }
+.cycle-line { display: flex; align-items: center; gap: 12px; white-space: nowrap; overflow: hidden; }
+.cycle-round { font-weight: 600; }
+.cycle-steps { display: flex; align-items: center; gap: 4px; }
+.cycle-arrow { color: var(--text-dim); }
+.cycle-step { padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--text-dim); }
+.cycle-step.cycle-done { color: var(--text); }
+.cycle-step.cycle-current { background: var(--accent-dim); color: var(--text); border-color: var(--accent); }
+.cycle-step.cycle-stale { color: #e0a800; border-color: #e0a800; }
+.cycle-reason { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cycle-reason-link { color: var(--accent); cursor: pointer; }
+.cycle-reason-link:hover { text-decoration: underline; }
+.cycle-why {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 0;
+}
+.cycle-more { margin: 4px 0 2px 0; padding-left: 18px; }
 .model-subpage { flex: 1; display: flex; min-height: 0; }
 .model-subpage.hidden { display: none; }
 

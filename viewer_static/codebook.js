@@ -156,6 +156,7 @@ async function updateExampleFlag(segmentId, kind, flagged, note) {
   }
   await loadCodebook(); // counts and checklist
   loadCodebookExamples(codebookState.selectedThemeId);
+  if (typeof refreshCycleStrips === "function") refreshCycleStrips(); // cycle.js: flags change the codebook version
 }
 
 function onExampleAction(e) {
@@ -223,6 +224,7 @@ async function saveCodebookEntry() {
   await loadCodebook(); // refreshes the checklist and every badge
   document.getElementById("codebookSaveStatus").textContent = "Saved.";
   if (typeof loadThemes === "function") loadThemes(); // coding.js: definitions/badges on the Code tab
+  if (typeof refreshCycleStrips === "function") refreshCycleStrips(); // cycle.js: "codebook changed since
 }
 
 // One line on the Models page when entries are incomplete (advisory, never blocking).

@@ -250,6 +250,12 @@ Endpoints:
                                                          version it was trained under (null if not recorded),
                                                          pin, per-theme metrics and their means: the Train
                                                          tab's Runs page (CODEBOOK_PLAN U2; coding_store/runs.py)
+    GET  /api/iteration/status?scheme_id=<id>         -> {round, steps: {codebook, train, review, decide: done|current|
+                                                         stale|todo}, reasons: [{code, step, text, target: {tab,
+                                                         subpage}}], latest_run} -- where the scheme stands in the
+                                                         codebook -> train -> review -> decide cycle, for the cycle
+                                                         strip on Train and Review (CODEBOOK_PLAN U3;
+                                                         coding_store/iteration.py). Read-only, advisory
     GET  /api/model/export_full_corpus?scheme_id=&model_version=&engine=
         -> writes segment_topic_scores/topic_seed_pack (every segment's score against every
            trained theme, plus each theme's top terms + exemplars) to exports/ as JSON+CSV --
@@ -423,6 +429,7 @@ from coding_store import (
     decisions as decisions_store,
     examples as examples_store,
     duplicates,
+    iteration,
     model_runs,
     queues,
     review,
@@ -1138,6 +1145,7 @@ STATIC_FILES = {
     "/codebook.js": "codebook.js",
     "/runs.js": "runs.js",
     "/review.js": "review.js",
+    "/cycle.js": "cycle.js",
     "/appendix.js": "appendix.js",
     "/projects.js": "projects.js",
     "/import.js": "import.js",
@@ -1862,6 +1870,14 @@ def get_runs(req):
         "current_codebook_version": codebook_export.current_codebook_version(scheme_id),
         "runs": runs_store.list_runs(scheme_id),
     })
+
+
+@ROUTER.get("/api/iteration/status")
+def get_iteration_status(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    return JsonResponse(iteration.get_status(scheme_id, codebook_export.current_codebook_version(scheme_id)))
 
 
 @ROUTER.get("/api/model/export_full_corpus")

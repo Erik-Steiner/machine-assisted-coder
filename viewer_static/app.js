@@ -41,7 +41,9 @@ function escapeHtml(s) {
 // current_theme), so this only owns the poll mechanics -- rendering stays with the
 // caller. Returns a handle whose .cancel() stops the loop (mirrors the
 // clearTimeout(stateObj.pollTimer) idiom each caller used before this existed, for a
-// caller that wants to guard against overlapping poll chains).
+// caller that wants to guard against overlapping poll chains). After onDone, any
+// window.onBackgroundJobDone hook runs too (cycle.js refreshes the cycle strip), so a page
+// that depends on "something finished" needn't wire itself into every job type.
 function pollBackgroundJob(statusUrl, { onRunning, onDone, onError }, intervalMs = 1000) {
   const handle = { timer: null, cancel: () => clearTimeout(handle.timer) };
   async function tick() {
@@ -52,8 +54,12 @@ function pollBackgroundJob(statusUrl, { onRunning, onDone, onError }, intervalMs
       handle.timer = setTimeout(tick, intervalMs);
       return;
     }
-    if (job.status === "done") onDone(job);
-    else onError(job);
+    if (job.status === "done") {
+      onDone(job);
+      if (window.onBackgroundJobDone) window.onBackgroundJobDone(job);
+    } else {
+      onError(job);
+    }
   }
   handle.timer = setTimeout(tick, intervalMs);
   return handle;

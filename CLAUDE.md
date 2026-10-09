@@ -27,7 +27,7 @@ it. Seven tabs, one server (`viewer_server.py`):
 
 No frontend framework, no build step, no bundler. `viewer_static/*.js` files are loaded as
 plain `<script>` tags in a fixed order (`app.js` → `projects.js` → `import.js` → `coding.js` →
-`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `runs.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
+`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `runs.js` → `review.js` → `cycle.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
 rather than duplicating navigation logic. This is deliberate — see "Hard rules" below.
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
@@ -50,6 +50,7 @@ schema, not something to rename.
 | Full-corpus topic-model export / embedding engine | `topic_model_export.py`, `classifier.py`'s `build_embeddings`/`run_embedding_training_pass`/`embedding_readiness`, `coding_store/embeddings.py`, `requirements-embeddings.txt` |
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
+| Cycle strip (round, codebook → train → review → decide steps, what to do next) on Train and Review | `coding_store/iteration.py` (`iteration_status` holds every rule), `viewer_static/cycle.js`, `GET /api/iteration/status` |
 | Train → Runs (run history, codebook version per run, pins) and the engine list | `viewer_static/runs.js`, `coding_store/runs.py`, `codebook_export.current_codebook_version()`, `model_runs.engine_registry()` (`GET /api/engines`: never hard-code engine lists in the UI) |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
 | Review queue modes, triage decisions (a/r/s/e/m/u) | `coding_store/queues.py` (`order_queue` is the ordering rule), `coding_store/decisions.py`, `tests/test_queues.py`, `tests/test_decisions.py` |

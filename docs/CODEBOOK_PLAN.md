@@ -925,7 +925,32 @@ Models detail all work; no console errors. The original spec follows.
   same gold) and C1's learning curves.
 - **Storage and exports** move here unchanged: the Storage panel, and the full-corpus export.
 
-### U3 Iteration status and the cycle strip
+### U3 Iteration status and the cycle strip — done 2026-10-08
+
+**As built:** `coding_store/iteration.py` behind `GET /api/iteration/status`, drawn by
+`viewer_static/cycle.js` under the sub-tabs of both pages.
+- **Signals built,** in priority order:
+  1. no run yet → Train › Models
+  2. codebook changed since the latest run (recorded `codebook_version` ≠ current) → Train › Models
+  3. labels changed since the latest run (codes and rejections added or removed, "fully coded"
+     marks made or withdrawn, "none of these" confirmed or withdrawn) → Train › Models
+  4. the latest run has no review decisions → Review › Queues
+- **Waiting for later items:** unadjudicated `pilot_disagreement` items (Part 2), "no
+  evaluation or decision recorded" (U4 / U6), and unacknowledged codebook issues (L3). Until U4
+  records decisions, every scheme is in round 1 and Decide is never the current step.
+- **Choices made:** the latest run is the scheme's newest pass of any engine. A run from
+  before codebook versions were recorded never counts as "codebook changed". A bulk mark counts
+  by when it was recorded, not the earlier date it applies from. The plan's "(2 themes edited)"
+  count isn't shown: the version is one hash for the whole codebook.
+- **Refresh:** on entering Train or Review, after a codebook save or flag change, 1.5 s after
+  Review decisions pause, and when any background job finishes (`pollBackgroundJob()` now calls
+  `window.onBackgroundJobDone`).
+
+Verified in the test project: the strip shows on both pages; its link opens Review › Queues;
+accepting a queue item marks Review done and Train stale ("1 code added") after the pause;
+editing a theme's boundary notes adds "Codebook changed" ("why?" shows the second reason) and
+reverting removes it; a finished retrain refreshes the strip to "not reviewed"; no console
+errors. The original spec follows.
 
 - **One read-only endpoint**, `GET /api/iteration/status?scheme_id=`, backed by a pure
   function in `coding_store/iteration.py`. It returns the current round, each step's state

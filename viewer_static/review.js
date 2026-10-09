@@ -330,6 +330,7 @@ async function decideFocused(decision, flag = null) {
     : "";
   reviewState.undoStack.push(candidate);
   reviewState.round = data.round;
+  if (typeof scheduleCycleRefresh === "function") scheduleCycleRefresh(); // cycle.js
   // Move on to the next undecided card.
   const next = items.findIndex((c, i) => i > reviewState.focusIndex && !c.decision);
   if (next >= 0) reviewState.focusIndex = next;
@@ -375,6 +376,7 @@ async function undoLastDecision() {
   candidate.decisionFlag = null;
   candidate.decisionId = null;
   reviewState.round = data.round;
+  if (typeof scheduleCycleRefresh === "function") scheduleCycleRefresh(); // cycle.js
   const shownAt = visibleQueueItems().indexOf(candidate);
   if (shownAt < 0) {
     // Decided before the queue was reloaded, so its card isn't on screen any more:

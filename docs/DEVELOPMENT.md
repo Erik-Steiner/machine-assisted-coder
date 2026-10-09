@@ -512,6 +512,22 @@ section is opened). Engine ids, names and `model_version` prefixes come from `GE
 `ENGINE_LABELS` entry. The Models detail panel's TF-IDF / Embedding toggle is still fixed
 markup, until the Models engine switcher replaces it.
 
+**Cycle strip (CODEBOOK_PLAN U3).** One line under the sub-tabs of both Train and Review
+(`#trainCycleStrip`, `#reviewCycleStrip`, drawn by `cycle.js`): the round, the four steps
+(codebook, train, review, decide) as done / current / stale / todo, and the most important
+reason as a link to the tab that resolves it, with any others behind "why?".
+`GET /api/iteration/status` answers from `coding_store/iteration.py`: `iteration_status()` is a
+pure function over plain facts (the scheme's latest pass from `runs.list_runs()`, the current
+codebook version, label changes since that pass, review decisions on it) and holds every rule;
+`get_status()` only gathers the facts. Label changes count codes and rejections added or removed,
+"fully coded" marks made or withdrawn (a bulk mark by `recorded_at`, not the earlier moment it's
+dated as of) and "none of these" confirmations, after the pass's `trained_at`. A pass with no
+recorded codebook version never counts as "codebook changed". Rounds close only when a decision
+is recorded (U4), so until then every scheme is in round 1. The strip refreshes on entering
+either page, after a codebook save or flag change, 1.5 s after Review decisions pause, and when
+any background job finishes: `pollBackgroundJob()` calls `window.onBackgroundJobDone` after
+`onDone`.
+
 **Train tab sub-pages.** `codebook.js` registers the Codebook | Models | Runs sub-tabs
 (`#modelSubnav`) at the top of `#modelView`. The Models page is the original sidebar plus detail
 (`model.js`); Runs is `runs.js` plus `storage.js`. The Codebook page (docs/CODEBOOK_PLAN.md K2) edits each theme's definition

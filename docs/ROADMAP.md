@@ -168,7 +168,7 @@ engine" depends on A4's engine-aware notion of "latest".
   *(U1 the shared sub-tab helper done 2026-10-08: Train is Codebook | Models, Review is
   Queues | Recode. U2 the Runs tab done 2026-10-08: run history with each run's codebook
   version, pins, the full-corpus export and Storage, plus the engine registry
-  (`GET /api/engines`). Evaluate arrives with U6.)*
+  (`GET /api/engines`). U3 the cycle strip done 2026-10-08. Evaluate arrives with U6.)*
 
 ## Phase D — Stage 6: external-score round trip
 
