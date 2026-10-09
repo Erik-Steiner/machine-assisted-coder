@@ -486,18 +486,35 @@ below.
 
 ## Model subsystem
 
-**Sub-tabs (CODEBOOK_PLAN U1).** Train (Codebook | Models, opening on Models) and Review
+**Sub-tabs (CODEBOOK_PLAN U1).** Train (Codebook | Models | Runs, opening on Models) and Review
 (Queues | Recode, opening on Recode) share one helper in `app.js`: `setupSubnav(tab, navEl,
 {initial, onChange, beforeChange})` shows the `.subpage[data-subpage]` elements of the nav's page
 that match the clicked `.subnav-btn[data-subpage]`, and hides the rest. A page can mark several
 elements with one name (Review marks sidebar controls and main panes). `showSubpage(tab, name)`,
 `currentSubpage(tab)` and `goToSubpage(tab, name)` (switch top-level tab and sub-tab in one step,
-for deep links) work from any later script. `beforeChange` returning false keeps the current
-sub-tab (the Codebook page's unsaved-edits prompt).
+for deep links) work from any later script, and `addSubpageListener(tab, fn)` lets a later
+script react to its own sub-tab (`runs.js` does). `beforeChange` returning false keeps the
+current sub-tab (the Codebook page's unsaved-edits prompt).
 
-**Train tab sub-pages.** `codebook.js` registers the Codebook | Models sub-tabs (`#modelSubnav`) at the
-top of `#modelView`. The Models page is the original sidebar plus detail (`model.js`,
-`storage.js`). The Codebook page (docs/CODEBOOK_PLAN.md K2) edits each theme's definition
+**Runs page and the engine registry (CODEBOOK_PLAN U2, L0).** `runs.js` shows
+`GET /api/runs?scheme_id=` (`coding_store/runs.py`'s `list_runs()`): one row per training pass
+that trained any of the scheme's themes (archived and merged ones included), newest first, with
+per-theme metrics, their means, the pin, and the `codebook_version` the pass recorded. Every
+TF-IDF and embedding pass now stores `codebook_versions` (`{scheme_id: version}` for each scheme
+it trained) in `model_run_params`, computed by `codebook_export.current_codebook_version()`
+without counting labels or loading records; the page compares it with the current one
+("current" / "changed since"), and passes from before it existed read "not recorded". The
+full-corpus export and the Storage panel moved here unchanged (Storage loads the first time its
+section is opened). Engine ids, names and `model_version` prefixes come from `GET /api/engines`
+(`model_runs.engine_registry()`): `model.js` fills `ENGINE_LABELS` / `ENGINE_REGISTRY` from it
+(`engineRegistryReady` resolves once loaded) and `engineOfVersion()` uses its prefixes; Review's
+"Model scores from" dropdown is built from it. A new engine needs only an `ENGINE_PREFIXES` and
+`ENGINE_LABELS` entry. The Models detail panel's TF-IDF / Embedding toggle is still fixed
+markup, until the Models engine switcher replaces it.
+
+**Train tab sub-pages.** `codebook.js` registers the Codebook | Models | Runs sub-tabs
+(`#modelSubnav`) at the top of `#modelView`. The Models page is the original sidebar plus detail
+(`model.js`); Runs is `runs.js` plus `storage.js`. The Codebook page (docs/CODEBOOK_PLAN.md K2) edits each theme's definition
 (`themes.description`), `inclusion_criteria`, `exclusion_criteria` and `boundary_notes` (schema
 v7) through the existing `POST /api/codebook/themes/<id>/update`, and shows
 `GET /api/codebook/overview`: counts plus `coding_store/codebook.py`'s `theme_completeness()`
@@ -595,7 +612,10 @@ collapsed) and `codebook_labels.csv` (one row per known segment × theme label).
 from `coding_store/labels.py` and only attributes each label's source; it never re-derives the
 rules. Positives roll up from sub-codes. Negatives are
 `reviewed_negative_segment_ids(read_in_full_only=True)` minus uncoded interviewer turns.
-`codebook_version` hashes everything in `topics` except `counts`/`completeness`. Turn indices
+`codebook_version` hashes everything in `topics` except `counts`/`completeness`, and except each
+example's `turn_indices` (`DERIVED_EXAMPLE_KEYS`): those are empty when records aren't loaded, so
+hashing them made the version depend on how the export was called. `_authored_topic()` builds the
+hashed part for both the export and `current_codebook_version()`, so they can't drift. Turn indices
 come from `segmentation.segment_turn_indices()` on records loaded via `load_records` (the server
 passes `_load_dataset_records_with_turns`). Unlike `topic_seed_pack`, whose `exemplars` are the
 model's own top predictions, this export only ever contains passages the researcher chose.
@@ -662,8 +682,8 @@ guard against two installs racing (`has_running()`).
 
 `predictions` grows by one row per in-scope segment for every theme in every training run,
 and nothing removes old runs automatically. Measured on a real project: about 280 bytes per
-row with indexes, or roughly 18 MB per trained theme per run. The Model tab's **Storage…**
-button (`viewer_static/storage.js`) opens a panel backed by `coding_store/storage.py`:
+row with indexes, or roughly 18 MB per trained theme per run. The Train tab's Runs page has a
+**Storage** section (`viewer_static/storage.js`) backed by `coding_store/storage.py`:
 
 - **The rule** is `storage.plan_prune(runs, pinned_versions, keep_latest)`, a pure function
   covered by `tests/test_storage.py`. Runs are grouped by (theme, engine). Each group's newest

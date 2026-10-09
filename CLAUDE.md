@@ -27,7 +27,7 @@ it. Seven tabs, one server (`viewer_server.py`):
 
 No frontend framework, no build step, no bundler. `viewer_static/*.js` files are loaded as
 plain `<script>` tags in a fixed order (`app.js` → `projects.js` → `import.js` → `coding.js` →
-`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
+`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `runs.js` → `review.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
 rather than duplicating navigation logic. This is deliberate — see "Hard rules" below.
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
@@ -50,6 +50,7 @@ schema, not something to rename.
 | Full-corpus topic-model export / embedding engine | `topic_model_export.py`, `classifier.py`'s `build_embeddings`/`run_embedding_training_pass`/`embedding_readiness`, `coding_store/embeddings.py`, `requirements-embeddings.txt` |
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
+| Train → Runs (run history, codebook version per run, pins) and the engine list | `viewer_static/runs.js`, `coding_store/runs.py`, `codebook_export.current_codebook_version()`, `model_runs.engine_registry()` (`GET /api/engines`: never hard-code engine lists in the UI) |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
 | Review queue modes, triage decisions (a/r/s/e/m/u) | `coding_store/queues.py` (`order_queue` is the ordering rule), `coding_store/decisions.py`, `tests/test_queues.py`, `tests/test_decisions.py` |
 | What counts as positive / negative (roll-up, rejections, "fully coded" and read-in-full marks) | `coding_store/labels.py`, `coding_store/reviewed.py`, `classifier.py`'s `NEGATIVE_MODES`/`training_labels`, `tests/test_labels.py` |
@@ -88,7 +89,7 @@ schema, not something to rename.
    gitignored (see `.gitignore`) because they're large/regenerable-except-for-actual-codes, but
    the researcher's real codebook and codes exist *only* in `coding.db`. Never delete, truncate,
    or bulk-modify it outside the documented API (the `coding_store` package's functions) without the user's
-   explicit sign-off. The one sanctioned bulk delete is the Model tab's Storage panel
+   explicit sign-off. The one sanctioned bulk delete is the Train tab's Storage panel (Runs page)
    (`coding_store/storage.py`: pruning old runs' per-segment scores, then compacting). Only the
    researcher triggers it, from the UI. An agent must never run it against a real project.
 7. **Match field names exactly between server and frontend.** A mismatch between the index
@@ -147,8 +148,8 @@ schema, not something to rename.
   (`start`/`mutate`/`update`/`get`/`has_running`) on the backend, `pollBackgroundJob()` in
   `app.js` on the frontend. Use these for a new long-running action rather than hand-rolling
   another `{job_id: {...}}` dict or another recursive `setTimeout` poll loop.
-- Sub-tabs within a page (Train's Codebook | Models, Review's Queues | Recode) share one seam:
-  `app.js`'s `setupSubnav`/`showSubpage`/`currentSubpage`/`goToSubpage`, with
+- Sub-tabs within a page (Train's Codebook | Models | Runs, Review's Queues | Recode) share one seam:
+  `app.js`'s `setupSubnav`/`showSubpage`/`currentSubpage`/`goToSubpage`/`addSubpageListener`, with
   `.subnav-btn[data-subpage]` buttons and `.subpage[data-subpage]` panels. Use it for a new
   sub-tab or deep link rather than another hand-rolled switcher.
 - `source`/`note`/`coder` fields on `codes` exist for provenance (e.g. `review.js` tags

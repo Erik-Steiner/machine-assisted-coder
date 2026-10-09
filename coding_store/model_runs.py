@@ -11,6 +11,18 @@ from . import labels, schema
 # place that mapping lives -- topic_model_export.py and the API's `engine` parameters
 # all go through it, and model.js's engineOfVersion() mirrors it on the frontend.
 ENGINE_PREFIXES = {"tfidf": "tfidf_v1_", "embed": "embed_v1_"}
+# Display names, served with the prefixes by engine_registry() (GET /api/engines) so the UI
+# never hard-codes the list (CODEBOOK_PLAN L0). "Embedding classifier", not "Embedding": a
+# later embedding-clustering topic method must not be confused with it.
+ENGINE_LABELS = {"tfidf": "TF-IDF", "embed": "Embedding classifier"}
+
+
+def engine_registry():
+    """Every score engine, in display order: [{id, label, prefix, kind}]. kind is
+    "classifier" for both today; CODEBOOK_PLAN L0's topic methods will be listed beside
+    these, not mixed in."""
+    return [{"id": engine, "label": ENGINE_LABELS[engine], "prefix": prefix, "kind": "classifier"}
+            for engine, prefix in ENGINE_PREFIXES.items()]
 
 
 def engine_of_version(model_version):

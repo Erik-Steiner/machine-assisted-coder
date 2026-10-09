@@ -129,10 +129,22 @@ async function loadReviewThemes() {
     ? `?scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
   const res = await fetch(`/api/codebook/themes${schemePart}`);
   reviewState.themes = await res.json();
+  await renderReviewEngineOptions();
   renderReviewThemeCheckboxes();
   renderReviewQueueThemeSelect();
   renderReviewSchemeLabel();
   applyReviewMode();
+}
+
+// "Model scores from" lists the engine registry (model.js, GET /api/engines), never a
+// hard-coded list (CODEBOOK_PLAN L0).
+async function renderReviewEngineOptions() {
+  await engineRegistryReady;
+  const select = document.getElementById("reviewEngine");
+  if (select.options.length) return;
+  select.innerHTML = ENGINE_REGISTRY
+    .map((e) => `<option value="${escapeHtml(e.id)}">${escapeHtml(e.label)}</option>`).join("");
+  select.value = reviewState.engine;
 }
 
 function renderReviewQueueThemeSelect() {

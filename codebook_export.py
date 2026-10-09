@@ -22,7 +22,10 @@ Rules this module keeps, and why:
     themes are not, since their codes already point at the target.
   - codebook_version hashes the canonical JSON of `topics` only, so two exports of an
     unchanged codebook get the same version and an external run can record exactly
-    which codebook it used. generated_at is deliberately outside the hash.
+    which codebook it used. generated_at is deliberately outside the hash, and so is
+    everything derived rather than authored (DERIVED_TOPIC_KEYS, DERIVED_EXAMPLE_KEYS).
+    current_codebook_version() computes the same value without counting labels or
+    loading records, so every training run can record it (CODEBOOK_PLAN U2).
   - Labels come from coding_store/labels.py, the single source of truth for what is
     positive or negative. Negatives use its read-in-full rule
     (reviewed_negative_segment_ids(read_in_full_only=True)): explicit rejections, "none
@@ -81,12 +84,25 @@ def label_policy():
 # left out of codebook_version, so the version changes when the codebook itself changes
 # (definitions, criteria, notes, chosen examples), not every time a passage is coded.
 DERIVED_TOPIC_KEYS = ("counts", "completeness")
+# Per-example keys derived from the source records: turn_indices is empty whenever the
+# records weren't loaded (no load_records, or an unreadable dataset). Left out of the hash so
+# the version doesn't depend on whether they were available.
+DERIVED_EXAMPLE_KEYS = ("turn_indices",)
+EXAMPLE_LISTS = ("exemplars", "near_misses")
 
 
 def codebook_version(topics):
     """"sha256:" + the hash of the canonical JSON (sorted keys, compact separators) of the
-    researcher-authored part of topics -- everything except DERIVED_TOPIC_KEYS."""
-    authored = [{k: v for k, v in t.items() if k not in DERIVED_TOPIC_KEYS} for t in topics]
+    researcher-authored part of topics -- everything except DERIVED_TOPIC_KEYS, and
+    DERIVED_EXAMPLE_KEYS inside each example."""
+    authored = []
+    for t in topics:
+        entry = {k: v for k, v in t.items() if k not in DERIVED_TOPIC_KEYS}
+        for kind in EXAMPLE_LISTS:
+            if kind in entry:
+                entry[kind] = [{k: v for k, v in e.items() if k not in DERIVED_EXAMPLE_KEYS}
+                               for e in entry[kind]]
+        authored.append(entry)
     canonical = json.dumps(authored, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -208,6 +224,47 @@ def _export_themes(scheme_id):
     return [t for t in themes.list_themes(include_archived=True, scheme_id=scheme_id) if not t.get("merged_into")]
 
 
+def _authored_topic(t, exemplars, near_misses, turns):
+    """One topic's researcher-authored entry: what codebook_version hashes. The export
+    adds counts and completeness; current_codebook_version() uses it as is, so the two
+    can't drift apart. exemplars / near_misses are collapse_twins() results."""
+    return {
+        "topic_id": t["theme_id"],
+        "name": t["name"],
+        "parent_topic_id": t.get("parent_theme_id"),
+        "status": t["status"],
+        "definition": t.get("description") or "",
+        "inclusion_criteria": t.get("inclusion_criteria") or "",
+        "exclusion_criteria": t.get("exclusion_criteria") or "",
+        "boundary_notes": t.get("boundary_notes") or "",
+        "exemplars": [_example_entry(r, turns) for r in exemplars],
+        "near_misses": [_example_entry(r, turns) for r in near_misses],
+    }
+
+
+def current_codebook_version(scheme_id):
+    """The codebook_version an export of this scheme would get right now, without
+    counting labels or loading records: cheap enough for every training run to record
+    which codebook it was trained under (CODEBOOK_PLAN U2). Raises ValueError for an
+    unknown scheme."""
+    if schemes.get_scheme(scheme_id) is None:
+        raise ValueError(f"unknown scheme '{scheme_id}'")
+    turns = TurnIndexLookup(None)
+    topics = []
+    for t in _export_themes(scheme_id):
+        ex_kept, _ = collapse_twins(_flagged(t["theme_id"], "exemplar"))
+        nm_kept, _ = collapse_twins(_flagged(t["theme_id"], "near_miss"))
+        topics.append(_authored_topic(t, ex_kept, nm_kept, turns))
+    return codebook_version(topics)
+
+
+def codebook_versions(scheme_id=None):
+    """{scheme_id: current_codebook_version()} for one scheme, or for every active scheme
+    when scheme_id is None (a training pass over every scheme)."""
+    scheme_ids = [scheme_id] if scheme_id else [s["scheme_id"] for s in schemes.list_schemes()]
+    return {sid: current_codebook_version(sid) for sid in scheme_ids}
+
+
 def build_codebook_export(scheme_id, load_records=None):
     """Builds (document, label_rows, completeness_summary) without writing anything.
     Raises ValueError for an unknown scheme."""
@@ -258,20 +315,10 @@ def build_codebook_export(scheme_id, load_records=None):
         counts["explicit_rejections"] = len(p["rejected"])
         counts["reviewed_negatives"] = len(p["negatives"])
         completeness = codebook.theme_completeness(t, counts)
-        topics.append({
-            "topic_id": t["theme_id"],
-            "name": t["name"],
-            "parent_topic_id": t.get("parent_theme_id"),
-            "status": t["status"],
-            "definition": t.get("description") or "",
-            "inclusion_criteria": t.get("inclusion_criteria") or "",
-            "exclusion_criteria": t.get("exclusion_criteria") or "",
-            "boundary_notes": t.get("boundary_notes") or "",
-            "completeness": {k: completeness[k]["ok"] for k in COMPLETENESS_CHECKS},
-            "counts": counts,
-            "exemplars": [_example_entry(r, turns) for r in p["exemplars"]],
-            "near_misses": [_example_entry(r, turns) for r in p["near_misses"]],
-        })
+        topic = _authored_topic(t, p["exemplars"], p["near_misses"], turns)
+        topic["completeness"] = {k: completeness[k]["ok"] for k in COMPLETENESS_CHECKS}
+        topic["counts"] = counts
+        topics.append(topic)
         summary.append({
             "theme_id": t["theme_id"], "name": t["name"], "status": t["status"],
             "score": completeness["score"], "total": completeness["total"],

@@ -93,7 +93,7 @@ engine" depends on A4's engine-aware notion of "latest".
     **pinned** run (`model_run_pins` table). Pin a run you cite in a paper or used for an
     export. Pruned scores can't be regenerated exactly, because the codes they were trained on
     have since changed.
-  - **UI:** a Storage panel in the Model tab. It shows database size, rows and estimated MB per
+  - **UI:** a Storage panel in the Model tab (since U2, a section of Train → Runs). It shows database size, rows and estimated MB per
     run, and which runs are pinned. It proposes a default "keep the latest N per theme/engine
     (N=2)" selection, and nothing is deleted until the researcher confirms. Never automatic,
     and never triggered by training.
@@ -166,7 +166,9 @@ engine" depends on A4's engine-aware notion of "latest".
   outcome, and hand-offs move the researcher round the loop. It gives C1–C4 and D3 their
   homes. Spec: [CODEBOOK_PLAN.md](CODEBOOK_PLAN.md) Part 3 (U1–U7). U1–U3 can go first.
   *(U1 the shared sub-tab helper done 2026-10-08: Train is Codebook | Models, Review is
-  Queues | Recode. Runs and Evaluate arrive with U2 and U6.)*
+  Queues | Recode. U2 the Runs tab done 2026-10-08: run history with each run's codebook
+  version, pins, the full-corpus export and Storage, plus the engine registry
+  (`GET /api/engines`). Evaluate arrives with U6.)*
 
 ## Phase D — Stage 6: external-score round trip
 

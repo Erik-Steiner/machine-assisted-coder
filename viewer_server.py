@@ -240,6 +240,16 @@ Endpoints:
                                                          value-prop stat + full-corpus coverage
                                                          for a theme's latest model (see
                                                          classifier.py / scripts/train_classifiers.py)
+    GET  /api/engines                                -> {score_engines: [{id, label, prefix, kind}], topic_methods: []}
+                                                         -- the one list of engines the UI reads instead of
+                                                         hard-coding it (CODEBOOK_PLAN L0); topic methods
+                                                         (LLM, later embedding clustering) join it with Part 2
+    GET  /api/runs?scheme_id=<id>                     -> {current_codebook_version, runs: [...]} -- every training
+                                                         pass that trained one of the scheme's themes, newest
+                                                         first, with engine, negative mode, the codebook
+                                                         version it was trained under (null if not recorded),
+                                                         pin, per-theme metrics and their means: the Train
+                                                         tab's Runs page (CODEBOOK_PLAN U2; coding_store/runs.py)
     GET  /api/model/export_full_corpus?scheme_id=&model_version=&engine=
         -> writes segment_topic_scores/topic_seed_pack (every segment's score against every
            trained theme, plus each theme's top terms + exemplars) to exports/ as JSON+CSV --
@@ -417,6 +427,7 @@ from coding_store import (
     queues,
     review,
     reviewed as reviewed_store,
+    runs as runs_store,
     schema,
     schemes,
     segments as segments_store,
@@ -1125,6 +1136,7 @@ STATIC_FILES = {
     "/model.js": "model.js",
     "/storage.js": "storage.js",
     "/codebook.js": "codebook.js",
+    "/runs.js": "runs.js",
     "/review.js": "review.js",
     "/appendix.js": "appendix.js",
     "/projects.js": "projects.js",
@@ -1832,6 +1844,23 @@ def get_model_interpret(req):
         ),
         "top_terms": model_runs.get_top_terms(run["model_version"], theme_id),
         "exemplars": model_runs.get_top_predictions(theme_id, run["model_version"], limit=limit),
+    })
+
+
+@ROUTER.get("/api/engines")
+def get_engines(req):
+    return JsonResponse({"score_engines": model_runs.engine_registry(), "topic_methods": []})
+
+
+@ROUTER.get("/api/runs")
+def get_runs(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    return JsonResponse({
+        "scheme_id": scheme_id,
+        "current_codebook_version": codebook_export.current_codebook_version(scheme_id),
+        "runs": runs_store.list_runs(scheme_id),
     })
 
 

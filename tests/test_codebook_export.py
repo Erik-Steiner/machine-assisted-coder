@@ -225,6 +225,19 @@ class CodebookExportTests(unittest.TestCase):
         result = codebook_export.export_codebook_themes(self.out, "s", load_records=None)
         self.assertFalse(result["turn_indices_available"])
 
+    def test_version_ignores_turn_indices_and_matches_current_version(self):
+        # A training run records current_codebook_version() without loading records; it
+        # must equal the version of an export made with or without them (CODEBOOK_PLAN U2).
+        _, with_turns, _ = self.export()
+        without = codebook_export.export_codebook_themes(self.out, "s", load_records=None)
+        self.assertEqual(with_turns["codebook_version"], without["codebook_version"])
+        self.assertEqual(codebook_export.current_codebook_version("s"), with_turns["codebook_version"])
+        self.assertEqual(codebook_export.codebook_versions("s"), {"s": with_turns["codebook_version"]})
+        themes.update_theme(self.c, {"boundary_notes": "edited"})
+        self.assertNotEqual(codebook_export.current_codebook_version("s"), with_turns["codebook_version"])
+        with self.assertRaises(ValueError):
+            codebook_export.current_codebook_version("no-such-scheme")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -379,7 +379,8 @@ Rules:
   Merged themes are not included: their codes already point at the target.
 - `codebook_version` hashes only the researcher-authored content (`topics`), so external
   runs can record exactly which codebook they used, and two exports of an unchanged codebook
-  get the same version.
+  get the same version. (Since U2 it also leaves out each example's `turn_indices`, which
+  are derived and empty when records aren't loaded.)
 
 **`codebook_labels.csv`**: one row per (segment, theme) with a known label. Neutral pairs are
 left out (documented in `label_policy`).
@@ -881,7 +882,38 @@ CLAUDE.md: `app.js` loads first, so every page can use it.
 Build U1 first, moving existing content with no behavior change, and check the console for
 errors on every tab before going further.
 
-### U2 Runs tab
+### U2 Runs tab — done 2026-10-08
+
+**As built:**
+- **History.** `coding_store/runs.py`'s `list_runs(scheme_id)` behind `GET /api/runs`, shown by
+  `viewer_static/runs.js`: one row per pass that trained any of the scheme's themes (archived and
+  merged included), newest first. Each row has trained_at, engine, codebook version
+  ("current" / "changed since" / "not recorded"), negative mode, number of themes, mean F1 and
+  PR-AUC, and Pin / Unpin; ▸ opens each theme's positives, negatives and metrics. The plan's
+  "labels used" is per theme there, since summing labels across themes counts a passage more
+  than once.
+- **codebook_version on every run.** TF-IDF and embedding passes store `codebook_versions`
+  (`{scheme_id: version}` for every scheme the pass trained) in `model_run_params`, from
+  `codebook_export.current_codebook_version()`: the same value an export would get, computed
+  without counting labels or loading records. Making them equal meant leaving each example's
+  `turn_indices` out of the hash: they are derived, and empty when records aren't loaded, so the
+  same codebook used to get two versions depending on how the export was called. The export and
+  `current_codebook_version()` now share `_authored_topic()`.
+- **Moved here unchanged:** the full-corpus export and the Storage panel (in a collapsible
+  section that loads the first time it's opened, since measuring can take seconds). A pin made
+  in either list refreshes both.
+- **Engine registry (L0).** `GET /api/engines` (`model_runs.engine_registry()`, with
+  `ENGINE_LABELS`) feeds the Runs table, `model.js`'s `ENGINE_LABELS` and `engineOfVersion()`,
+  and Review's "Model scores from" dropdown. The embedding engine is now labelled "Embedding
+  classifier".
+- **Not yet:** the round each run belongs to (U4 creates rounds), D3's comparison and C1's
+  learning curves (their own items), the L8 deliverables (Part 2), and the Models detail
+  panel's fixed TF-IDF / Embedding toggle (the Models engine switcher replaces it).
+
+Verified in the test project: a new run records the current version; editing a theme's
+boundary notes flips it to "changed since" and reverting flips it back; pin and unpin from the
+Runs list update Storage; the Storage section, the export button, Review's dropdown and the
+Models detail all work; no console errors. The original spec follows.
 
 - **Run history** for the scheme, all engines, newest first. Each run shows: engine,
   trained_at, `codebook_version`, negative mode, labels used (positives / negatives), headline

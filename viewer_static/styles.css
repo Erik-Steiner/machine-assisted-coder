@@ -1162,7 +1162,35 @@ button.btn-secondary {
 #modelDetailContent.hidden { display: none; }
 #modelDetailEmpty.hidden { display: none; }
 
-/* Storage panel (storage.js) -- shares #modelDetail with the theme detail view */
+/* Runs sub-page (runs.js, CODEBOOK_PLAN U2) */
+#runsMain { flex: 1; overflow-y: auto; padding: 16px 24px; }
+#runsMain h2 { margin: 0 0 10px 0; font-size: 20px; }
+#runsMain h3 { font-size: 14px; margin: 22px 0 8px 0; }
+#runsMain > .hint { line-height: 1.5; margin-bottom: 8px; max-width: 760px; }
+#runsTable, .runs-theme-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+#runsTable th, #runsTable td, .runs-theme-table th, .runs-theme-table td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#runsTable th, .runs-theme-table th { color: var(--text-dim); font-weight: 600; }
+#runsTable tr.runs-pinned > td { background: var(--accent-dim); }
+#runsTable tr.runs-detail > td { background: var(--panel-alt); padding: 8px 8px 12px 8px; }
+.runs-theme-table { margin-top: 6px; }
+.runs-expand {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 4px;
+  font-size: 12px;
+}
+.runs-cb-current { color: var(--text-dim); font-size: 11px; }
+.runs-cb-changed { color: #e0a800; font-size: 11px; font-weight: 600; }
+#runsStorageSection { margin-top: 22px; }
+#runsStorageSection > summary { cursor: pointer; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+
+/* Storage panel (storage.js) -- inside the Runs sub-page's Storage section */
 #modelStoragePanel.hidden { display: none; }
 #modelStoragePanel h2 { margin: 0 0 10px 0; font-size: 20px; }
 #modelStoragePanel h3 { font-size: 14px; margin: 22px 0 8px 0; }

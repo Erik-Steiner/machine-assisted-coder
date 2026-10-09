@@ -37,6 +37,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import average_precision_score, precision_recall_curve
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
 
+import codebook_export
 from coding_store import activity_log, dataset_status, duplicates, embeddings, labels, model_runs, schema, themes
 
 TOP_TERMS_N = 20
@@ -94,7 +95,7 @@ MIN_SEGMENT_WORDS = 5
 
 
 def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=None,
-                    negative_mode=DEFAULT_NEGATIVE_MODE):
+                    negative_mode=DEFAULT_NEGATIVE_MODE, codebook_versions=None):
     """The hyperparameters actually in force for a training pass, as a plain
     dict -- persisted once per pass via coding_store.activity_log's
     save_model_run_params so the Web Appendix tab can show exactly how a given
@@ -107,9 +108,13 @@ def training_params(duplicate_run_id=None, excluded_dataset_ids=None, scheme_id=
     coding_store.dataset_status. scheme_id records which coding scheme's
     themes the pass trained (None = every scheme -- see run_training_pass()).
     negative_mode records what counted as a negative (see NEGATIVE_MODES); runs
-    from before it existed have no key and were effectively "all_uncoded"."""
+    from before it existed have no key and were effectively "all_uncoded".
+    codebook_versions ({scheme_id: codebook_export.current_codebook_version()}, every
+    scheme the pass trained) records which codebook the run was trained under, so the
+    Train tab's Runs page can tell whether the codebook has changed since
+    (CODEBOOK_PLAN U2); runs from before it existed have no key."""
     return {
-        "scheme_id": scheme_id, "roll_up": ROLL_UP,
+        "scheme_id": scheme_id, "roll_up": ROLL_UP, "codebook_versions": codebook_versions or {},
         "negative_mode": negative_mode, "min_negatives_reviewed": MIN_NEGATIVES_REVIEWED,
         "ngram_range": list(NGRAM_RANGE), "max_features": MAX_FEATURES, "min_df": MIN_DF,
         "stop_words": STOP_WORDS, "min_positives_attempt": MIN_POSITIVES_ATTEMPT,
@@ -400,7 +405,9 @@ def run_training_pass(progress_callback=None, exclude_duplicates=True, scheme_id
     model_version = "tfidf_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
     activity_log.save_model_run_params(
-        model_version, training_params(duplicate_run_id, excluded_dataset_ids, scheme_id, negative_mode),
+        model_version,
+        training_params(duplicate_run_id, excluded_dataset_ids, scheme_id, negative_mode,
+                        codebook_export.codebook_versions(scheme_id)),
         trained_at,
     )
 
@@ -479,12 +486,12 @@ def embedding_readiness(scheme_id=None):
 
 
 def embedding_training_params(model_name=EMBEDDING_MODEL_NAME, scheme_id=None,
-                              negative_mode=DEFAULT_NEGATIVE_MODE):
+                              negative_mode=DEFAULT_NEGATIVE_MODE, codebook_versions=None):
     """Mirrors training_params() -- persisted once per embedding training
     pass so the Web Appendix tab shows exactly how a given embed_v1_*
     model_version was produced."""
     return {
-        "scheme_id": scheme_id, "roll_up": ROLL_UP,
+        "scheme_id": scheme_id, "roll_up": ROLL_UP, "codebook_versions": codebook_versions or {},
         "negative_mode": negative_mode, "min_negatives_reviewed": MIN_NEGATIVES_REVIEWED,
         "engine": "embed_v1", "embedding_model": model_name, "trust_positives_floor": TRUST_POSITIVES,
         "cv_folds": CV_FOLDS, "logreg_class_weight": LOGREG_CLASS_WEIGHT,
@@ -566,7 +573,10 @@ def run_embedding_training_pass(progress_callback=None, exclude_duplicates=True,
     model_version = "embed_v1_" + datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     trained_at = datetime.now(timezone.utc).isoformat()
     activity_log.save_model_run_params(
-        model_version, embedding_training_params(scheme_id=scheme_id, negative_mode=negative_mode), trained_at,
+        model_version,
+        embedding_training_params(scheme_id=scheme_id, negative_mode=negative_mode,
+                                  codebook_versions=codebook_export.codebook_versions(scheme_id)),
+        trained_at,
     )
 
     results = []

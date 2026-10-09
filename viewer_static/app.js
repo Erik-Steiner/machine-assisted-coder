@@ -866,12 +866,15 @@ function switchTab(tab) {
 // rest. A page may mark several elements with one name (Review marks sidebar controls and
 // the main pane). Registered per top-level tab, so goToSubpage() can deep-link from
 // anywhere, e.g. goToSubpage("model", "codebook").
-const subnavs = {}; // tab -> {nav, page, current, onChange, beforeChange}
+const subnavs = {}; // tab -> {nav, page, current, listeners, beforeChange}
 
-// onChange(name) runs after the researcher (or showSubpage) switches sub-tab; beforeChange(name)
-// can return false to stay put (e.g. unsaved edits the researcher chose to keep).
+// onChange(name) runs after the researcher (or showSubpage) switches sub-tab; a later script can
+// add its own with addSubpageListener(). beforeChange(name) can return false to stay put (e.g.
+// unsaved edits the researcher chose to keep).
 function setupSubnav(tab, navEl, { initial, onChange, beforeChange } = {}) {
-  const entry = { nav: navEl, page: navEl.parentElement, current: null, onChange, beforeChange };
+  const entry = {
+    nav: navEl, page: navEl.parentElement, current: null, listeners: onChange ? [onChange] : [], beforeChange,
+  };
   subnavs[tab] = entry;
   navEl.addEventListener("click", (e) => {
     const btn = e.target.closest(".subnav-btn");
@@ -894,8 +897,12 @@ function showSubpage(tab, name, { silent = false } = {}) {
   entry.page.querySelectorAll(".subpage").forEach((el) => {
     el.classList.toggle("hidden", el.dataset.subpage !== name);
   });
-  if (!silent && entry.onChange) entry.onChange(name);
+  if (!silent) entry.listeners.forEach((fn) => fn(name));
   return true;
+}
+
+function addSubpageListener(tab, fn) {
+  if (subnavs[tab]) subnavs[tab].listeners.push(fn);
 }
 
 function currentSubpage(tab) {

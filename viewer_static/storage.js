@@ -1,4 +1,4 @@
-// Model tab's Storage panel: see how much of coding.db each training run's
+// Train tab's Storage panel: see how much of coding.db each training run's
 // per-segment scores take, pin runs to protect them, delete the scores of old
 // runs, and compact the database so the freed space goes back to the disk.
 //
@@ -7,10 +7,10 @@
 // per run and sends back the pairs the researcher confirmed. The server
 // re-checks every pair, so a stale view can never delete a protected run.
 //
-// Shares the Model tab's #modelDetail area with model.js: opening this panel
-// hides the theme detail, and model.js's selectModelTheme() hides this panel.
-// Reuses escapeHtml/pollBackgroundJob (app.js) and modelState/
-// renderModelThemeList/ENGINE_LABELS (model.js). Loaded after model.js.
+// Lives in a collapsible section of the Runs sub-page (runs.js opens it and calls
+// loadStorageReport() the first time; measuring can take seconds on a large database).
+// Reuses escapeHtml/pollBackgroundJob (app.js) and ENGINE_LABELS (model.js). Loaded after
+// model.js.
 
 const storageState = {
   report: null, // last /api/storage/report response
@@ -33,15 +33,6 @@ const STORAGE_STATUS_LABELS = {
   prunable: "can delete",
   pruned: "scores deleted",
 };
-
-async function openStoragePanel() {
-  modelState.selectedThemeId = null;
-  renderModelThemeList();
-  document.getElementById("modelDetailEmpty").classList.add("hidden");
-  document.getElementById("modelDetailContent").classList.add("hidden");
-  document.getElementById("modelStoragePanel").classList.remove("hidden");
-  await loadStorageReport();
-}
 
 async function loadStorageReport() {
   const keep = Number(document.getElementById("storageKeepLatest").value) || 2;
@@ -143,11 +134,13 @@ function renderStorageSelection() {
     : "Nothing selected.";
 }
 
+// Shared with runs.js's run list. Returns an error message, or null. Refreshes this panel
+// (if it has been opened) and the run list, which both show pins.
 async function togglePin(modelVersion, currentlyPinned) {
   let note = null;
   if (!currentlyPinned) {
     note = prompt(`Pin ${modelVersion}? Optionally say why (e.g. "cited in paper", "exported for comparison"):`, "");
-    if (note === null) return; // cancelled
+    if (note === null) return null; // cancelled
   }
   const res = await fetch("/api/storage/pin", {
     method: "POST",
@@ -155,11 +148,10 @@ async function togglePin(modelVersion, currentlyPinned) {
     body: JSON.stringify({ model_version: modelVersion, pinned: !currentlyPinned, note: note || null }),
   });
   const data = await res.json();
-  if (data.error) {
-    document.getElementById("storagePruneStatus").textContent = "Error: " + data.error;
-    return;
-  }
-  await loadStorageReport();
+  if (data.error) return data.error;
+  if (storageState.report) await loadStorageReport();
+  if (typeof loadRuns === "function") loadRuns(); // runs.js
+  return null;
 }
 
 async function startPrune() {
@@ -270,7 +262,6 @@ async function startCompact() {
 }
 
 function bindStorageEvents() {
-  document.getElementById("modelStorageBtn").addEventListener("click", openStoragePanel);
   document.getElementById("storageRefreshBtn").addEventListener("click", loadStorageReport);
   document.getElementById("storageKeepLatest").addEventListener("change", loadStorageReport);
   document.getElementById("storagePruneBtn").addEventListener("click", startPrune);
@@ -286,7 +277,10 @@ function bindStorageEvents() {
     if (!e.target.classList.contains("storage-pin-btn")) return;
     const version = e.target.closest("tr").dataset.version;
     const pass = storageState.report.passes.find((p) => p.model_version === version);
-    if (pass) togglePin(version, pass.pinned);
+    if (!pass) return;
+    togglePin(version, pass.pinned).then((error) => {
+      if (error) document.getElementById("storagePruneStatus").textContent = "Error: " + error;
+    });
   });
 }
 

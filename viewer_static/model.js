@@ -25,13 +25,26 @@ const modelState = {
   installStartedAt: null,
 };
 
-// Mirrors coding_store/model_runs.py's ENGINE_PREFIXES -- keep the two in sync.
-function engineOfVersion(modelVersion) {
-  return modelVersion && modelVersion.startsWith("embed_v1_") ? "embed" : "tfidf";
-}
+// The engine registry (GET /api/engines, coding_store/model_runs.py's engine_registry():
+// ids, display names, model_version prefixes), so no file hard-codes the list
+// (CODEBOOK_PLAN L0). ENGINE_LABELS (id -> name) is shared with storage.js, runs.js and
+// review.js, which all fall back to the raw id until the registry has loaded; await
+// engineRegistryReady where that matters.
+const ENGINE_LABELS = {};
+let ENGINE_REGISTRY = [];
+const engineRegistryReady = fetch("/api/engines")
+  .then((res) => res.json())
+  .then((data) => {
+    ENGINE_REGISTRY = data.score_engines || [];
+    ENGINE_REGISTRY.forEach((e) => { ENGINE_LABELS[e.id] = e.label; });
+    return ENGINE_REGISTRY;
+  })
+  .catch(() => ENGINE_REGISTRY);
 
-// Display names for engine ids; shared with review.js (loaded after this file).
-const ENGINE_LABELS = { tfidf: "TF-IDF", embed: "Embedding" };
+function engineOfVersion(modelVersion) {
+  const engine = ENGINE_REGISTRY.find((e) => modelVersion && modelVersion.startsWith(e.prefix));
+  return engine ? engine.id : "tfidf";
+}
 
 // --- Theme list / sidebar --------------------------------------------------------------
 
@@ -130,7 +143,6 @@ async function selectModelTheme(themeId, engine) {
   renderModelThemeList(); // update the "selected" highlight
 
   document.getElementById("modelDetailEmpty").classList.add("hidden");
-  document.getElementById("modelStoragePanel").classList.add("hidden"); // storage.js's panel shares this area
   document.getElementById("modelDetailContent").classList.remove("hidden");
   document.getElementById("modelThemeName").textContent =
     (modelState.themes.find((t) => t.theme_id === themeId) || {}).name || themeId;
@@ -376,7 +388,7 @@ function pollTrainJob() {
   );
 }
 
-// --- Export full-corpus topic model -------------------------------------------------------
+// --- Export full-corpus topic model (its button lives on the Runs sub-page) -----------------
 
 async function exportFullCorpus() {
   const btn = document.getElementById("exportFullCorpusBtn");

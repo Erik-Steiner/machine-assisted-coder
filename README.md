@@ -325,7 +325,18 @@ expand **Datasets** in this tab and click **Segment** next to it (see "Get your 
 
 ### Model tab
 
-The Train tab has two pages, switched at the top: **Models** (below) and **Codebook**. On
+The Train tab has three pages, switched at the top: **Codebook**, **Models** (below, the page it
+opens on) and **Runs**.
+
+On **Runs**, every training run of the active scheme is listed newest first, across engines: when
+it ran, the engine, what counted as a negative, how many themes it trained and their average F1 and
+PR-AUC. Click ▸ for each theme's positives, negatives and metrics. The **Codebook** column shows the
+codebook version the run was trained under: *current*, or *changed since* when you have edited a
+definition, criteria, notes or flagged examples after it ran (older runs say *not recorded*). **Pin**
+a run you cite or export from. The full-corpus export and the **Storage** section (deleting old
+runs' scores, compacting the database) live on this page too.
+
+On
 **Codebook**, pick a theme and fill in its **Definition**, **Include when**, **Exclude when** and
 **Boundary notes**. A checklist shows how ready the entry is to hand to a model (a 15+ word
 definition, both criteria, 3 exemplars from 2+ groups, 2 near misses, a positive in a read-in-full
@@ -338,7 +349,7 @@ theme's definition, criteria, boundary notes and your flagged exemplars and near
 version that changes only when the codebook itself does. `codebook_labels.csv` has every known
 positive and negative label, with where it came from. A model such as an LLM pipeline can use them
 directly. You see each theme's completeness first, but the export always works. (This is different
-from the Models page's full-corpus topic-model export, whose "exemplars" are the model's own top
+from the Runs page's full-corpus topic-model export, whose "exemplars" are the model's own top
 predictions.)
 
 **Exemplars and near misses.** Flag a coded passage as an *exemplar* (a clear, typical case) with the
