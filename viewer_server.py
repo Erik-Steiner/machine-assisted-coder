@@ -256,6 +256,13 @@ Endpoints:
                                                          codebook -> train -> review -> decide cycle, for the cycle
                                                          strip on Train and Review (CODEBOOK_PLAN U3;
                                                          coding_store/iteration.py). Read-only, advisory
+    GET  /api/evaluate?scheme_id=<id>&model_version=<v>&compare=<v2>
+                                                      -> one run's per-theme precision / recall / F1 (Wilson
+                                                         intervals) and PR-AUC against read-in-full gold, at the
+                                                         turn level (segments rolled up via K6), next to a second
+                                                         run's on the same turns, plus score calibration bands:
+                                                         Review -> Evaluate (CODEBOOK_PLAN U6;
+                                                         coding_store/evaluation.py). Read-only
     GET  /api/model/export_full_corpus?scheme_id=&model_version=&engine=
         -> writes segment_topic_scores/topic_seed_pack (every segment's score against every
            trained theme, plus each theme's top terms + exemplars) to exports/ as JSON+CSV --
@@ -429,6 +436,7 @@ from coding_store import (
     decisions as decisions_store,
     examples as examples_store,
     duplicates,
+    evaluation,
     iteration,
     model_runs,
     queues,
@@ -1145,6 +1153,7 @@ STATIC_FILES = {
     "/codebook.js": "codebook.js",
     "/runs.js": "runs.js",
     "/review.js": "review.js",
+    "/evaluate.js": "evaluate.js",
     "/cycle.js": "cycle.js",
     "/appendix.js": "appendix.js",
     "/projects.js": "projects.js",
@@ -1878,6 +1887,22 @@ def get_iteration_status(req):
     if schemes.get_scheme(scheme_id) is None:
         return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
     return JsonResponse(iteration.get_status(scheme_id, codebook_export.current_codebook_version(scheme_id)))
+
+
+@ROUTER.get("/api/evaluate")
+def get_evaluate(req):
+    scheme_id = req.query.get("scheme_id") or ""
+    if schemes.get_scheme(scheme_id) is None:
+        return JsonResponse({"error": f"unknown scheme '{scheme_id}'"}, status=400)
+    model_version = req.query.get("model_version") or ""
+    compare = req.query.get("compare") or None
+    # Records come straight off disk with `turns` intact (get_dataset() strips them), only
+    # for datasets that hold a read-in-full interview -- to roll segments up to turns (K6).
+    turns = codebook_export.TurnIndexLookup(_load_dataset_records_with_turns)
+    try:
+        return JsonResponse(evaluation.evaluate_run(scheme_id, model_version, compare, turn_lookup=turns))
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
 
 @ROUTER.get("/api/model/export_full_corpus")

@@ -397,7 +397,7 @@ suggestive, not final, until a theme has more codes.
 
 ### Review tab
 
-Review has two sub-tabs: **Recode** (the page it opens on) and **Queues**.
+Review has three sub-tabs: **Recode** (the page it opens on), **Queues** and **Evaluate**.
 
 On **Recode**:
 
@@ -441,6 +441,17 @@ In these queues, triage each card with **Accept** (it *is* the theme: codes it),
 *other* theme. Every decision, skips included, is recorded with the queue and run it was made in, and
 the summary line keeps a running count for the round. Undo restores exactly what was there before,
 including an original code's date and source.
+
+On **Evaluate**, pick a training run and, optionally, a second run to compare it with (by default the
+newest other TF-IDF run). For each theme you see precision, recall and F1, each with a 95% interval,
+and PR-AUC, measured against your own gold: every turn of the interviews you have marked read in full
+(confirmed, or marked "fully coded" right after reading). A turn counts as the theme if you coded any of
+its passages. Scores come from cross-validation wherever the model trained on a passage, so it is never
+graded on a passage it learned from. A theme with no interview read in full since it was created says
+"no judged interviews yet". Bulk "fully coded" marks don't count until you confirm them. The gold isn't
+a random sample (you chose what to read), and the intervals are wide when a theme has few positives, so
+read them, not just the point estimates. A calibration table below shows how often a turn in each score
+band really is the theme.
 
 ### Web Appendix tab
 

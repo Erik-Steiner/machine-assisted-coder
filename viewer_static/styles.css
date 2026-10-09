@@ -1603,3 +1603,21 @@ mark.term-hit {
   cursor: pointer;
 }
 .reason-action:hover { color: var(--text); border-color: var(--text-dim); }
+
+/* Review -> Evaluate (evaluate.js, CODEBOOK_PLAN U6) */
+#evalRunLabel, #evalCompareLabel { display: block; margin: 0 0 10px 0; }
+#evalRunLabel select, #evalCompareLabel select { max-width: 100%; }
+#reviewEngineLabel.hidden, #reviewMinWordsLabel.hidden, #evalCompareHead.hidden { display: none; }
+#evalPage h2 { margin: 0 0 10px 0; font-size: 20px; }
+#evalPage h3 { font-size: 14px; margin: 22px 0 8px 0; }
+#evalPage > .hint, #evalPage > p.hint { line-height: 1.5; margin-bottom: 8px; max-width: 760px; }
+#evalTable, #evalCalibration { border-collapse: collapse; font-size: 12px; }
+#evalTable { width: 100%; }
+#evalTable th, #evalTable td, #evalCalibration th, #evalCalibration td {
+  text-align: left;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--border);
+}
+#evalTable th, #evalCalibration th { color: var(--text-dim); font-weight: 600; }
+.eval-ci { color: var(--text-dim); }
+.eval-few { color: #e0a800; font-size: 11px; }

@@ -27,7 +27,7 @@ it. Seven tabs, one server (`viewer_server.py`):
 
 No frontend framework, no build step, no bundler. `viewer_static/*.js` files are loaded as
 plain `<script>` tags in a fixed order (`app.js` → `projects.js` → `import.js` → `coding.js` →
-`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `runs.js` → `review.js` → `cycle.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
+`analytics.js` → `model.js` → `storage.js` → `codebook.js` → `runs.js` → `review.js` → `evaluate.js` → `cycle.js` → `appendix.js`), each one sharing the previous ones' global `state`/`codingState`/etc.
 rather than duplicating navigation logic. This is deliberate — see "Hard rules" below.
 
 The canonical record/segment field names are source-agnostic (`group_name`/`person_name`/
@@ -52,12 +52,13 @@ schema, not something to rename.
 | Model tab UI                            | `viewer_static/model.js`                             |
 | Cycle strip (round, codebook → train → review → decide steps, what to do next) on Train and Review | `coding_store/iteration.py` (`iteration_status` holds every rule), `viewer_static/cycle.js`, `GET /api/iteration/status` |
 | Train → Runs (run history, codebook version per run, pins) and the engine list | `viewer_static/runs.js`, `coding_store/runs.py`, `codebook_export.current_codebook_version()`, `model_runs.engine_registry()` (`GET /api/engines`: never hard-code engine lists in the UI) |
+| Review → Evaluate: a run's precision / recall / F1 against read-in-full gold, at the turn level, vs. a comparison run | `coding_store/evaluation.py` (gold, turn roll-up and metrics), `viewer_static/evaluate.js`, `GET /api/evaluate`, `tests/test_evaluation.py` |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |
 | Review queue modes, triage decisions (a/r/s/e/m/u) | `coding_store/queues.py` (`order_queue` is the ordering rule), `coding_store/decisions.py`, `tests/test_queues.py`, `tests/test_decisions.py` |
 | What counts as positive / negative (roll-up, rejections, "fully coded" and read-in-full marks) | `coding_store/labels.py`, `coding_store/reviewed.py`, `classifier.py`'s `NEGATIVE_MODES`/`training_labels`, `tests/test_labels.py` |
 | Disk footprint: pruning old runs' scores, pins, compaction | `coding_store/storage.py` (`plan_prune` is the deletion rule), `viewer_static/storage.js`, `tests/test_storage.py` |
 | Codebook page (Train → Codebook): criteria, completeness, exemplars, near misses | `viewer_static/codebook.js`, `coding_store/codebook.py` (`theme_completeness`), `coding_store/examples.py`, `tests/test_codebook.py`; the plan and what's left (K4, K6–K8, the `codebook_topic_themes.json` export) is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) |
-| LLM topic-coding pipeline (external, reads `exports/` only) | `scripts/llm_topics/` (`common.py`'s docstring first); its planned in-app version is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) Part 2 (L0–L9; L0 keeps it method-neutral so embedding clustering can join later) |
+| LLM topic-coding pipeline (external, reads `exports/` only) | `scripts/llm_topics/` (`common.py`'s docstring first); its planned in-app version is [CODEBOOK_PLAN.md](docs/CODEBOOK_PLAN.md) Part 2 (L0–L10; L0 keeps it method-neutral so embedding clustering can join later; L10 makes emergent topics ordinary themes) |
 | Web Appendix / activity log             | `coding_store/activity_log.py`'s `log_activity`/`get_appendix_feed`, `appendix_export.py`, `viewer_static/appendix.js` |
 | Multi-project data locations            | `paths.py` (`PROJECT_DIR` env var), the in-app Project picker (`project_registry.py`, `viewer_server.switch_project`, `viewer_static/projects.js`) |
 | Segmenting / duplicate-scan UI          | `viewer_server.py`'s `run_segment_job`/`run_duplicate_job`, `jobs.py`'s `JobRegistry`, `scripts/find_duplicates.py`'s `run_duplicate_scan`, `viewer_static/coding.js`'s Datasets panel |
@@ -106,6 +107,8 @@ schema, not something to rename.
      mistake there silently deletes scores that can't be regenerated.
    - Label-building logic (roadmap A2/A6: hierarchy roll-up, negative modes), once it exists,
      because a mistake there silently trains wrong models.
+   - Evaluate's gold, turn roll-up and metrics (`coding_store/evaluation.py`, CODEBOOK_PLAN U6),
+     because a mistake there silently reports a precision or recall the researcher may cite.
    Any test that needs a database creates a throwaway `coding.db` in a temp directory and
    restores `schema.DB_PATH` afterwards, never a real project (rule 11). Run with
    `python -m unittest discover -s tests`.
@@ -149,7 +152,7 @@ schema, not something to rename.
   (`start`/`mutate`/`update`/`get`/`has_running`) on the backend, `pollBackgroundJob()` in
   `app.js` on the frontend. Use these for a new long-running action rather than hand-rolling
   another `{job_id: {...}}` dict or another recursive `setTimeout` poll loop.
-- Sub-tabs within a page (Train's Codebook | Models | Runs, Review's Queues | Recode) share one seam:
+- Sub-tabs within a page (Train's Codebook | Models | Runs, Review's Queues | Recode | Evaluate) share one seam:
   `app.js`'s `setupSubnav`/`showSubpage`/`currentSubpage`/`goToSubpage`/`addSubpageListener`, with
   `.subnav-btn[data-subpage]` buttons and `.subpage[data-subpage]` panels. Use it for a new
   sub-tab or deep link rather than another hand-rolled switcher.

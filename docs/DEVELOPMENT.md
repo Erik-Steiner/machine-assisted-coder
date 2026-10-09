@@ -487,13 +487,13 @@ below.
 ## Model subsystem
 
 **Sub-tabs (CODEBOOK_PLAN U1).** Train (Codebook | Models | Runs, opening on Models) and Review
-(Queues | Recode, opening on Recode) share one helper in `app.js`: `setupSubnav(tab, navEl,
+(Queues | Recode | Evaluate, opening on Recode) share one helper in `app.js`: `setupSubnav(tab, navEl,
 {initial, onChange, beforeChange})` shows the `.subpage[data-subpage]` elements of the nav's page
 that match the clicked `.subnav-btn[data-subpage]`, and hides the rest. A page can mark several
 elements with one name (Review marks sidebar controls and main panes). `showSubpage(tab, name)`,
 `currentSubpage(tab)` and `goToSubpage(tab, name)` (switch top-level tab and sub-tab in one step,
 for deep links) work from any later script, and `addSubpageListener(tab, fn)` lets a later
-script react to its own sub-tab (`runs.js` does). `beforeChange` returning false keeps the
+script react to its own sub-tab (`runs.js` and `evaluate.js` do). `beforeChange` returning false keeps the
 current sub-tab (the Codebook page's unsaved-edits prompt).
 
 **Runs page and the engine registry (CODEBOOK_PLAN U2, L0).** `runs.js` shows
@@ -511,6 +511,28 @@ section is opened). Engine ids, names and `model_version` prefixes come from `GE
 "Model scores from" dropdown is built from it. A new engine needs only an `ENGINE_PREFIXES` and
 `ENGINE_LABELS` entry. The Models detail panel's TF-IDF / Embedding toggle is still fixed
 markup, until the Models engine switcher replaces it.
+
+**Evaluate (CODEBOOK_PLAN U6).** Review's third sub-tab (`evaluate.js`) shows
+`GET /api/evaluate?scheme_id=&model_version=&compare=` (`coding_store/evaluation.py`'s
+`evaluate_run()`): per theme the run trained, precision / recall / F1 with 95% Wilson intervals
+and PR-AUC (average precision, sklearn's definition) at the run's own threshold, next to a
+comparison run on the same gold (default: the newest other TF-IDF run), plus calibration bands
+pooled over themes. Gold is every passage of an interview whose "fully coded" mark is read in
+full (confirmed or interactive, `reviewed.READ_IN_FULL_STATUSES`) and covers the theme (made
+after the theme was created, labels.py's rule): coded with the theme or a sub-code is positive,
+anything else a judged negative. Segments roll up to source turns through
+`codebook_export.TurnIndexLookup` (K6; records read off disk only for datasets holding a gold
+interview): a turn is positive if any of its segments is, and scores the highest of them. Only
+segments the run scored count, so interviewer turns and short fragments drop out as in training;
+a segment whose record can't be read stands in for its turn and is counted
+(`units_by_segment`). Scores are `oof_score` where the run fitted on the passage, else `score`
+(a passage it didn't fit on was never seen). Themes with no covering read-in-full interview say
+"no judged interviews yet"; a run whose scores were pruned says so. Pure parts (`wilson`, `prf`,
+`average_precision`, `roll_up_to_turns`, `calibration_bands`) and the gold rules are covered by
+`tests/test_evaluation.py`. `review.js` does nothing on this sub-tab: `applyReviewMode()` returns
+early and triage keys only act on Queues. Not yet: the shared run selector for all three Review
+tabs (Queues and Recode still pick an engine's latest run), topic-method runs (Part 2's pilot
+adds before/after adjudication and the topic distribution), and the Decide panel (U4).
 
 **Cycle strip (CODEBOOK_PLAN U3).** One line under the sub-tabs of both Train and Review
 (`#trainCycleStrip`, `#reviewCycleStrip`, drawn by `cycle.js`): the round, the four steps

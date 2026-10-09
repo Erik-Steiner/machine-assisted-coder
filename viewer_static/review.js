@@ -9,8 +9,9 @@
 // theme"), tagged source="review_reject", which keeps it out of that theme's
 // future queues (see coding_store/codes.py's add_negative()).
 //
-// The page has two sub-tabs (app.js's setupSubnav, docs/CODEBOOK_PLAN.md U1): Recode,
-// that multi-theme view (still the default), and Queues. On Queues, the Queue selector
+// The page has three sub-tabs (app.js's setupSubnav, docs/CODEBOOK_PLAN.md U1): Recode,
+// that multi-theme view (still the default), Queues, and Evaluate (evaluate.js, which loads
+// itself; nothing here runs on it). On Queues, the Queue selector
 // offers per-theme modes from GET /api/review/queue (coding_store/queues.py): highest
 // scores, borderline, random check, likely mislabels, near-miss hunt, and overlap with
 // other themes -- paged, and
@@ -167,9 +168,11 @@ function renderReviewQueueThemeSelect() {
 }
 
 // Loads whichever sub-tab is showing: Recode, or the queue mode picked on Queues. The
-// sub-tab helper shows and hides each one's controls.
+// sub-tab helper shows and hides each one's controls. Evaluate loads itself (evaluate.js).
 function applyReviewMode() {
-  reviewState.mode = currentSubpage("review") === "recode" ? "recode" : reviewState.queueMode;
+  const page = currentSubpage("review");
+  if (page === "evaluate") return;
+  reviewState.mode = page === "recode" ? "recode" : reviewState.queueMode;
   if (reviewState.mode === "recode") {
     loadReviewCandidates(); // clears the queue itself when nothing's selected
   } else {
@@ -684,7 +687,7 @@ function bindReviewEvents() {
   });
   document.getElementById("reviewLoadMore").addEventListener("click", () => loadModeQueue(true));
   document.addEventListener("keydown", (e) => {
-    if (document.body.dataset.tab !== "review" || reviewState.mode === "recode") return;
+    if (document.body.dataset.tab !== "review" || currentSubpage("review") !== "queues") return;
     const tag = document.activeElement.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (e.ctrlKey || e.metaKey || e.altKey) return;

@@ -449,7 +449,7 @@ material. Whichever source it reads, stage 0's checks against current labels (th
 flags and the issue list in `codebook_resolved.json`) must still run. K8 is the bridge for
 the scripts; Part 2 replaces them in the app.
 
-## Part 2 — In-app LLM topic coding (L0–L9)
+## Part 2 — In-app LLM topic coding (L0–L10)
 
 Added 2026-10-08. Part 1 (K1–K8) makes the codebook complete and exportable. Part 2 brings
 the procedure that consumed it into the app: discover topics around the researcher's themes,
@@ -467,7 +467,7 @@ logic, don't redesign it, and keep its outputs readable by the new code.
 |---|---|---|---|
 | 0 Prepare | `stage0_prepare.py` | Turn↔segment map; turn-level gold labels; rank scores; checks the researcher's codebook against current labels | Built and run |
 | 1 Discover | `stage1_discover.py` | Sonnet 5.5 proposes emergent topics around the locked themes (map → reduce) | Built and run (~$2) |
-| 2 Pilot | `stage2_pilot.py` + `coding.py` | Haiku 4.5 codes 19 gold + 12 random interviews; precision/recall against the researcher's codes | Built, not yet run |
+| 2 Pilot | `stage2_pilot.py` + `coding.py` | Haiku 4.5 codes 19 gold + 12 random interviews; precision/recall against the researcher's codes | Built and run 2026-10-09 (~$1); results sent the researcher back to stage 0 (lessons 11–14) |
 | 3 Full run | not written | Batch API over all ~26,200 executive answer turns; deliverables | Specified in L6 |
 
 Shared modules: `common.py` (paths, models, `STUDY_CONTEXT`), `llm.py` (every API call),
@@ -520,6 +520,30 @@ Shared modules: `common.py` (paths, models, `STUDY_CONTEXT`), `llm.py` (every AP
      caches prefixes of at least 4,096 tokens.
 10. **Version everything by content hash.** A codebook edit gives a new `codebook_version`
     and a fresh set of calls. Stored records are reused only for an identical prompt.
+
+The first pilot (2026-10-09, codebook `cb_6413a5c8d3e4`) is the reason for L10 and U8 below:
+seed-theme recall was 0.13–0.33 for four of five themes, Safety's precision was 0.29 at
+recall 0.91, and the TF-IDF baseline beat the LLM on F1 for four themes. What it taught:
+
+11. **The procedure is a loop, not a pipeline.** The pilot's verdict was "go back to stage 0":
+    code more, sharpen the locked definitions with the TF-IDF model, then discover and pilot
+    again. Every stage must be re-enterable from the app, keep its earlier outputs, and say
+    what has changed upstream since it last ran (U8).
+12. **Emergent topics written with more care than the locked themes win the slots.** The
+    researcher merged and rewrote the emergent topics in the discovery review. The merged
+    `capability_trajectory_agi` became 17% of turns and took a third of the missed Diffusion,
+    Ordinalization and Anthropomorphism positives, despite `PRIORITIZE_SEED_THEMES`. A theme's
+    reach in the prompt follows how fully it is written, not its origin. So every topic has to
+    be authored, edited, merged and retired in one place, to one standard (L10).
+13. **The model follows the written definition, not the researcher's practice.** Turns coded
+    Ordinalization for compute or context-window figures were missed, because the definition
+    says "metrics to evaluate LLM performance". Where practice is broader than the text,
+    recall falls. The fix belongs in the codebook, so the pilot's disagreements should lead
+    straight to the theme editor.
+14. **Gold has gaps; a pilot's precision is a lower bound until adjudicated.** Several of
+    Safety's "false positives" were plain safety talk (red-teaming, alignment evals) in
+    interviews counted as read in full by the ≥5-coded heuristic. Adjudication (L5's
+    `pilot_disagreement` queue) has to come before any codebook verdict.
 
 ### L0 One topic-run layer, more than one method
 
@@ -598,13 +622,11 @@ These names are method-neutral on purpose (L0). Clustering detail with no LLM eq
 (segment-to-cluster membership, centroids) goes in the existing, so far unused `cluster_runs` /
 `clusters` / `cluster_segments` tables, joined on `run_id`.
 
-**Open question for the researcher:** where accepted emergent topics live.
-- **(a)** As themes in the scheme, with new `themes.origin`, `origin_method` and
-  `origin_run_id` columns (one schema bump), so a theme records which method and run proposed
-  it. The researcher can then code them, train on them, and flag exemplars like any theme.
-- **(b)** Only in `topic_run_topics`, for this run. Simpler, but they can't be coded by hand.
-
-Recommend (a), as the hybrid deductive–inductive design intends.
+**Decided 2026-10-09 (the researcher): emergent topics live as themes in the scheme**
+(formerly option (a)). They are edited, merged, archived, coded and trained on exactly like
+the locked themes; L10 has the spec. `topic_run_topics` stays as each run's snapshot of what the
+method proposed and what the codebook held when the run was made. It is provenance, not a
+second place to edit topics. Option (b), keeping emergent topics only inside a run, is dropped.
 
 **Projection for Review:** for each run and theme, write
 `predictions(model_version = "<method prefix><run_id>", segment_id, theme_id, score)`, with
@@ -639,14 +661,17 @@ A "Discover topics" action on the Codebook page, run as a background job. It ask
   - never from read-in-full interviews or prompt examples
 - **Calls:** map batches of 100 turns, then one reduce, on Sonnet 5.5. The prompts are in
   `stage1_discover.py`.
-- **Researcher review:** the draft appears as `proposed` topics. The review screen is
-  method-neutral: each topic shows its name, definition (if the method wrote one), keywords,
-  size and example passages. E2's clustering and its "Promote to sub-code" use the same screen. Each can be accepted,
-  edited, merged into another, or rejected, and accepting creates the theme (L2 open
-  question).
-- **Example passages:** shown for every proposed topic. A passage becomes a researcher
-  exemplar only if the researcher codes and flags it (K3); the model's choice never makes
-  it one.
+- **Researcher review happens on the Codebook page, not on a separate screen** (L10). Each
+  proposed topic arrives as a theme with status `proposed`, carrying the method's name,
+  definition, include/exclude, boundary notes (if the method wrote them), keywords, size and
+  suggested passages. The researcher edits, merges, retires or accepts it with the same editor
+  used for the locked themes. E2's clustering and its "Promote to sub-code" land the same way.
+- **Suggested passages:** shown for every proposed topic. A passage becomes an exemplar only
+  when the researcher codes and flags it (K3). The Codebook page offers that as one action
+  ("Code as exemplar", L10). The model's choice never makes it one.
+- **Discovery treats every accepted theme as given,** whatever its origin. A second discovery
+  pass proposes topics only beside the current codebook: it never re-proposes, redefines or
+  duplicates an accepted emergent topic, any more than a locked theme.
 - **What the review must show** (from the October 2026 run):
   - each topic's approximate size; four topics came out at about 1% of the sample
   - the model's notes on which boundaries were hard
@@ -698,8 +723,10 @@ Not yet built anywhere; this is its spec.
 
 Port `coding.py` as is. The rules it encodes are research decisions and must stay visible in
 the run's settings and snapshot:
-- **Codebook in prompt order:** seed themes (with all their usable exemplars and near
-  misses), then emergent topics (with up to 3 examples), then two fixed topics:
+- **Codebook in prompt order:** every accepted theme, rendered identically whatever its origin
+  (definition, include, exclude, boundary notes, usable exemplars and near misses; L10), then
+  two fixed topics. The script's split (seed themes in full, emergent topics with a few model
+  examples) is what lesson 12 warns against; don't port it.
   - `other`: substantive, but fits nothing
   - `non_substantive`: no topical content
 - **Fields per turn, in this order:** `topic_summary` (≤25 words), `justification` (≤30
@@ -709,8 +736,16 @@ the run's settings and snapshot:
 - **Confidence is about the primary topic only**, on a stated scale: about 0.9 for a clear
   case, 0.7 for some ambiguity, 0.5 for borderline, under 0.4 for a guess. It means
   something only once the pilot's calibration table supports it.
-- **`PRIORITIZE_SEED_THEMES`:** a clearly present seed theme takes a slot ahead of an
-  emergent topic. The researcher chooses this per run.
+- **Priority is a per-theme flag, not an origin.** The script's `PRIORITIZE_SEED_THEMES` rule
+  says a clearly present seed theme takes a slot ahead of an emergent topic. In the app it
+  becomes `themes.priority` (L10): a clearly present priority theme takes a slot first. It
+  defaults to on for `seed` themes, the researcher can set it on any theme, and the run records
+  which themes had it.
+- **Presence check (to test in the next pilot):** for each priority theme, a yes/no field
+  saying whether it is present, alongside primary and secondary. A priority theme then stops
+  competing with broad topics for two slots. Evaluate scores priority themes on presence; the
+  deliverable keeps primary/secondary. Keep it only if the pilot shows a gain over the slot
+  rule alone.
 - **Short answers** take their topic from the question they answer.
 - **Rule-coded turns:** executive turns under 5 words become `non_substantive` by rule,
   without a call.
@@ -757,7 +792,96 @@ An export button on the run, writing into `EXPORTS_DIR`:
 - **Test project only** (rule 11). API calls cost money even against the test project. Use
   a tiny dataset there, and confirm spend in the dialog every time.
 
-## Part 3 — The iteration loop in the UI (U1–U7)
+### L10 One codebook: emergent topics are themes, authored like the locked ones
+
+Added 2026-10-09, at the researcher's request, after lesson 12. Outside the app, the researcher
+merged, rewrote and deleted emergent topics in `discovery_review.md` (converted back by
+`review_to_draft.py`). They added exemplars to the locked themes in
+`codebook_seed_themes.json`, which needed segment IDs looked up by hand (`lookup.py`), and
+repaired cross-references between topics with a one-off script. That made two codebooks in
+two formats, edited by hand. In the app there is one codebook, and every topic in it is
+authored the same way.
+
+**Data (one schema bump, `_migrate()` idiom, rule 4):**
+- `themes.origin`: `seed` (the researcher wrote it) or `emergent` (a topic method proposed it).
+  Existing themes get `seed`.
+- `themes.origin_method` and `themes.origin_run_id`: which method (L0) and run proposed it;
+  null for `seed`.
+- `themes.priority` (0/1): see L7. Defaults to 1 for `seed`, 0 for `emergent`.
+- A new status value, `proposed`, beside `active` / `archived`. `list_themes()` keeps
+  returning only `active` by default, so Coding, training and Review don't change until the
+  researcher accepts a topic.
+- **`proposed` must not leak through `include_archived=True`.** Today that flag returns every
+  status, and three callers rely on it meaning "active or archived":
+  `codebook_export._export_themes()` (so also `codebook_version`), `runs.list_runs()` and
+  `iteration.label_changes_since()`. Give `list_themes()` an explicit status filter and have
+  those three ask for `active` + `archived` only. Otherwise a discovery run would change
+  `codebook_version` and mark Train stale before the researcher accepted anything. Proposed
+  topics enter the export only on request (a separate flag), and never the version hash.
+- `themes.accepted_at`: when the theme became `active`. Backfilled from `created_at` for
+  existing themes; set at creation for seed themes and on Accept for emergent ones. See
+  "Coding and gold" below for why `created_at` isn't enough.
+- No new tables for criteria, exemplars or near misses: emergent themes use the same columns
+  (`description`, `inclusion_criteria`, `exclusion_criteria`, `boundary_notes`) and the same
+  code / rejection flags (`is_exemplar`, `is_near_miss`) as every theme.
+
+**What "locked" means now:** an *accepted* theme, whatever its origin. Discovery may not
+redefine it (L4), and it goes into the prompt in full (L7). `origin` is provenance only: it is
+shown as a small badge and exported, but nothing treats the two origins differently, except
+`priority`'s default.
+
+**Codebook page (Train › Codebook):**
+- **Three groups:** Accepted (seed and emergent, mixed, with an origin badge), Proposed (from
+  the latest discovery run, with its size and the method's notes), Retired (archived and merged).
+- **The same editor and the same completeness check (K2)** for every theme. A proposed topic
+  arrives with the method's text already in the fields; the researcher edits it in place.
+- **Actions per theme:**
+  - **Accept** (`proposed` → `active`). Accepting asks for nothing more. The completeness
+    check shows what's missing, as for any theme.
+  - **Merge into…:** `merge_themes()` as today (codes and rejections re-pointed, source archived
+    with `merged_into`). It also opens the target's editor with the source's criteria added
+    below its own, so the researcher writes the merged definition rather than losing one.
+    Merging works across origins: an emergent topic into a locked theme, two emergent topics
+    together, or a locked theme into an emergent one.
+  - **Retire:** archive (rule 5). A retired proposed topic is remembered as rejected, so the next
+    discovery pass is told it was considered and refused (L4's dropped-candidate list, now kept
+    across rounds).
+  - **Rename / re-id:** names change freely; `theme_id` never changes once a code uses it.
+- **Suggested passages** (from the method) list under each proposed or newly accepted theme,
+  showing their turn and segment IDs. Two actions:
+  - **Code as exemplar:** writes a code (`source='discovery_suggestion'`) with `is_exemplar=1`.
+  - **Near miss:** writes a rejection with `is_near_miss=1`.
+  
+  This replaces `lookup.py`: the researcher never handles a segment ID.
+- **Cross-reference check:** criteria and boundary notes name other topics in prose ("goes to
+  Diffusion"). After a merge, retire or rename, list every criterion that still names the old
+  topic, and offer the replacement, which the researcher confirms one by one. This is
+  `stage2_pilot.py`'s stale-reference check plus the October one-off fix script. Show it with
+  L3's codebook issues; it counts toward the cycle strip's "codebook issues" signal (U3).
+- **History:** every accept, merge, retire and edit is logged to `activity_log` (existing
+  `theme_*` events plus `theme_accept`), so the Web Appendix can say which topics came from
+  discovery and what the researcher did with them.
+
+**Coding and gold:**
+- Accepted emergent themes appear in the Coding tab's theme list like any other, so the
+  researcher can hand-code them and the TF-IDF model trains on them.
+- **"Fully coded" marks don't cover themes added after the mark** (`reviewed.py`: a mark counts
+  only against themes that existed when it was made). For an emergent theme, "existed" must mean
+  *accepted*: the cutoff in `labels.py` (today `themes.created_at`, around line 125) switches
+  to `accepted_at`. Otherwise a mark made while a topic sat in Proposed would count against a
+  theme the researcher hadn't yet adopted, and its unread passages would become negatives.
+  Cover this in `tests/test_labels.py` (rule 8). A newly accepted theme therefore has no
+  gold negatives until interviews are re-confirmed. Evaluate (U6) says so per theme ("no
+  judged interviews yet"). The Codebook page offers "Re-confirm read-in-full interviews for the
+  new themes", which links to K5's queue rather than marking in bulk.
+
+**Bringing in work done outside the app (one-time import):** an importer for an external
+codebook JSON (`codebook_topic_themes.json` or the script's `emergent_topics_draft.json`).
+Each topic becomes a `proposed` theme with its fields filled. Its example `comment_id`s become
+suggested passages (via K6), not exemplars. The researcher then accepts and flags them in the
+app, as above. Use it for the October 2026 draft, so that work isn't redone.
+
+## Part 3 — The iteration loop in the UI (U1–U8)
 
 Added 2026-10-08, at the researcher's request. Getting a good model is not one run. The
 researcher refines the codebook, trains a model (TF-IDF, embedding or LLM), reviews and
@@ -802,8 +926,8 @@ the researcher says otherwise.
 
 | Tab | Decisions housed here | What moves in |
 |---|---|---|
-| Codebook (exists, K2/K3) | Definitions, criteria, exemplars, near misses; accept, edit, merge or reject proposed emergent topics from any topic method (L4, L0); acknowledge codebook issues (L3); export the codebook (K7) | Proposed-topics review; codebook issues |
-| Models | Which engine, with what settings, on which themes; then run it | An engine switcher **TF-IDF / Embedding / LLM** (segmented control), filled from the registry (L0): score engines (TF-IDF, the Embedding classifier) and topic methods (LLM; later Embedding clustering) in separate groups. Each engine panel has its readiness (install button, API-key status), settings (negative mode for TF-IDF; model, `PRIORITIZE_SEED_THEMES` and study context for LLM), cost estimate and run button. The per-theme metrics view stays. |
+| Codebook (exists, K2/K3) | Definitions, criteria, exemplars, near misses for every theme, locked or emergent; accept, edit, merge or retire proposed topics from any topic method (L4, L0, L10); acknowledge codebook issues and cross-references (L3, L10); export the codebook (K7) | Proposed topics as a group of themes; codebook issues |
+| Models | Which engine, with what settings, on which themes; then run it | An engine switcher **TF-IDF / Embedding / LLM** (segmented control), filled from the registry (L0): score engines (TF-IDF, the Embedding classifier) and topic methods (LLM; later Embedding clustering) in separate groups. Each engine panel has its readiness (install button, API-key status), settings (negative mode for TF-IDF; model, the per-theme `priority` flags (L7, L10) and study context for LLM), cost estimate and run button. The per-theme metrics view stays. |
 | Runs (new) | Which run to trust, compare, pin or export | The run history across engines, with each run's codebook version; D3 comparison; C1 learning curves; pin/unpin (A7); the Storage panel; export of the full-corpus scores and the L8 deliverables |
 
 That clears the Models sidebar. Export, Storage and the embedding install bar move out, and
@@ -936,7 +1060,8 @@ Models detail all work; no console errors. The original spec follows.
      marks made or withdrawn, "none of these" confirmed or withdrawn) → Train › Models
   4. the latest run has no review decisions → Review › Queues
 - **Waiting for later items:** unadjudicated `pilot_disagreement` items (Part 2), "no
-  evaluation or decision recorded" (U4 / U6), and unacknowledged codebook issues (L3). Until U4
+  evaluation or decision recorded" (U4 / U6), and unacknowledged codebook issues (L3) and stale
+  cross-references between topics (L10). Until U4
   records decisions, every scheme is in round 1 and Decide is never the current step.
 - **Choices made:** the latest run is the scheme's newest pass of any engine. A run from
   before codebook versions were recorded never counts as "codebook changed". A bulk mark counts
@@ -988,6 +1113,11 @@ errors. The original spec follows.
   round_no, run_ref, codebook_version, decision, note, coder, created_at)`. `run_ref` is a
   `model_version` or a topic run's `run_id`. Recording a decision closes the round, and the next run
   opens round n+1.
+- **Store every run in the round, with its stage, from the start.** U8 needs a round to list
+  several runs (TF-IDF retrains, then Prepare, Discover, Pilot). Add a child table
+  `iteration_round_runs(scheme_id, round_no, run_ref, engine, stage)`, with `stage` null for
+  score engines and `prepare` / `discover` / `pilot` / `full` for topic methods. U4 fills it for
+  TF-IDF and embedding runs; U8 only adds stage values, with no migration.
 - **After recording,** the app navigates to the tab that decision implies:
   - refine codebook → Train › Codebook
   - more labels → Review › Queues, `uncertain` mode
@@ -1007,7 +1137,38 @@ errors. The original spec follows.
 - **Show all three only through the cycle strip's slot**, so a page never shows more than one
   prompt.
 
-### U6 Evaluate tab: what it measures, and on what
+### U6 Evaluate tab: what it measures, and on what — done 2026-10-09
+
+**As built:** `coding_store/evaluation.py` behind `GET /api/evaluate`, drawn by
+`viewer_static/evaluate.js` as Review's third sub-tab (Queues | Recode | Evaluate).
+- **Gold:** every passage of an interview whose mark is read in full (K5 `confirmed` /
+  `interactive`) and covers the theme (made after the theme was created). Coded with the theme
+  or a sub-code is positive; any other passage there is a judged negative. The tab says the gold
+  isn't blind or random, and how many bulk marks are still unconfirmed.
+- **Turns:** segments roll up via K6 (`codebook_export.TurnIndexLookup`): positive if any segment
+  is, scored by the highest. Only segments the run scored count, so interviewer turns and short
+  fragments drop out as in training. A segment whose record can't be read counts as its own unit,
+  and the tab says how many did.
+- **Honest scores:** `oof_score` where the run fitted on the passage, else `score`. Each theme's
+  threshold is the run's own, tuned on those out-of-fold scores, so the tab notes the point
+  estimates are slightly optimistic.
+- **Shows,** per theme: positive / all gold turns, precision and recall with 95% Wilson intervals,
+  F1, PR-AUC, and the comparison run's F1 and PR-AUC on the same turns (default the newest other
+  TF-IDF run, the baseline; "None" is allowed). Below: calibration bands pooled over themes.
+  Themes without gold say "no judged interviews yet"; pruned runs say their scores were deleted.
+- **Not yet:** the shared run selector for all three Review tabs (Queues and Recode still use
+  "Model scores from"), topic-method runs with their before/after adjudication and topic
+  distribution (Part 2, L5), excluding prompt examples (LLM) and centroid seeds (clustering),
+  and the Decide panel (U4).
+- **Tests:** `tests/test_evaluation.py` (rule 8: a mistake reports a number the researcher may
+  cite): Wilson, P/R/F1, average precision (checked against sklearn, ties included), the turn
+  roll-up, calibration, and the gold rules on a temp database.
+
+Verified in the test project: with three marks confirmed, the latest TF-IDF run scored 22 of 25
+gold turns positive, P 0.88 [0.70, 0.96], R 1.00, with the previous run as comparison; switching
+runs, choosing "None", an embedding run, and leaving and re-entering Review all work; triage keys
+do nothing on Evaluate; Queues and Recode are unchanged; no console errors. The original spec
+follows.
 
 - **Gold, until C3 exists:** turns or segments in read-in-full interviews (K5 status
   `confirmed` / `interactive`). Say on the tab that this gold isn't blind or random. C3's gold
@@ -1020,10 +1181,15 @@ errors. The original spec follows.
   TF-IDF/embedding runs (use out-of-fold scores, as the pilot's baseline does).
 - **What it shows:** the metrics listed in L5, for any run. It works for TF-IDF alone before
   any LLM exists, so it is useful from the first round.
+- **Themes with no gold say so** ("no judged interviews yet") rather than showing empty or zero
+  metrics. Newly accepted emergent themes (L10) start this way, because earlier "fully coded"
+  marks don't cover them.
 
 ### U7 Order and dependencies
 
-**U1 → U2 → U3 → U6 → U4 → U5**, then the LLM engine panel (with Part 2).
+**U1 → U2 → U3 → U6 → U4 → U5**, then the LLM engine panel (with Part 2), then U8.
+L10 (emergent topics as themes) comes before L4 (discovery), since discovery's output lands in
+it. Its importer lets the October 2026 work enter the app before any API method is built.
 - U1 and U2 are pure moves.
 - U3 and U6 are useful for TF-IDF alone.
 - U4 and U5 close the loop.
@@ -1044,6 +1210,68 @@ Verification: in the test project only (rule 11). Walk one full round by hand:
 6. confirm you land on the right tab and the round number advances
 
 Check the console on every tab.
+
+### U8 Topic-method stages inside the loop, with a way back
+
+Added 2026-10-09, at the researcher's request (lesson 11). The cycle above has one Train step.
+A topic method's Train step has stages: **Prepare → Discover → Pilot → Full run** (L3–L6). A
+pilot can send the researcher back to any earlier stage, or out of the method altogether, to
+code more and refine the TF-IDF model. The October 2026 pilot did just that. The aim is that a
+researcher works only in the app the whole way round: hand-code (Coding), develop the codebook
+with the TF-IDF model (Train, Review), inform a topic method with the codebook, and go back
+when its results show the codebook or the labels are not ready.
+
+```
+ Coding ─► Codebook ◄──────────────┬──────────────┬──────────────┐
+   ▲        │                      │              │              │
+   │        ▼                      │              │              │
+   │      TF-IDF train ─► Review   │              │              │
+   │        │                      │              │              │
+   │        ▼                      │              │              │
+   │      Prepare ─► Discover ─► Pilot ─► Evaluate/adjudicate ─► Full run ─► export
+   │                                         │
+   └──────────── more labels ◄───────────────┘
+```
+
+**Stage panel (Train › Models, topic-method engine selected):** the four stages as a row, each
+with its state, last run and cost. States are `done` (on the current inputs), `stale` (inputs
+changed since) and `todo`. What makes a stage stale:
+
+| Stage | Stale when |
+|---|---|
+| Prepare | labels or "fully coded" marks changed (U3's signal 3); the latest TF-IDF run changed (ranks) |
+| Discover | the accepted codebook changed in a way discovery depends on: a theme accepted, merged or retired. A wording-only edit doesn't make it stale. |
+| Pilot | `codebook_version` changed (L5's gate); Prepare re-ran |
+| Full run | the pilot it was gated on is no longer the latest on this version |
+
+Each stage can be re-run on its own. Re-running never deletes an earlier run (`topic_runs`
+keeps them all; Runs lists them).
+- **Discover needn't re-run every round.** After a codebook edit, a second discovery pass
+  proposes only topics outside the current accepted codebook (L4). Its proposals join the
+  Proposed group without disturbing accepted themes.
+- **Prepare is cheap and runs automatically** before Discover or Pilot when stale; it is listed
+  so its codebook issues are visible.
+
+**Ways back from Evaluate (extends U4's Decide panel for topic-method runs):**
+
+| Decision | Goes to | Typical pilot evidence |
+|---|---|---|
+| Adjudicate first | Review › Queues, `pilot_disagreement` | always first, until most disagreements are decided (lesson 14) |
+| Refine codebook | Train › Codebook, opened on the theme with the most missed positives, with its disagreements listed beside the editor | low recall; a broad topic taking the slots (lessons 12, 13) |
+| More labels | Coding / Review › Queues for the weak themes, then a TF-IDF retrain | definitions can't be sharpened without more coded examples |
+| Discover again | Train › Models › Discover | many turns coded `other`; a large topic that should be split |
+| Pilot again | Train › Models › Pilot | the codebook changed and adjudication is done |
+| Accept → full run | Train › Models › Full run, then Runs for the export | targets met (question 9) |
+
+**Pilot disagreements next to the codebook.** In Train › Codebook, each theme shows a "From
+the last pilot" box: missed positives and extra positives (adjudicated or not), and which topic
+took the slot. One click opens the passage in Review's `pilot_disagreement` queue. This puts
+the evidence for lesson 13's kind of edit next to the definition being edited.
+
+**Round record:** a round now records which stages ran, with their run IDs, and the decision
+that ended it. Phase F's methods summary can then say, for example: "Round 1: discovery
+proposed 12 topics, 9 kept; pilot recall 0.13–0.33 on four seed themes; the researcher returned
+to hand-coding."
 
 ## Tests
 
@@ -1096,15 +1324,16 @@ Everything else (UI, queue mode, export button) is verified by hand in the brows
 3. Should the export include archived themes by default, or only on request?
 4. Is there more than one coder? Codes, rejections and flags are per coder; the export
    currently assumes the default coder.
-5. Part 2: should accepted emergent topics become real themes in the scheme (L2 option a,
-   recommended) or stay inside one LLM run (option b)?
-6. Part 2: should `PRIORITIZE_SEED_THEMES` default to on? It favours the seed themes for the
+5. ~~Part 2: should accepted emergent topics become real themes?~~ Answered 2026-10-09: yes,
+   authored, merged and retired exactly like the locked themes (L10).
+6. Part 2: should `priority` default to on for seed themes (L7, L10)? It favours them for the
    two topic slots, which raises their recall and makes the emergent topics' counts less
-   comparable.
+   comparable. The first pilot showed it isn't enough against a broadly written emergent
+   topic.
 7. Part 2: the run dialog's spending cap. Should runs over a threshold (say $25) need a
    second confirmation?
-8. Part 3: should the Train tab open on Codebook (first in the cycle) or stay on Models (the
-   current default)?
+8. ~~Part 3: should the Train tab open on Codebook or stay on Models?~~ Answered 2026-10-08:
+   stay on Models (U1).
 9. Part 3: what counts as "good enough" for the Decide panel? A per-theme target F1 (or
    precision/recall floor) set by the researcher would let the strip say "target met" rather
    than leaving every round open-ended.

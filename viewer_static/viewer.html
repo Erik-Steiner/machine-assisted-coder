@@ -597,6 +597,7 @@
   <nav id="reviewSubnav" class="subnav">
     <button type="button" class="subnav-btn" data-subpage="queues">Queues</button>
     <button type="button" class="subnav-btn active" data-subpage="recode">Recode</button>
+    <button type="button" class="subnav-btn" data-subpage="evaluate">Evaluate</button>
   </nav>
   <div id="reviewCycleStrip" class="cycle-strip hidden"></div>
   <div id="reviewBody">
@@ -622,6 +623,11 @@
         coded yet.</p>
       <div id="reviewThemeSelect" class="checkbox-list"></div>
     </div>
+    <div class="subpage hidden" data-subpage="evaluate">
+      <label id="evalRunLabel">Run <select id="evalRun"></select></label>
+      <label id="evalCompareLabel">Compare with <select id="evalCompare"></select></label>
+      <p class="hint">Default comparison: the newest other TF-IDF run, the baseline every engine must beat.</p>
+    </div>
     <label id="reviewEngineLabel">Model scores from
       <select id="reviewEngine"></select>
     </label>
@@ -646,6 +652,29 @@
       <div id="reviewModeSummary" class="hint"></div>
       <div id="reviewModeList"></div>
       <button id="reviewLoadMore" class="btn-secondary hidden">Load more</button>
+    </div>
+    <div id="evalPage" class="subpage hidden" data-subpage="evaluate">
+      <h2>Evaluate</h2>
+      <div id="evalGold" class="hint"></div>
+      <div id="evalStatus" class="hint"></div>
+      <table id="evalTable">
+        <thead>
+          <tr>
+            <th>Theme</th><th title="Positive turns / all gold turns">Gold turns</th>
+            <th>Precision [95% CI]</th><th>Recall [95% CI]</th><th>F1</th><th>PR-AUC</th>
+            <th id="evalCompareHead" title="The comparison run, on the same gold turns">Compared: F1 · PR-AUC</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <p id="evalNotes" class="hint"></p>
+      <h3>Calibration</h3>
+      <p class="hint">How often a gold turn in each score band is really the theme, over every theme above. For a
+        well-calibrated model the share rises with the score and roughly matches it.</p>
+      <table id="evalCalibration">
+        <thead><tr><th>Score</th><th>Gold turns</th><th>Share positive</th></tr></thead>
+        <tbody></tbody>
+      </table>
     </div>
   </main>
   </div>
@@ -685,6 +714,7 @@
 <script src="/codebook.js"></script>
 <script src="/runs.js"></script>
 <script src="/review.js"></script>
+<script src="/evaluate.js"></script>
 <script src="/cycle.js"></script>
 <script src="/appendix.js"></script>
 </body>
