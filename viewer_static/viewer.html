@@ -100,10 +100,26 @@
 
   <main id="mainPanel">
     <div id="metaBox">
-      <div id="positionCounter"></div>
-      <h2 id="metaExecutive"></h2>
-      <div id="metaItemTitle"></div>
-      <div id="metaDetails"></div>
+      <div id="metaHeader">
+        <div id="positionCounter"></div>
+        <button id="metaEditBtn" class="btn-secondary" type="button">Edit details</button>
+      </div>
+      <div id="metaView">
+        <h2 id="metaExecutive"></h2>
+        <div id="metaItemTitle"></div>
+        <div id="metaDetails"></div>
+      </div>
+      <form id="metaEditForm" class="hidden" autocomplete="off">
+        <div id="metaEditFields"></div>
+        <label class="meta-edit-note">Reason for the change (optional, goes in the Web Appendix)
+          <input type="text" name="note" placeholder="e.g. corrected date from the source video">
+        </label>
+        <div class="meta-edit-actions">
+          <button type="submit" id="metaEditSaveBtn">Save</button>
+          <button type="button" id="metaEditCancelBtn" class="btn-secondary">Cancel</button>
+          <span id="metaEditStatus" class="hint"></span>
+        </div>
+      </form>
       <div id="metaDupNotice"></div>
     </div>
 

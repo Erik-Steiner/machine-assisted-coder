@@ -32,6 +32,7 @@ Endpoints:
 5. `POST /api/query/start` kicks off a background thread that pages through `get_feed` for a chosen `company_id` or `entity_id`, builds export rows, and writes them to `queries/<kind>_<slug>_<timestamp>.{json,csv}`; it also appends an entry to `queries/_index.json` so the new dataset survives a server restart. Returns a `job_id`.
 6. `GET /api/query/status?job_id=..` is polled by the frontend to report progress (`items_fetched`, `pages_fetched`) and, on completion, the new dataset's id.
 7. `GET /api/transcript_search?dataset=<id>&q=<term>` returns the ids of records in that dataset whose `transcript_text` contains `<term>` (case-insensitive substring match), by scanning the dataset's full in-memory records server-side. This is what backs the "Interview contains" filter — `transcript_text` is deliberately left out of the index payload (see Data contract below), so a client-side substring filter isn't possible without it.
+8. `POST /api/interview/metadata` corrects one record's metadata (`{dataset_id, item_id, changes, note?}`) -- see **Editing a record's metadata** in the File reference's import notes below.
 
 The frontend is three static files in `viewer_static/`: `viewer.html`, `app.js`, and `styles.css`. The browser loads `viewer.html`, which loads `app.js`. On load, the script fetches `/api/datasets`, populates the dataset dropdown, and loads the selected one via `/api/index?dataset=<id>` into memory. All filtering and sorting happen in the browser, using this small index. The script fetches the full record from `/api/interview/<id>?dataset=<id>` only when the researcher views that record, and caches it (the cache is cleared on every dataset switch, since ids aren't globally unique). Search & Export is a separate, independent chunk of `app.js`: it drives the keyword search, the disambiguation click-to-select flow, and polling a query job to completion, then hands off to the same `loadDataset()` function Browse uses once a new dataset is ready.
 
@@ -307,6 +308,32 @@ the newly-added record(s) (not the whole dataset -- the existing ones are alread
 and evicts the target dataset_id from the in-memory `DATASETS` cache so the next `get_dataset()`
 reloads the appended file from disk instead of serving the stale cached copy -- the same
 cache-invalidation idiom `switch_project()` uses.
+
+**Editing a record's metadata.** Browse's **Edit details** form (`app.js`'s `openMetaEdit`/
+`saveMetaEdit`; its field keys must match `query_api.EDITABLE_FIELDS`) posts only the fields
+whose value changed to `POST /api/interview/metadata`. `query_api.update_record_metadata()`
+finds the one record with that `item_id` in a registered dataset (404 if none, 400 if several),
+validates the values (`publish_date` must start with `YYYY-MM-DD`, `duration_secs` a
+non-negative number, `""` means `null`), and rewrites the JSON + CSV through `write_export()`.
+It returns only the fields that actually changed and writes nothing if none did. The handler
+then evicts the dataset from `DATASETS`, re-syncs `segments.group_name`/`person_name` with
+`coding_store.segments.update_item_names()` when either changed (review queues, exemplars and
+the exports read those copies from `coding.db`, not from the dataset file), and logs
+`metadata_edited` with `{field: {from, to}}` and the researcher's note. The dataset file stays
+the single source of truth on purpose: an override table would have to be applied by every
+reader of `queries/*.json` (`get_dataset`, `_load_dataset_records_with_turns`,
+`build_segments.py`, `find_duplicates.py`, the export scripts), and one missed reader would
+silently show old values. `item_id` is never editable (segment ids derive from it), and the
+`primary`/`demo` files are refused. `duplicate_cluster_items` keeps the `publish_date`/
+`source_name` it saw at scan time; that's a snapshot of the scan, and the next scan picks up
+the new values. Two frontend details: the index's numeric `id` is a position in
+`publish_date` order, so an edited date can move the record -- `reloadIndexAfterEdit()`
+re-fetches the index, clears the record cache and the "Interview contains" match ids (also
+positions), and re-selects the record by `item_id`, clearing filters if the edit took it out of
+them. `write_export()` writes each file to a `.tmp` sibling and `os.replace()`s it, and
+`append_to_dataset()`/`update_record_metadata()` share `query_api.DATASET_WRITE_LOCK`, so a
+rewrite in place never leaves a half-written dataset file (the project folder may sync through
+Dropbox).
 
 `_create_dataset()`/`_append_dataset()` (both in `viewer_server.py`) are the shared "write it to
 queries/, register it, maybe segment it, log it" ceremony behind every dataset-creating/appending

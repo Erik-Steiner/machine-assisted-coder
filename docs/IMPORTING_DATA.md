@@ -330,6 +330,32 @@ also segment the bundled `demo`/`primary` datasets, which this script structural
 idempotent -- safe to re-run any time, and harmless to run on an already-segmented dataset. See
 `README.md` for the full setup walkthrough.
 
+## Correcting metadata after import
+
+A record's metadata can be corrected in the app after it's in: in **Browse**, open the
+interview and click **Edit details**. These fields are editable (`query_api.EDITABLE_FIELDS`):
+`item_title`, `publish_date`, `source_name`, `source_url`, `person_name`, `person_title`,
+`group_name`, `duration_secs`. Saving rewrites that record in its `queries/*.json` and `.csv`,
+re-syncs the `group_name`/`person_name` copies on its segments in `coding.db` (only those two
+columns -- segments, ids and codes are untouched), and logs every field's old and new value,
+plus an optional reason, to the Web Appendix as "Interview metadata edited".
+
+What can't be edited, and why:
+
+- **`item_id`** -- every segment id, and so every code, is derived from it. For a transcript
+  import it's a hash of the *original* group/person/title/date; editing those fields keeps
+  that original id. One consequence: re-importing the same transcript with *corrected*
+  metadata produces a different id, so the import's collision check won't flag it as already
+  present -- the duplicate scan below will.
+- **`person_id`**, the source API's own key.
+- **`turns`/`transcript_text`** -- changing the text means re-segmenting.
+- **`view_count`/`like_count`/`combined_classifier_score`** -- the source reported them.
+
+Only datasets saved in `queries/` can be edited; the bundled `demo` dataset and a root-level
+`executive_interviews.json` (`primary`) are repo files, not project data. A record without an
+`item_id` can't be edited either, since there's nothing stable to find it by. Files already
+written to `exports/` keep the old values until they're exported again.
+
 ## Finding near-duplicate interviews
 
 The live API (and, in principle, any source) can hand you the same real-world speech more than

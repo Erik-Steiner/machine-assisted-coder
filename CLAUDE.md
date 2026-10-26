@@ -42,6 +42,7 @@ schema, not something to rename.
 | Working on...                          | Read first                                          |
 |-----------------------------------------|------------------------------------------------------|
 | Browse filters/rendering/citation       | `viewer_static/app.js`, `viewer_server.py`           |
+| Editing a record's metadata after import (Browse → Edit details) | `query_api.py`'s `EDITABLE_FIELDS`/`update_record_metadata`, `coding_store/segments.py`'s `update_item_names`, `viewer_server.py`'s `post_interview_metadata`, `app.js`'s `saveMetaEdit`/`reloadIndexAfterEdit`; [IMPORTING_DATA.md](docs/IMPORTING_DATA.md) "Correcting metadata after import" |
 | Search & Export / bulk download         | `query_api.py`, `download_script.py`                 |
 | Importing a new data source             | [IMPORTING_DATA.md](docs/IMPORTING_DATA.md), `query_api.py`'s `EXPORT_FIELDS`/`validate_dataset_records`, `scripts/import_*.py` |
 | Coding tab UI/keyboard shortcuts        | `viewer_static/coding.js`                            |

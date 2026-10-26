@@ -7,11 +7,14 @@ shape, so every dataset (hand-searched or bulk-downloaded) browses the same
 way with no special-casing.
 """
 import csv
+import io
 import json
 import os
 import re
+import threading
 import time
 import unicodedata
+from datetime import date
 from pathlib import Path
 from urllib.parse import urlencode
 
@@ -166,6 +169,10 @@ EXPORT_FIELDS = [
 ]
 CSV_FIELDS = [f for f in EXPORT_FIELDS if f != "turns"]
 
+# One writer at a time per process for anything that rewrites an existing dataset file
+# (append_to_dataset, update_record_metadata): both are read-modify-write.
+DATASET_WRITE_LOCK = threading.Lock()
+
 
 class DatasetValidationError(ValueError):
     """A dataset JSON file doesn't match the shape the app needs to load it safely."""
@@ -217,6 +224,26 @@ def save_registry(queries_dir, entries):
     (queries_dir / "_index.json").write_text(json.dumps(entries, indent=2), encoding="utf-8")
 
 
+def _atomic_write_text(path, text):
+    """Write to a sibling temp file, then os.replace() it over path, so a crash or a
+    sync client (the researcher's project folder may live in Dropbox) never sees a
+    half-written dataset file -- once records get rewritten in place (appends,
+    metadata edits), a truncated JSON file would lose the only copy of them.
+    os.replace() can briefly fail on Windows while another process holds the
+    target open (a sync client or virus scanner), hence the short retry."""
+    tmp_path = path.with_name(path.name + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
+    for attempt in range(5):
+        try:
+            os.replace(tmp_path, path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(0.2 * (attempt + 1))
+
+
 def write_export(queries_dir, base_name, rows):
     """Write one query result as JSON + CSV into queries_dir, in the shape every
     dataset (hand-searched or bulk-downloaded) shares. Returns (json_path, csv_path).
@@ -227,13 +254,13 @@ def write_export(queries_dir, base_name, rows):
     json_path = queries_dir / f"{base_name}.json"
     csv_path = queries_dir / f"{base_name}.csv"
 
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(rows, f, indent=2, ensure_ascii=False)
+    _atomic_write_text(json_path, json.dumps(rows, indent=2, ensure_ascii=False))
 
-    with open(csv_path, "w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS, extrasaction="ignore")
-        writer.writeheader()
-        writer.writerows(rows)
+    buf = io.StringIO(newline="")
+    writer = csv.DictWriter(buf, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    _atomic_write_text(csv_path, buf.getvalue())
 
     return json_path, csv_path
 
@@ -295,29 +322,124 @@ def append_to_dataset(queries_dir, dataset_id, new_records, count_noun="intervie
     the existing ones are already in coding.db) and for invalidating any
     in-memory cache of this dataset."""
     queries_dir = Path(queries_dir)
-    entries = load_registry(queries_dir)
-    idx = next((i for i, e in enumerate(entries) if e["id"] == dataset_id), None)
-    if idx is None:
-        raise KeyError(f"no registered dataset with id {dataset_id!r}")
-    entry = entries[idx]
-    json_path = queries_dir / entry["json_file"]
-    with open(json_path, encoding="utf-8") as f:
-        existing = json.load(f)
-    existing_ids = {r.get("item_id") for r in existing}
-    collisions = sorted({r.get("item_id") for r in new_records if r.get("item_id") in existing_ids})
-    if collisions:
-        raise DatasetValidationError(
-            f"item_id {', '.join(collisions)} already exists in this dataset -- adjust the item "
-            "title or publish date so it hashes to a different id, or pick a different dataset"
-        )
-    combined = existing + new_records
-    write_export(queries_dir, Path(entry["json_file"]).stem, combined)
-    entries[idx] = {
-        **entry, "count": len(combined),
-        "label": relabel_with_count(entry["label"], len(combined), noun=count_noun),
-    }
-    save_registry(queries_dir, entries)
+    with DATASET_WRITE_LOCK:
+        entries = load_registry(queries_dir)
+        idx = next((i for i, e in enumerate(entries) if e["id"] == dataset_id), None)
+        if idx is None:
+            raise KeyError(f"no registered dataset with id {dataset_id!r}")
+        entry = entries[idx]
+        json_path = queries_dir / entry["json_file"]
+        with open(json_path, encoding="utf-8") as f:
+            existing = json.load(f)
+        existing_ids = {r.get("item_id") for r in existing}
+        collisions = sorted({r.get("item_id") for r in new_records if r.get("item_id") in existing_ids})
+        if collisions:
+            raise DatasetValidationError(
+                f"item_id {', '.join(collisions)} already exists in this dataset -- adjust the item "
+                "title or publish date so it hashes to a different id, or pick a different dataset"
+            )
+        combined = existing + new_records
+        write_export(queries_dir, Path(entry["json_file"]).stem, combined)
+        entries[idx] = {
+            **entry, "count": len(combined),
+            "label": relabel_with_count(entry["label"], len(combined), noun=count_noun),
+        }
+        save_registry(queries_dir, entries)
     return combined, entries[idx]
+
+
+# --- Editing one record's metadata in place (Browse's "Edit details") ----------------
+#
+# A dataset's queries/*.json file is the only full copy of its records' metadata, so
+# corrections are written there (JSON and CSV together, via write_export), not into an
+# override layer every reader of the file would have to remember to apply. Provenance
+# lives in activity_log instead: the caller logs each field's old and new value.
+
+EDITABLE_FIELDS = [
+    "item_title", "publish_date", "source_name", "source_url",
+    "person_name", "person_title", "group_name", "duration_secs",
+]
+# Deliberately not editable: item_id (every segment_id -- and so every code -- is derived
+# from it; for transcript imports it's a hash of the original group/person/title/date, and
+# must keep that original value after those fields are edited), person_id (the source's
+# own key), turns/transcript_text (changing text means re-segmenting), and the counts a
+# source API reported (view_count/like_count/combined_classifier_score).
+
+
+def _clean_metadata_value(field, value):
+    """Normalizes one submitted value: strings stripped, "" -> None. publish_date must
+    start with a valid YYYY-MM-DD (any time-of-day suffix is kept as given); duration_secs
+    must be a non-negative number. Raises DatasetValidationError naming the field."""
+    if value is None:
+        return None
+    if field == "duration_secs":
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return None
+        try:
+            num = float(value)
+        except (TypeError, ValueError):
+            raise DatasetValidationError("duration_secs must be a number of seconds")
+        if num < 0:
+            raise DatasetValidationError("duration_secs can't be negative")
+        return int(num) if num.is_integer() else num
+    value = str(value).strip()
+    if not value:
+        return None
+    if field == "publish_date":
+        try:
+            date.fromisoformat(value[:10])
+        except ValueError:
+            raise DatasetValidationError("publish_date must start with a date as YYYY-MM-DD")
+    return value
+
+
+def update_record_metadata(queries_dir, dataset_id, item_id, changes):
+    """Applies `changes` ({field: new_value}, fields from EDITABLE_FIELDS only) to the one
+    record with this item_id in a registered dataset, rewriting its JSON + CSV. Values
+    equal to the current one are ignored, so a form can send every field it shows.
+
+    Raises KeyError if dataset_id isn't registered (primary/demo aren't -- they're
+    repo-level files) or no record has this item_id; DatasetValidationError for an
+    unknown field, an invalid value, or an item_id that matches more than one record
+    (ambiguous -- nothing is written).
+
+    Returns {field: {"from": old, "to": new}} for the fields that actually changed
+    (empty if none did, in which case nothing is written). Caller is responsible for
+    syncing segments.group_name/person_name in coding.db and invalidating any in-memory
+    cache of this dataset."""
+    unknown = sorted(set(changes) - set(EDITABLE_FIELDS))
+    if unknown:
+        raise DatasetValidationError(f"not an editable field: {', '.join(unknown)}")
+    cleaned = {field: _clean_metadata_value(field, value) for field, value in changes.items()}
+
+    queries_dir = Path(queries_dir)
+    with DATASET_WRITE_LOCK:
+        entry = next((e for e in load_registry(queries_dir) if e["id"] == dataset_id), None)
+        if entry is None:
+            raise KeyError(f"no registered dataset with id {dataset_id!r}")
+        json_path = queries_dir / entry["json_file"]
+        with open(json_path, encoding="utf-8") as f:
+            records = json.load(f)
+        matches = [r for r in records if r.get("item_id") is not None and str(r["item_id"]) == str(item_id)]
+        if not matches:
+            raise KeyError(f"no record with item_id {item_id!r} in dataset {dataset_id!r}")
+        if len(matches) > 1:
+            raise DatasetValidationError(
+                f"item_id {item_id!r} matches {len(matches)} records in this dataset -- "
+                "can't tell which one to edit"
+            )
+        record = matches[0]
+        diff = {
+            field: {"from": record.get(field), "to": new}
+            for field, new in cleaned.items() if record.get(field) != new
+        }
+        if diff:
+            for field, change in diff.items():
+                record[field] = change["to"]
+            write_export(queries_dir, Path(entry["json_file"]).stem, records)
+    return diff
 
 
 def dedupe_rows(rows):

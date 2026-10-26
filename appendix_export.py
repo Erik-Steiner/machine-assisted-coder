@@ -43,6 +43,7 @@ ACTION_LABELS = {
     "dataset_unloaded": "Dataset unloaded",
     "dataset_restored": "Dataset restored",
     "segments_built": "Datasets segmented",
+    "metadata_edited": "Interview metadata edited",
     "filter_snapshot": "Browse filter snapshot",
 }
 
@@ -87,6 +88,15 @@ def _summarize(action_type, details):
         engine = details.get("engine", "?")
         return (f'Exported full-corpus topic model ({engine}, {details.get("themes_exported", "?")} '
                 f'theme(s), {details.get("segment_rows", "?")} rows)')
+    if action_type == "metadata_edited":
+        changes = "; ".join(
+            f'{field}: "{c.get("from") if c.get("from") is not None else ""}" -> '
+            f'"{c.get("to") if c.get("to") is not None else ""}"'
+            for field, c in details.get("changes", {}).items()
+        ) or "no fields"
+        note = f' -- {details["note"]}' if details.get("note") else ""
+        return (f'Edited metadata of {details.get("dataset_id", "?")}:{details.get("item_id", "?")} '
+                f'({changes}){note}')
     if action_type == "filter_snapshot":
         return "Browse filters active at export/citation time"
     return ACTION_LABELS.get(action_type, action_type)

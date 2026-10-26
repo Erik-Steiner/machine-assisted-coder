@@ -37,6 +37,20 @@ def upsert_segments(segments):
         )
 
 
+def update_item_names(dataset_id, item_id, group_name, person_name):
+    """Re-syncs the group_name/person_name copies every segment of one item carries
+    (segmentation.py copies them in from the dataset record) after that record's metadata
+    is edited -- review queues, exemplars and exports read them straight from here, not
+    from the dataset file. Touches only those two columns: segment_id/seg_index/text stay
+    as they are, so codes are unaffected. Returns the number of segments updated."""
+    with schema.get_conn() as conn:
+        cur = conn.execute(
+            "UPDATE segments SET group_name=?, person_name=? WHERE dataset_id=? AND item_id=?",
+            (group_name, person_name, dataset_id, str(item_id)),
+        )
+    return cur.rowcount
+
+
 def count_segments(dataset_id=None):
     with schema.get_conn() as conn:
         if dataset_id:

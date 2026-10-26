@@ -654,6 +654,36 @@ body[data-tab="review"] #appendixView {
 }
 
 #positionCounter { font-size: 12px; color: var(--text-dim); margin-bottom: 4px; }
+#metaHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+#metaEditBtn { font-size: 12px; padding: 4px 10px; }
+#metaEditBtn.hidden, #metaView.hidden, #metaEditForm.hidden { display: none; }
+
+#metaEditForm {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-alt);
+  max-width: 720px;
+}
+#metaEditFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 8px 12px;
+}
+#metaEditForm label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-dim); }
+#metaEditForm label.meta-edit-wide { grid-column: 1 / -1; }
+#metaEditForm input {
+  padding: 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 13px;
+}
+.meta-edit-actions { display: flex; align-items: center; gap: 8px; }
 #metaExecutive { margin: 0 0 4px 0; font-size: 20px; }
 #metaItemTitle { font-size: 14px; margin-bottom: 6px; }
 #metaItemTitle a { color: var(--accent); text-decoration: none; }

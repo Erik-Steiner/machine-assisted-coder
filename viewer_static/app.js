@@ -250,12 +250,18 @@ function uniqueSorted(field) {
 function renderCheckboxes(containerId, values, filterKey) {
   const container = document.getElementById(containerId);
   container.innerHTML = "";
+  // A selection only survives a rebuild if some record still has that value (a renamed
+  // group or person after a metadata edit, or a different dataset) -- otherwise it would
+  // keep filtering with no checkbox left to clear it.
+  const present = new Set(values);
+  [...state.filters[filterKey]].forEach((v) => { if (!present.has(v)) state.filters[filterKey].delete(v); });
   values.forEach((v) => {
     const label = document.createElement("label");
     label.className = "checkbox-item";
     const cb = document.createElement("input");
     cb.type = "checkbox";
     cb.value = v;
+    cb.checked = state.filters[filterKey].has(v);
     cb.addEventListener("change", () => {
       if (cb.checked) state.filters[filterKey].add(v);
       else state.filters[filterKey].delete(v);
@@ -501,6 +507,134 @@ function renderMeta(rec) {
     '<span> · </span>'
   );
   document.getElementById("metaDupNotice").innerHTML = duplicateSectionHtml(rec);
+  closeMetaEdit(); // navigating away abandons an open edit
+  updateMetaEditBtn(rec);
+}
+
+// --- Editing one record's metadata (POST /api/interview/metadata) -------------------
+// Keys must match query_api.EDITABLE_FIELDS. The record's dataset file is rewritten
+// server-side; item_id never changes, so codes stay attached. Since the index's "id" is
+// a position in publish_date order, an edited date can move the record -- after a save
+// the index is re-fetched and the record re-selected by item_id (reloadIndexAfterEdit).
+
+const EDITABLE_META_FIELDS = [
+  { key: "item_title", label: "Title", wide: true },
+  { key: "person_name", label: "Person" },
+  { key: "person_title", label: "Person's title / role" },
+  { key: "group_name", label: "Group / organization" },
+  { key: "publish_date", label: "Date", type: "date" },
+  { key: "source_name", label: "Source" },
+  { key: "duration_secs", label: "Duration (seconds)", type: "number" },
+  { key: "source_url", label: "Source URL", type: "url", wide: true },
+];
+
+// Only datasets saved in queries/ can be edited (the server refuses primary/demo, which
+// are repo-level files), and only records with an item_id to find them by.
+function canEditMeta(rec) {
+  return Boolean(rec && rec.item_id) && state.datasetId !== "primary" && state.datasetId !== "demo";
+}
+
+function updateMetaEditBtn(rec) {
+  const btn = document.getElementById("metaEditBtn");
+  btn.classList.toggle("hidden", !rec);
+  btn.disabled = !canEditMeta(rec);
+  btn.title = btn.disabled ? "Only records in datasets saved in queries/ (with an item_id) can be edited" : "";
+}
+
+// The value an input shows for a field. A date input only holds YYYY-MM-DD, so a stored
+// time-of-day is dropped from the comparison -- and kept on disk -- unless the date changes.
+function metaInputValue(rec, field) {
+  const v = rec[field.key];
+  if (v === null || v === undefined) return "";
+  return field.type === "date" ? String(v).slice(0, 10) : String(v);
+}
+
+function openMetaEdit() {
+  const rec = state.filtered[state.pos];
+  if (!canEditMeta(rec)) return;
+  const form = document.getElementById("metaEditForm");
+  document.getElementById("metaEditFields").innerHTML = EDITABLE_META_FIELDS.map((f) =>
+    `<label${f.wide ? ' class="meta-edit-wide"' : ""}>${escapeHtml(f.label)}` +
+    `<input name="${f.key}" type="${f.type || "text"}"${f.type === "number" ? ' min="0" step="any"' : ""} ` +
+    `value="${escapeHtml(metaInputValue(rec, f)).replace(/"/g, "&quot;")}"></label>`
+  ).join("");
+  form.elements.note.value = "";
+  form.dataset.itemId = rec.item_id;
+  document.getElementById("metaEditStatus").textContent = `item_id ${rec.item_id} (fixed)`;
+  document.getElementById("metaEditSaveBtn").disabled = false;
+  form.classList.remove("hidden");
+  document.getElementById("metaView").classList.add("hidden");
+  document.getElementById("metaEditBtn").classList.add("hidden");
+  form.elements.item_title.focus();
+}
+
+function closeMetaEdit() {
+  document.getElementById("metaEditForm").classList.add("hidden");
+  document.getElementById("metaView").classList.remove("hidden");
+  document.getElementById("metaEditBtn").classList.remove("hidden");
+}
+
+async function saveMetaEdit() {
+  const form = document.getElementById("metaEditForm");
+  const statusEl = document.getElementById("metaEditStatus");
+  const rec = state.all.find((r) => r.item_id === form.dataset.itemId);
+  if (!rec) return;
+  const changes = {};
+  EDITABLE_META_FIELDS.forEach((f) => {
+    const value = form.elements[f.key].value.trim();
+    if (value !== metaInputValue(rec, f)) changes[f.key] = value;
+  });
+  if (!Object.keys(changes).length) {
+    closeMetaEdit();
+    flashCopyStatus("No changes to save");
+    return;
+  }
+
+  statusEl.textContent = "Saving…";
+  document.getElementById("metaEditSaveBtn").disabled = true;
+  let data;
+  try {
+    const res = await fetch("/api/interview/metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        dataset_id: state.datasetId, item_id: rec.item_id, changes, note: form.elements.note.value.trim(),
+      }),
+    });
+    data = await res.json();
+  } catch (err) {
+    data = { error: "request failed — is the server running?" };
+  }
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    document.getElementById("metaEditSaveBtn").disabled = false;
+    return;
+  }
+  const n = Object.keys(data.changes || {}).length;
+  await reloadIndexAfterEdit(rec.item_id);
+  flashCopyStatus(n ? `Saved ${n} change${n === 1 ? "" : "s"}` : "No changes to save");
+}
+
+// Like loadDataset() for the same dataset, but keeps the researcher where they were:
+// filter selections survive (minus values no record has any more, and the date range,
+// which resets with the slider's new bounds), and the edited record stays selected. If
+// the edit moved it out of the active filters, they're cleared so it stays in view.
+async function reloadIndexAfterEdit(itemId) {
+  const res = await fetch(`/api/index?dataset=${encodeURIComponent(state.datasetId)}`);
+  state.all = await res.json();
+  state.cache.clear(); // ids are positions in date order, so an edited date can shift them
+  state.filters.transcriptMatchIds = null; // those match ids are positions too
+  transcriptSearchToken++;
+  document.getElementById("transcriptSearch").value = "";
+  document.getElementById("transcriptSearchStatus").textContent = "";
+  buildFilterOptions();
+  state.filtered = state.all.filter(matchesFilters);
+  if (!state.filtered.some((r) => r.item_id === itemId)) resetFilters();
+  state.pos = Math.max(0, state.filtered.findIndex((r) => r.item_id === itemId));
+  renderList();
+  renderResultCount();
+  showCurrent();
+  if (window.onDatasetLoaded) window.onDatasetLoaded();
 }
 
 function renderTranscript(text) {
@@ -539,6 +673,8 @@ async function showCurrent() {
     document.getElementById("metaDetails").textContent = "";
     document.getElementById("transcriptContent").innerHTML =
       "<em>No interviews match the current filters.</em>";
+    closeMetaEdit();
+    updateMetaEditBtn(null);
     return;
   }
 
@@ -706,6 +842,16 @@ function bindEvents() {
   });
 
   document.getElementById("resetFilters").addEventListener("click", resetFilters);
+
+  document.getElementById("metaEditBtn").addEventListener("click", openMetaEdit);
+  document.getElementById("metaEditCancelBtn").addEventListener("click", closeMetaEdit);
+  document.getElementById("metaEditForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    saveMetaEdit();
+  });
+  document.getElementById("metaEditForm").addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeMetaEdit();
+  });
 
   document.addEventListener("click", (e) => {
     const link = e.target.closest(".dup-jump-link");

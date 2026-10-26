@@ -45,6 +45,7 @@ const ACTION_LABELS = {
   dataset_unloaded: "Dataset unloaded",
   dataset_restored: "Dataset restored",
   segments_built: "Datasets segmented",
+  metadata_edited: "Interview metadata edited",
   filter_snapshot: "Browse filter snapshot",
 };
 
@@ -116,6 +117,14 @@ function summarizeAppendixRow(actionType, details) {
     case "codebook_themes_export":
       return `Exported codebook for models: scheme ${details.scheme_id || "?"}, ${details.topics ?? "?"} theme(s), ` +
         `${details.label_rows ?? "?"} label row(s), version ${(details.codebook_version || "?").slice(0, 19)}…`;
+    case "metadata_edited": {
+      const show = (v) => (v === null || v === undefined ? "" : v);
+      const changes = Object.entries(details.changes || {})
+        .map(([field, c]) => `${field}: "${show(c.from)}" → "${show(c.to)}"`)
+        .join("; ") || "no fields";
+      return `Edited metadata of ${details.dataset_id || "?"}:${details.item_id || "?"} (${changes})` +
+        (details.note ? ` — ${details.note}` : "");
+    }
     case "filter_snapshot":
       return "Browse filters active at export/citation time";
     default:

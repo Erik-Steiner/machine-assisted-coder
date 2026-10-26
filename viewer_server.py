@@ -83,6 +83,15 @@ Endpoints:
                                               coding_store.dataset_status / classifier.build_corpus()
     GET  /api/index?dataset=<id>          -> metadata-only records for one dataset
     GET  /api/interview/<id>?dataset=<id> -> full record (incl. transcript_text)
+    POST /api/interview/metadata          -> {dataset_id, item_id, changes: {field: value}, note?} ->
+                                              corrects one record's metadata (fields in
+                                              query_api.EDITABLE_FIELDS; never item_id or text) in its
+                                              queries/*.json + .csv, re-syncs the group_name/person_name
+                                              copies on its segments in coding.db, and logs each field's
+                                              old -> new value ("metadata_edited"). Registered datasets
+                                              only (400 for primary/demo). Returns {record, changes} --
+                                              record is the fresh index row; its positional "id" may
+                                              differ if publish_date changed the sort order
 
     GET  /api/search/companies?keyword=.. -> live get_companies lookup
     GET  /api/search/entities?keyword=..  -> live get_entities lookup
@@ -1209,6 +1218,41 @@ def get_interview(req):
     if rec is None:
         raise ApiError(f"unknown interview id {iid}", status=404)
     return JsonResponse(rec)
+
+
+@ROUTER.post("/api/interview/metadata", json_body=True, required=["dataset_id", "item_id", "changes"])
+def post_interview_metadata(req):
+    body = req.body
+    dataset_id = body["dataset_id"]
+    item_id = str(body["item_id"])
+    changes = body["changes"]
+    if not isinstance(changes, dict):
+        raise ApiError("changes must be an object of {field: value}", status=400)
+    if dataset_id in ("primary", "demo"):
+        raise ApiError("only datasets saved in queries/ can be edited, not the bundled primary/demo files",
+                       status=400)
+    try:
+        diff = query_api.update_record_metadata(QUERIES_DIR, dataset_id, item_id, changes)
+    except KeyError as exc:
+        raise ApiError(exc.args[0], status=404)
+    except query_api.DatasetValidationError as exc:
+        raise ApiError(str(exc), status=400)
+
+    if diff:
+        with DATASETS_LOCK:
+            DATASETS.pop(dataset_id, None)  # force a reload from disk next access
+    dataset = _require_dataset(dataset_id)
+    record = next((r for r in dataset["index"] if str(r.get("item_id")) == item_id), None)
+
+    if diff:
+        if record and ("group_name" in diff or "person_name" in diff):
+            segments_store.update_item_names(dataset_id, item_id, record.get("group_name"), record.get("person_name"))
+        activity_log.log_activity(body.get("coder") or CODER_NAME, "metadata_edited", {
+            "dataset_id": dataset_id, "item_id": item_id,
+            "item_title": (record or {}).get("item_title"),
+            "changes": diff, "note": (body.get("note") or "").strip() or None,
+        })
+    return JsonResponse({"record": record, "changes": diff})
 
 
 @ROUTER.get("/api/transcript_search")
