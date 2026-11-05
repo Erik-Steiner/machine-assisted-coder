@@ -267,7 +267,11 @@ ports, each on a different project, at the same time, if you want.
   end of the date range slider), channel, interview title, interview transcript content, or
   minimum views/likes/score. "Interview contains" searches the full transcript text
   server-side (transcripts aren't loaded into the browser until you open one, so this is what
-  makes a full-text search possible without that).
+  makes a full-text search possible without that). It matches inside words unless you tick
+  **Whole word**. On Browse and Coding, matches in the spoken text are highlighted, and a bar
+  above the text steps through them: use its arrows, `]` / `[`, or Enter / Shift+Enter in the
+  search box. On Coding this also selects the match's segment, and a code you apply there is
+  saved with source `keyword_search` and the term in its note.
 - Click any interview in the left-hand list to jump straight to it.
 - To copy a piece of transcript with a citation attached, select the text with your mouse, then
   click **Copy selection + citation**. You'll get the quote plus a tag like
@@ -452,6 +456,14 @@ graded on a passage it learned from. A theme with no interview read in full sinc
 a random sample (you chose what to read), and the intervals are wide when a theme has few positives, so
 read them, not just the point estimates. A calibration table below shows how often a turn in each score
 band really is the theme.
+
+At the bottom of Evaluate, **Decide** what to do next: refine the codebook, label more passages,
+retrain, try another engine, or accept the run, with a note on why. Recording the decision closes
+the round (Train and Review show the round number at the top) and takes you where it leads: the
+Codebook page, the borderline queue, Models, or Runs to export. The **Rounds** table lists every
+decision with the run it was about and how many runs the round held; the latest can be withdrawn
+if you recorded it by mistake. Decisions are logged in the Web Appendix, and Train › Runs shows the
+round each run was trained in.
 
 ### Web Appendix tab
 

@@ -1030,7 +1030,7 @@ errors on every tab before going further.
   `ENGINE_LABELS`) feeds the Runs table, `model.js`'s `ENGINE_LABELS` and `engineOfVersion()`,
   and Review's "Model scores from" dropdown. The embedding engine is now labelled "Embedding
   classifier".
-- **Not yet:** the round each run belongs to (U4 creates rounds), D3's comparison and C1's
+- **Not yet:** D3's comparison and C1's
   learning curves (their own items), the L8 deliverables (Part 2), and the Models detail
   panel's fixed TF-IDF / Embedding toggle (the Models engine switcher replaces it).
 
@@ -1059,10 +1059,9 @@ Models detail all work; no console errors. The original spec follows.
   3. labels changed since the latest run (codes and rejections added or removed, "fully coded"
      marks made or withdrawn, "none of these" confirmed or withdrawn) → Train › Models
   4. the latest run has no review decisions → Review › Queues
-- **Waiting for later items:** unadjudicated `pilot_disagreement` items (Part 2), "no
-  evaluation or decision recorded" (U4 / U6), and unacknowledged codebook issues (L3) and stale
-  cross-references between topics (L10). Until U4
-  records decisions, every scheme is in round 1 and Decide is never the current step.
+- **Waiting for later items:** unadjudicated `pilot_disagreement` items (Part 2), and
+  unacknowledged codebook issues (L3) and stale cross-references between topics (L10). ("No
+  decision recorded" arrived with U4.)
 - **Choices made:** the latest run is the scheme's newest pass of any engine. A run from
   before codebook versions were recorded never counts as "codebook changed". A bulk mark counts
   by when it was recorded, not the earlier date it applies from. The plan's "(2 themes edited)"
@@ -1099,7 +1098,37 @@ errors. The original spec follows.
   `onEnterReviewTab`-style hooks, like `window.onEnterCodingTab`), and after any job
   finishes.
 
-### U4 Decide panel and the round record
+### U4 Decide panel and the round record — done 2026-10-09
+
+**As built:** `coding_store/rounds.py` behind `GET /api/rounds`, `POST /api/rounds/decide` and
+`POST /api/rounds/withdraw`; the panel and a Rounds table at the bottom of Review › Evaluate
+(`evaluate.js`).
+- **Store:** `iteration_decisions` as specified, plus `withdrawn_at`; `iteration_round_runs`
+  carries `decision_id` as well, so a withdrawn decision keeps its own run list. Both are created
+  with `CREATE TABLE IF NOT EXISTS` (no version bump). The decision is about the run selected in
+  Evaluate, which may come from an earlier round (the panel says so).
+- **Rounds:** round n is closed by the n-th active decision; a run belongs to the round open when
+  it was trained. The Runs page gained a Round column, and Evaluate's run picker shows it.
+- **Withdraw:** only the latest decision, stamped `withdrawn_at` and logged, so earlier round
+  numbers never shift. Not in the spec; added because a mis-click would otherwise be permanent.
+- **Cycle strip (U3) now follows rounds:** Decide becomes current once the open round's run is
+  reviewed and up to date ("Round n is open. Evaluate the run and record a decision" →
+  Review › Evaluate). With no run in the round yet, the strip follows the decision that opened it:
+  refine codebook → Codebook current until the codebook changes, then Train; more labels → the
+  queues until labels change, then Train; retrain / another engine → Train. Accept shows the
+  round finished until a new run starts the next.
+- **Navigation:** as specified, from `rounds.NEXT_STEP`; more labels opens the `uncertain` queue.
+- **Logged:** `iteration_decision` (round, decision, run, its mean F1, codebook version, note,
+  the round's runs) and `iteration_decision_withdrawn`, labelled in the tab and the HTML export.
+- **Not yet:** Phase F's methods summary (it reads this table when built); stages in
+  `iteration_round_runs.stage` (U8).
+
+Verified in the test project, walking U7's round: editing the codebook made Train stale;
+retraining made Review current; a skip in a queue made Decide current; Evaluate showed round 1
+open; recording "Refine codebook" with a note landed on Train › Codebook with the strip at round 2,
+Codebook current; editing the codebook moved it to Train; the Runs page showed each run's round;
+withdrawing reopened round 1; "More labels" opened the borderline queue; the Web Appendix listed
+all three actions; no console errors. The original spec follows.
 
 - **Panel:** at the bottom of Review › Evaluate. The researcher picks one:
   - refine codebook

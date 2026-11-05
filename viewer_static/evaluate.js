@@ -1,7 +1,10 @@
 // Review tab -> Evaluate sub-page (docs/CODEBOOK_PLAN.md U6): how well one run does against
 // the researcher's gold, per theme -- precision, recall and F1 with 95% Wilson intervals, and
 // PR-AUC -- next to a second run on the same turns (by default the newest other TF-IDF run,
-// the baseline every engine must beat), plus a calibration table.
+// the baseline every engine must beat), plus a calibration table. At the bottom, the Decide
+// panel (U4): the researcher records what to do next, which closes the round
+// (POST /api/rounds/decide, coding_store/rounds.py), and the app goes where that decision
+// leads; below it, every closed round (GET /api/rounds), with the latest one withdrawable.
 //
 // Every rule lives server-side in coding_store/evaluation.py (GET /api/evaluate): gold is
 // the turns of interviews marked read in full, segments roll up to turns, scores are out of
@@ -19,6 +22,7 @@ const evalState = {
   modelVersion: null, // the run being evaluated
   compare: null, // the comparison run, or "" for none (null = not chosen yet: use the default)
   request: 0, // bumped per load, so a slow response for an old selection is dropped
+  rounds: null, // last GET /api/rounds response
 };
 
 // Queues' and Recode's score controls don't apply here; Evaluate has its own run pickers.
@@ -30,7 +34,7 @@ function evalRunLabel(run, current) {
   const codebook = !run.codebook_version ? "codebook not recorded"
     : run.codebook_version === current ? "current codebook"
       : `codebook ${shortCodebookVersion(run.codebook_version)} (changed since)`;
-  return `${engine} · ${when} · ${codebook}`;
+  return `Round ${run.round_no} · ${engine} · ${when} · ${codebook}`;
 }
 
 // The newest TF-IDF run other than the one being evaluated, or "" if there is none.
@@ -86,6 +90,7 @@ async function loadEvaluate() {
     evalState.compare = defaultCompare(runs, evalState.modelVersion);
   }
   renderEvalRunSelects();
+  loadRounds();
   await loadEvaluation(request);
 }
 
@@ -182,12 +187,117 @@ function renderEvaluation(data) {
     `<tr><td>${escapeHtml(b.band)}</td><td>${b.n}</td><td>${evalPct(b.share_positive)}</td></tr>`).join("");
 }
 
+// --- Decide panel and round history (U4) ----------------------------------------------
+
+async function loadRounds() {
+  const schemeId = evalState.schemeId;
+  let data;
+  try {
+    data = await (await fetch(`/api/rounds?scheme_id=${encodeURIComponent(schemeId)}`)).json();
+  } catch (err) {
+    return; // the panel just stays as it was
+  }
+  if (data.error || schemeId !== evalState.schemeId) return;
+  evalState.rounds = data;
+  renderRounds();
+}
+
+function renderRounds() {
+  const data = evalState.rounds;
+  const optionsEl = document.getElementById("evalDecisionOptions");
+  if (!optionsEl.children.length) {
+    optionsEl.innerHTML = data.decisions.map((d, i) =>
+      `<label class="eval-decision"><input type="radio" name="evalDecision" value="${escapeHtml(d.id)}"` +
+      `${i === 0 ? " checked" : ""}> ${escapeHtml(d.label)}</label>`).join("");
+  }
+  const open = data.open;
+  document.getElementById("evalRoundLabel").textContent =
+    `· round ${open.round_no} open, ${open.runs.length} run(s) trained in it so far`;
+  renderRunRoundNote();
+  const runLabel = (ref) => {
+    const run = (evalState.runs?.runs || []).find((r) => r.model_version === ref);
+    if (!run) return escapeHtml(ref || "—");
+    return `${escapeHtml(ENGINE_LABELS[run.engine] || run.engine)} · ${escapeHtml(run.trained_at.slice(0, 16).replace("T", " "))}`;
+  };
+  const tbody = document.getElementById("evalRoundsTable").querySelector("tbody");
+  tbody.innerHTML = data.rounds.length
+    ? data.rounds.slice().reverse().map((r) =>
+      `<tr><td>${r.round_no}</td><td>${escapeHtml(r.created_at.slice(0, 16).replace("T", " "))}</td>` +
+      `<td>${escapeHtml(r.label)}</td><td>${runLabel(r.run_ref)}</td><td>${r.runs.length}</td>` +
+      `<td>${escapeHtml(r.note || "")}</td></tr>`).join("")
+    : '<tr><td colspan="6" class="hint">No decisions yet: this is round 1.</td></tr>';
+  document.getElementById("evalWithdrawBtn").classList.toggle("hidden", !data.rounds.length);
+}
+
+// Says so when the run being decided on was trained in an earlier, closed round.
+function renderRunRoundNote() {
+  const el = document.getElementById("evalRunRoundNote");
+  const run = (evalState.runs?.runs || []).find((r) => r.model_version === evalState.modelVersion);
+  const open = evalState.rounds?.open;
+  el.textContent = run && open && run.round_no !== open.round_no
+    ? `The selected run was trained in round ${run.round_no}; the decision will close round ${open.round_no}.`
+    : "";
+}
+
+async function recordDecision() {
+  const statusEl = document.getElementById("evalDecideStatus");
+  const picked = document.querySelector('input[name="evalDecision"]:checked');
+  if (!picked || !evalState.modelVersion) {
+    statusEl.textContent = "Pick a run and a decision first.";
+    return;
+  }
+  statusEl.textContent = "Recording…";
+  const res = await fetch("/api/rounds/decide", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scheme_id: evalState.schemeId, decision: picked.value, run_ref: evalState.modelVersion,
+      note: document.getElementById("evalDecisionNote").value,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) {
+    statusEl.textContent = "Error: " + data.error;
+    return;
+  }
+  statusEl.textContent = `Round ${data.round_no} closed.`;
+  document.getElementById("evalDecisionNote").value = "";
+  await loadRounds();
+  if (typeof refreshCycleStrips === "function") refreshCycleStrips(); // cycle.js
+  // More labels opens the borderline queue: deciding those teaches the next model the most.
+  if (data.next.tab === "review" && data.next.subpage === "queues") {
+    reviewState.queueMode = "uncertain"; // review.js
+    document.getElementById("reviewMode").value = "uncertain";
+  }
+  goToSubpage(data.next.tab, data.next.subpage);
+}
+
+async function withdrawDecision() {
+  const latest = evalState.rounds?.rounds.slice(-1)[0];
+  if (!latest) return;
+  if (!confirm(`Withdraw round ${latest.round_no}'s decision (${latest.label})? Round ${latest.round_no} ` +
+    "becomes the open round again. The decision stays in the record, marked withdrawn.")) return;
+  const res = await fetch("/api/rounds/withdraw", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scheme_id: evalState.schemeId }),
+  });
+  const data = await res.json();
+  document.getElementById("evalDecideStatus").textContent = data.error
+    ? "Error: " + data.error : `Round ${latest.round_no}'s decision withdrawn.`;
+  await loadRounds();
+  if (typeof refreshCycleStrips === "function") refreshCycleStrips();
+}
+
 function bindEvaluateEvents() {
+  document.getElementById("evalDecideBtn").addEventListener("click", recordDecision);
+  document.getElementById("evalWithdrawBtn").addEventListener("click", withdrawDecision);
   document.getElementById("evalRun").addEventListener("change", (e) => {
     evalState.modelVersion = e.target.value;
     // Keep an explicit comparison, unless it is now the run itself.
     if (evalState.compare === evalState.modelVersion) evalState.compare = defaultCompare(evalState.runs.runs, evalState.modelVersion);
     renderEvalRunSelects();
+    renderRunRoundNote();
     loadEvaluation();
   });
   document.getElementById("evalCompare").addEventListener("change", (e) => {

@@ -37,6 +37,8 @@ ACTION_LABELS = {
     "item_read_in_full_unconfirmed": "Read-in-full confirmation withdrawn",
     "run_pin": "Training run pinned",
     "run_unpin": "Training run unpinned",
+    "iteration_decision": "Round decision",
+    "iteration_decision_withdrawn": "Round decision withdrawn",
     "predictions_prune": "Old runs' scores pruned",
     "database_compact": "Database compacted",
     "dataset_excluded": "Dataset excluded from analysis",
@@ -88,6 +90,14 @@ def _summarize(action_type, details):
         engine = details.get("engine", "?")
         return (f'Exported full-corpus topic model ({engine}, {details.get("themes_exported", "?")} '
                 f'theme(s), {details.get("segment_rows", "?")} rows)')
+    if action_type == "iteration_decision":
+        note = f' -- {details["note"]}' if details.get("note") else ""
+        return (f'Round {details.get("round_no", "?")} closed: '
+                f'{details.get("decision_label", details.get("decision", "?"))}, about run '
+                f'{details.get("run_ref", "?")} ({len(details.get("round_runs", []))} run(s) in the round){note}')
+    if action_type == "iteration_decision_withdrawn":
+        return (f"Withdrew round {details.get('round_no', '?')}'s decision "
+                f'({details.get("decision_label", details.get("decision", "?"))})')
     if action_type == "metadata_edited":
         changes = "; ".join(
             f'{field}: "{c.get("from") if c.get("from") is not None else ""}" -> '

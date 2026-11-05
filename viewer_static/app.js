@@ -21,6 +21,9 @@ const state = {
     dateFrom: null, // ms timestamp, null = unbounded
     dateTo: null, // ms timestamp, null = unbounded
     transcriptMatchIds: null, // Set of record ids from /api/transcript_search, null = no restriction
+    transcriptTerm: "", // the term behind transcriptMatchIds: set only once its search returns,
+                        // so the highlights in the text always agree with the list
+    transcriptWholeWord: false,
   },
 };
 
@@ -388,16 +391,18 @@ async function runTranscriptSearch(term) {
 
   if (!term || term.length < 2) {
     state.filters.transcriptMatchIds = null;
+    state.filters.transcriptTerm = "";
     statusEl.textContent = "";
     applyFilters();
     return;
   }
 
   statusEl.textContent = "Searching transcripts…";
+  const wholeWordPart = state.filters.transcriptWholeWord ? "&whole_word=1" : "";
   let data;
   try {
     const res = await fetch(
-      `/api/transcript_search?dataset=${encodeURIComponent(state.datasetId)}&q=${encodeURIComponent(term)}`
+      `/api/transcript_search?dataset=${encodeURIComponent(state.datasetId)}&q=${encodeURIComponent(term)}${wholeWordPart}`
     );
     data = await res.json();
   } catch (err) {
@@ -413,16 +418,155 @@ async function runTranscriptSearch(term) {
   }
   const ids = data.ids || [];
   state.filters.transcriptMatchIds = new Set(ids);
-  statusEl.textContent = `${ids.length} match${ids.length === 1 ? "" : "es"}`;
+  state.filters.transcriptTerm = term;
+  statusEl.textContent = `${ids.length} interview${ids.length === 1 ? "" : "s"}`;
   applyFilters();
 }
 
-function applyFilters() {
+// Drops the search for a list whose record ids no longer apply (another dataset, or a
+// reloaded index). Whole word is a setting, not part of the search, so it stays.
+function clearTranscriptSearch() {
+  clearTimeout(transcriptSearchDebounce);
+  transcriptSearchToken++; // discard any in-flight transcript search response
+  state.filters.transcriptMatchIds = null;
+  state.filters.transcriptTerm = "";
+  document.getElementById("transcriptSearch").value = "";
+  document.getElementById("transcriptSearchStatus").textContent = "";
+}
+
+// --- Keyword matches in the text (Browse and Coding) -------------------------------
+// The server only says which interviews match, so match positions are found here, while
+// each tab renders its text: keywordHighlighter() wraps every match in a <mark> numbered
+// by data-hit in reading order. matchNav holds each tab's place, and syncMatchNav() runs
+// after every render, keeping that place across re-renders of the same text (a code
+// toggled on Coding, say) and dropping it when the text or the search changes. An
+// interview always opens unmoved: nothing is selected until the first stepMatch().
+
+const matchNav = {
+  browse: {
+    rootId: "transcriptContent", barId: "browseMatchBar", key: null, total: 0, current: -1, hidden: 0, emptyNote: "",
+    onMove: null,
+    onReset: () => {
+      if (state.filters.transcriptTerm) document.getElementById("transcriptBox").scrollTop = 0;
+    },
+  },
+  // coding.js fills in onMove (select the match's segment) and onReset.
+  coding: {
+    rootId: "segmentContent", barId: "codingMatchBar", key: null, total: 0, current: -1, hidden: 0, emptyNote: "",
+    onMove: null, onReset: null,
+  },
+};
+
+// Must find what /api/transcript_search finds: a literal, case-insensitive term, inside
+// words unless Whole word is on.
+function activeKeywordRegex() {
+  const term = state.filters.transcriptTerm;
+  if (!term) return null;
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = state.filters.transcriptWholeWord
+    ? `(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])` : escaped;
+  return new RegExp(pattern, "giu");
+}
+
+// One per render: html(text) escapes text and marks its matches, numbering them across
+// every call. With no active search it only escapes.
+function keywordHighlighter() {
+  const re = activeKeywordRegex();
+  let count = 0;
+  return {
+    re,
+    count: () => count,
+    countIn: (text) => (re ? [...text.matchAll(re)].length : 0),
+    html: (text) => {
+      if (!re) return escapeHtml(text);
+      let out = "";
+      let last = 0;
+      for (const m of text.matchAll(re)) {
+        out += escapeHtml(text.slice(last, m.index)) +
+          `<mark class="kw-hit" data-hit="${count++}">${escapeHtml(m[0])}</mark>`;
+        last = m.index + m[0].length;
+      }
+      return out + escapeHtml(text.slice(last));
+    },
+  };
+}
+
+function matchElement(nav, n) {
+  return document.querySelector(`#${nav.rootId} mark.kw-hit[data-hit="${n}"]`);
+}
+
+function markCurrentMatch(nav) {
+  document.querySelectorAll(`#${nav.rootId} mark.kw-current`).forEach((el) => el.classList.remove("kw-current"));
+  const el = nav.current >= 0 ? matchElement(nav, nav.current) : null;
+  if (el) el.classList.add("kw-current");
+}
+
+function renderMatchBar(nav) {
+  const bar = document.getElementById(nav.barId);
+  const term = state.filters.transcriptTerm;
+  const show = Boolean(term) && Boolean(nav.total || nav.hidden || nav.emptyNote);
+  bar.classList.toggle("hidden", !show);
+  if (!show) return;
+  bar.querySelectorAll(".match-step").forEach((btn) => { btn.disabled = !nav.total; });
+  let text = nav.emptyNote;
+  if (nav.total) {
+    text = nav.current >= 0
+      ? `${nav.current + 1} of ${nav.total}` : `${nav.total} match${nav.total === 1 ? "" : "es"}`;
+    if (nav.hidden) text += ` (${nav.hidden} more hidden by Min words)`;
+  } else if (nav.hidden) {
+    text = `No visible matches (${nav.hidden} hidden by Min words)`;
+  }
+  bar.querySelector(".match-count").textContent = text;
+  bar.querySelector(".match-term").textContent =
+    `for “${term}”${state.filters.transcriptWholeWord ? " (whole word)" : ""}`;
+}
+
+// key names the text just rendered; the search is added here, so a new term or Whole word
+// setting also counts as new text.
+function syncMatchNav(tab, key, total, { hidden = 0, emptyNote = "" } = {}) {
+  const nav = matchNav[tab];
+  const fullKey = `${key}|${state.filters.transcriptWholeWord}|${state.filters.transcriptTerm}`;
+  if (nav.key !== fullKey) {
+    nav.key = fullKey;
+    nav.current = -1;
+    if (nav.onReset) nav.onReset();
+  }
+  nav.total = total;
+  nav.hidden = hidden;
+  nav.emptyNote = emptyNote;
+  markCurrentMatch(nav);
+  renderMatchBar(nav);
+}
+
+// Moves the current tab's place by delta (+1/-1), wrapping within the interview. From the
+// unmoved state, +1 lands on the first match and -1 on the last.
+function stepMatch(delta) {
+  const nav = matchNav[document.body.dataset.tab];
+  if (!nav || !nav.total) return;
+  const target = delta > 0 ? (nav.current + 1) % nav.total : (nav.current <= 0 ? nav.total : nav.current) - 1;
+  const el = matchElement(nav, target);
+  if (!el) return; // the text is still loading
+  nav.current = target;
+  markCurrentMatch(nav);
+  if (nav.onMove) nav.onMove(el);
+  el.scrollIntoView({ block: "center" });
+  renderMatchBar(nav);
+}
+
+// applyFilters() is what a filter change calls: #interviewList is shared by Browse and
+// Coding, so Coding's pane has to follow the list. loadDataset() uses refilter() instead,
+// because its onDatasetLoaded hook syncs Coding once the dataset is ready.
+function refilter() {
   state.filtered = state.all.filter(matchesFilters); // server already sorted by publish_date
   state.pos = 0;
   renderList();
   renderResultCount();
   showCurrent();
+}
+
+function applyFilters() {
+  refilter();
+  if (document.body.dataset.tab === "coding" && window.onEnterCodingTab) window.onEnterCodingTab();
 }
 
 function renderResultCount() {
@@ -623,10 +767,7 @@ async function reloadIndexAfterEdit(itemId) {
   const res = await fetch(`/api/index?dataset=${encodeURIComponent(state.datasetId)}`);
   state.all = await res.json();
   state.cache.clear(); // ids are positions in date order, so an edited date can shift them
-  state.filters.transcriptMatchIds = null; // those match ids are positions too
-  transcriptSearchToken++;
-  document.getElementById("transcriptSearch").value = "";
-  document.getElementById("transcriptSearchStatus").textContent = "";
+  clearTranscriptSearch(); // those match ids are positions too
   buildFilterOptions();
   state.filtered = state.all.filter(matchesFilters);
   if (!state.filtered.some((r) => r.item_id === itemId)) resetFilters();
@@ -637,16 +778,17 @@ async function reloadIndexAfterEdit(itemId) {
   if (window.onDatasetLoaded) window.onDatasetLoaded();
 }
 
-function renderTranscript(text) {
+// hl: a keywordHighlighter(). Speaker labels stay out of it, so only spoken text is marked.
+function renderTranscript(text, hl) {
   if (!text) return "<em>No transcript text available for this interview.</em>";
   return text
     .split("\n")
     .map((line) => {
       const m = line.match(/^\[(.*?)\]\s*(.*)$/);
       if (m) {
-        return `<p><strong>[${escapeHtml(m[1])}]</strong> ${escapeHtml(m[2])}</p>`;
+        return `<p><strong>[${escapeHtml(m[1])}]</strong> ${hl.html(m[2])}</p>`;
       }
-      return line.trim() ? `<p>${escapeHtml(line)}</p>` : "";
+      return line.trim() ? `<p>${hl.html(line)}</p>` : "";
     })
     .join("");
 }
@@ -675,6 +817,7 @@ async function showCurrent() {
       "<em>No interviews match the current filters.</em>";
     closeMetaEdit();
     updateMetaEditBtn(null);
+    syncMatchNav("browse", "none", 0);
     return;
   }
 
@@ -693,7 +836,12 @@ async function showCurrent() {
 
   // Guard against out-of-order responses if the researcher navigated quickly.
   if (state.filtered[state.pos] && state.filtered[state.pos].id === meta.id) {
-    document.getElementById("transcriptContent").innerHTML = renderTranscript(rec.transcript_text);
+    const hl = keywordHighlighter();
+    document.getElementById("transcriptContent").innerHTML = renderTranscript(rec.transcript_text, hl);
+    // An interview is only listed if the server found the term, so finding none in the
+    // spoken text means it matched on a [Speaker Name] label.
+    syncMatchNav("browse", `${state.datasetId}:${meta.id}`, hl.count(),
+      { emptyNote: "No matches in the spoken text (speaker label only)" });
   }
 }
 
@@ -737,6 +885,8 @@ function serializeFilters() {
     dateFrom: f.dateFrom,
     dateTo: f.dateTo,
     transcriptMatchCount: f.transcriptMatchIds ? f.transcriptMatchIds.size : null,
+    transcriptSearch: f.transcriptTerm || null,
+    transcriptWholeWord: f.transcriptWholeWord,
   };
 }
 
@@ -769,7 +919,10 @@ function resetFilters() {
     dateFrom: null,
     dateTo: null,
     transcriptMatchIds: null,
+    transcriptTerm: "",
+    transcriptWholeWord: false,
   };
+  clearTimeout(transcriptSearchDebounce);
   document
     .querySelectorAll("#filterPanel input[type=checkbox]")
     .forEach((cb) => (cb.checked = false));
@@ -827,6 +980,30 @@ function bindEvents() {
     clearTimeout(transcriptSearchDebounce);
     const term = e.target.value.trim();
     transcriptSearchDebounce = setTimeout(() => runTranscriptSearch(term), 400);
+  });
+  // Enter steps through the matches; if the box holds a term not searched yet, it runs that
+  // search instead of waiting out the debounce.
+  document.getElementById("transcriptSearch").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    const term = e.target.value.trim();
+    if (term === state.filters.transcriptTerm) {
+      stepMatch(e.shiftKey ? -1 : 1);
+    } else {
+      clearTimeout(transcriptSearchDebounce);
+      runTranscriptSearch(term);
+    }
+  });
+  document.getElementById("transcriptWholeWord").addEventListener("change", (e) => {
+    state.filters.transcriptWholeWord = e.target.checked;
+    clearTimeout(transcriptSearchDebounce);
+    runTranscriptSearch(document.getElementById("transcriptSearch").value.trim());
+  });
+  document.querySelectorAll(".match-bar").forEach((bar) => {
+    bar.addEventListener("click", (e) => {
+      const btn = e.target.closest(".match-step");
+      if (btn) stepMatch(Number(btn.dataset.step));
+    });
   });
   document.getElementById("minViews").addEventListener("input", (e) => {
     state.filters.minViews = Number(e.target.value) || 0;
@@ -929,6 +1106,8 @@ function bindEvents() {
     if (tag === "INPUT" || tag === "TEXTAREA") return;
     if (e.key === "ArrowLeft") prev();
     else if (e.key === "ArrowRight") next();
+    else if (e.key === "]") stepMatch(1);
+    else if (e.key === "[") stepMatch(-1);
   });
 }
 
@@ -937,10 +1116,7 @@ function bindEvents() {
 async function loadDataset(datasetId) {
   state.datasetId = datasetId;
   state.cache.clear(); // record ids are only unique within a dataset
-  state.filters.transcriptMatchIds = null; // ids from the old dataset don't apply here
-  transcriptSearchToken++; // discard any in-flight transcript search response
-  document.getElementById("transcriptSearch").value = "";
-  document.getElementById("transcriptSearchStatus").textContent = "";
+  clearTranscriptSearch(); // ids from the old dataset don't apply here
   const [indexRes, dupRes] = await Promise.all([
     fetch(`/api/index?dataset=${encodeURIComponent(datasetId)}`),
     fetch(`/api/duplicates/status?dataset=${encodeURIComponent(datasetId)}`),
@@ -948,7 +1124,7 @@ async function loadDataset(datasetId) {
   state.all = await indexRes.json();
   state.duplicates = await dupRes.json();
   buildFilterOptions();
-  applyFilters();
+  refilter();
   renderDatasetStatusHint();
   if (window.onDatasetLoaded) window.onDatasetLoaded();
 }

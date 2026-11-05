@@ -43,6 +43,7 @@ schema, not something to rename.
 |-----------------------------------------|------------------------------------------------------|
 | Browse filters/rendering/citation       | `viewer_static/app.js`, `viewer_server.py`           |
 | Editing a record's metadata after import (Browse → Edit details) | `query_api.py`'s `EDITABLE_FIELDS`/`update_record_metadata`, `coding_store/segments.py`'s `update_item_names`, `viewer_server.py`'s `post_interview_metadata`, `app.js`'s `saveMetaEdit`/`reloadIndexAfterEdit`; [IMPORTING_DATA.md](docs/IMPORTING_DATA.md) "Correcting metadata after import" |
+| "Interview contains" search: highlights, match bar, Whole word, `keyword_search` code tag | `app.js`'s "Keyword matches in the text" section, `coding.js`'s `syncCodingMatches`/`keywordProvenance`, `viewer_server.py`'s `get_transcript_search` |
 | Search & Export / bulk download         | `query_api.py`, `download_script.py`                 |
 | Importing a new data source             | [IMPORTING_DATA.md](docs/IMPORTING_DATA.md), `query_api.py`'s `EXPORT_FIELDS`/`validate_dataset_records`, `scripts/import_*.py` |
 | Coding tab UI/keyboard shortcuts        | `viewer_static/coding.js`                            |
@@ -52,6 +53,7 @@ schema, not something to rename.
 | Corpus-level analytics / vocab overlap  | `corpus_analytics.py`, `viewer_static/analytics.js`  |
 | Model tab UI                            | `viewer_static/model.js`                             |
 | Cycle strip (round, codebook → train → review → decide steps, what to do next) on Train and Review | `coding_store/iteration.py` (`iteration_status` holds every rule), `viewer_static/cycle.js`, `GET /api/iteration/status` |
+| Rounds: the Decide panel (Review → Evaluate), round decisions and which runs each round held | `coding_store/rounds.py` (`record_decision`, `withdraw_latest`, `DECISIONS`/`NEXT_STEP`), `viewer_static/evaluate.js`, `/api/rounds*`; tables `iteration_decisions` / `iteration_round_runs` |
 | Train → Runs (run history, codebook version per run, pins) and the engine list | `viewer_static/runs.js`, `coding_store/runs.py`, `codebook_export.current_codebook_version()`, `model_runs.engine_registry()` (`GET /api/engines`: never hard-code engine lists in the UI) |
 | Review → Evaluate: a run's precision / recall / F1 against read-in-full gold, at the turn level, vs. a comparison run | `coding_store/evaluation.py` (gold, turn roll-up and metrics), `viewer_static/evaluate.js`, `GET /api/evaluate`, `tests/test_evaluation.py` |
 | Review / recode queue                   | `viewer_static/review.js`, `coding_store/review.py`'s `get_review_candidates` |

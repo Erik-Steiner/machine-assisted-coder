@@ -39,6 +39,8 @@ const ACTION_LABELS = {
   item_read_in_full_unconfirmed: "Read-in-full confirmation withdrawn",
   run_pin: "Training run pinned",
   run_unpin: "Training run unpinned",
+  iteration_decision: "Round decision",
+  iteration_decision_withdrawn: "Round decision withdrawn",
   predictions_prune: "Old runs' scores pruned",
   database_compact: "Database compacted",
   dataset_excluded: "Dataset excluded from analysis",
@@ -117,6 +119,12 @@ function summarizeAppendixRow(actionType, details) {
     case "codebook_themes_export":
       return `Exported codebook for models: scheme ${details.scheme_id || "?"}, ${details.topics ?? "?"} theme(s), ` +
         `${details.label_rows ?? "?"} label row(s), version ${(details.codebook_version || "?").slice(0, 19)}…`;
+    case "iteration_decision":
+      return `Round ${details.round_no ?? "?"} closed: ${details.decision_label || details.decision || "?"}, ` +
+        `about run ${details.run_ref || "?"} (${(details.round_runs || []).length} run(s) in the round)` +
+        (details.note ? ` — ${details.note}` : "");
+    case "iteration_decision_withdrawn":
+      return `Withdrew round ${details.round_no ?? "?"}'s decision (${details.decision_label || details.decision || "?"})`;
     case "metadata_edited": {
       const show = (v) => (v === null || v === undefined ? "" : v);
       const changes = Object.entries(details.changes || {})

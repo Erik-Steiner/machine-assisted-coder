@@ -150,6 +150,35 @@ CREATE TABLE IF NOT EXISTS review_decisions (
 CREATE INDEX IF NOT EXISTS idx_review_decisions_round ON review_decisions(round_id);
 CREATE INDEX IF NOT EXISTS idx_review_decisions_segment ON review_decisions(segment_id, theme_id);
 
+-- The researcher's decision at the end of each round of the codebook -> train -> review ->
+-- decide cycle (docs/CODEBOOK_PLAN.md U4) -- see coding_store/rounds.py. Recording one closes
+-- the scheme's current round; withdrawing it stamps withdrawn_at (never deleted), which
+-- reopens that round. iteration_round_runs lists every run trained in the round the decision
+-- closed, attached to the decision, with a stage for topic-method runs (U8; NULL for score
+-- engines).
+CREATE TABLE IF NOT EXISTS iteration_decisions (
+    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scheme_id TEXT NOT NULL,
+    round_no INTEGER NOT NULL,
+    run_ref TEXT,                    -- the run decided on: a model_version (a topic run_id, Part 2)
+    codebook_version TEXT,           -- the codebook when the decision was made
+    decision TEXT NOT NULL,          -- see rounds.DECISIONS
+    note TEXT,
+    coder TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    withdrawn_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_iteration_decisions_scheme ON iteration_decisions(scheme_id, round_no);
+CREATE TABLE IF NOT EXISTS iteration_round_runs (
+    decision_id INTEGER NOT NULL,
+    scheme_id TEXT NOT NULL,
+    round_no INTEGER NOT NULL,
+    run_ref TEXT NOT NULL,
+    engine TEXT,
+    stage TEXT,                      -- NULL | 'prepare' | 'discover' | 'pilot' | 'full'
+    PRIMARY KEY (decision_id, run_ref)
+);
+
 CREATE TABLE IF NOT EXISTS segment_none_confirmations (
     confirmation_id INTEGER PRIMARY KEY AUTOINCREMENT,
     segment_id TEXT NOT NULL,

@@ -1,5 +1,5 @@
 """Where a scheme stands in the codebook -> train -> review -> decide cycle
-(docs/CODEBOOK_PLAN.md U3): the round number, each step's state, and the reasons, most
+(docs/CODEBOOK_PLAN.md U3, U4): the round number, each step's state, and the reasons, most
 important first, each naming the tab that resolves it. Backs GET /api/iteration/status and
 the one-line cycle strip on the Train and Review pages.
 
@@ -7,28 +7,39 @@ Advisory only, like the codebook's completeness checks: nothing here blocks a st
 decision about what the strip says lives in iteration_status(), a pure function over plain
 facts, so the rules are in one readable place; get_status() only gathers those facts.
 
-Signals, and why each one:
-  - No run yet: nothing to review; train first.
-  - Codebook edited since the latest run (its recorded codebook_version differs from the
-    current one): the run doesn't reflect the codebook. A run from before versions were
-    recorded is "unknown", never assumed changed.
-  - Labels changed since the latest run: codes or rejections added or removed, "fully coded"
+A round ends when the researcher records a decision (coding_store/rounds.py, U4). "The
+latest run" below means the newest run trained in the open round; a run trained before the
+last decision belongs to a closed round.
+
+Signals while the open round has a run, and why each one:
+  - Codebook edited since that run (its recorded codebook_version differs from the current
+    one): the run doesn't reflect the codebook. A run from before versions were recorded is
+    "unknown", never assumed changed.
+  - Labels changed since that run: codes or rejections added or removed, "fully coded"
     marks made or withdrawn, "none of these" confirmed or withdrawn. The run didn't learn from
     them. Review decisions write codes and rejections, so a review session ends here too.
-  - The latest run has no review decisions yet: it hasn't been looked at.
-Rounds close when the researcher records a decision (U4, not built yet), so until then every
-scheme is in round 1 and the Decide step is never current.
+  - The run has no review decisions yet: it hasn't been looked at.
+  - No decision recorded for the round: evaluate the run and decide what next (Decide becomes
+    the current step once the run is reviewed and still up to date).
+With no run in the open round, the reason follows from the decision that opened it (refine
+the codebook, label more, train again), or "train one" for a scheme's first round. A round
+ended by accepting a run shows that round as finished until a new run starts the next.
 """
-from . import runs, schema, themes
+from . import rounds as rounds_store, runs, schema, themes
 
 STEPS = ("codebook", "train", "review", "decide")
 
 # Where each reason sends the researcher: (top-level tab, sub-tab).
 TARGETS = {
     "no_run": ("model", "models"),
+    "train_again": ("model", "models"),
+    "refine_codebook": ("model", "codebook"),
+    "more_labels": ("review", "queues"),
+    "accepted": ("model", "runs"),
     "codebook_changed": ("model", "models"),
     "labels_changed": ("model", "models"),
     "not_reviewed": ("review", "queues"),
+    "undecided": ("review", "evaluate"),
 }
 
 
@@ -53,12 +64,15 @@ def describe_label_changes(changes):
     )
 
 
-def iteration_status(latest_run, current_codebook_version, label_changes, decisions_on_run, rounds_closed=0):
-    """latest_run: the scheme's newest training pass ({model_version, trained_at, engine,
-    codebook_version}) or None. label_changes: {kind: count} since that run (see
-    describe_label_changes). decisions_on_run: review decisions recorded on it (not undone).
+def iteration_status(latest_run, current_codebook_version, label_changes, decisions_on_run, rounds_closed=0,
+                     last_decision=None):
+    """latest_run: the newest training pass in the open round ({model_version, trained_at,
+    engine, codebook_version}) or None. label_changes: {kind: count} since that run, or, with
+    no run, since last_decision (see describe_label_changes). decisions_on_run: review
+    decisions recorded on the run (not undone). rounds_closed: decisions recorded so far.
+    last_decision: the latest of them ({decision, codebook_version, run_ref, created_at}) or None.
     Returns {round, steps: {step: done|current|stale|todo}, reasons: [{code, step, text,
-    target: {tab, subpage}}], latest_run}, reasons most important first."""
+    target: {tab, subpage}}], latest_run, last_decision}, reasons most important first."""
     reasons = []
 
     def add(code, step, text):
@@ -66,26 +80,55 @@ def iteration_status(latest_run, current_codebook_version, label_changes, decisi
         reasons.append({"code": code, "step": step, "text": text, "target": {"tab": tab, "subpage": subpage}})
 
     steps = {step: "todo" for step in STEPS}
+    round_no = rounds_closed + 1
+    changed = describe_label_changes(label_changes)
     if latest_run is None:
-        steps["codebook"] = "done"
-        steps["train"] = "current"
-        add("no_run", "train", "No model trained for this scheme yet. Train one.")
-    else:
-        steps["codebook"] = steps["train"] = "done"
-        recorded = latest_run.get("codebook_version")
-        if recorded and recorded != current_codebook_version:
-            steps["train"] = "stale"
-            add("codebook_changed", "train", "Codebook changed since the latest run. Retrain to use it.")
-        changed = describe_label_changes(label_changes)
-        if changed:
-            steps["train"] = "stale"
-            add("labels_changed", "train", f"Since the latest run: {changed}. Retrain to use them.")
-        if decisions_on_run:
-            steps["review"] = "done"
+        kind = last_decision["decision"] if last_decision else None
+        if kind is None:
+            steps["codebook"] = "done"
+            steps["train"] = "current"
+            add("no_run", "train", "No model trained for this scheme yet. Train one.")
+        elif kind == "accept":
+            round_no = rounds_closed  # the round that ended by accepting; a new run starts the next
+            steps = {step: "done" for step in STEPS}
+            add("accepted", "decide", f"Round {round_no} ended by accepting a run. Export it from Train › Runs; "
+                "train again to start a new round.")
+        elif kind == "refine_codebook" and last_decision.get("codebook_version") == current_codebook_version:
+            steps["codebook"] = "current"
+            add("refine_codebook", "codebook",
+                f"Round {round_no}: you chose to refine the codebook. Edit it, then retrain.")
+        elif kind == "more_labels" and not changed:
+            steps["codebook"] = "done"
+            add("more_labels", "train", f"Round {round_no}: you chose more labels. Triage a queue, then retrain.")
         else:
-            steps["review"] = "current" if steps["train"] == "done" else "todo"
-            add("not_reviewed", "review", "The latest run hasn't been reviewed yet. Triage a queue.")
-    return {"round": rounds_closed + 1, "steps": steps, "reasons": reasons, "latest_run": latest_run}
+            steps["codebook"] = "done"
+            steps["train"] = "current"
+            why = {"refine_codebook": "the codebook has changed since your decision.",
+                   "more_labels": f"since your decision: {changed}.",
+                   "another_engine": "you chose to try another engine.",
+                   }.get(kind, "you chose to retrain.")
+            add("train_again", "train", f"Round {round_no}: {why} Train a new run.")
+        return {"round": round_no, "steps": steps, "reasons": reasons, "latest_run": None,
+                "last_decision": last_decision}
+
+    steps["codebook"] = steps["train"] = "done"
+    recorded = latest_run.get("codebook_version")
+    if recorded and recorded != current_codebook_version:
+        steps["train"] = "stale"
+        add("codebook_changed", "train", "Codebook changed since the latest run. Retrain to use it.")
+    if changed:
+        steps["train"] = "stale"
+        add("labels_changed", "train", f"Since the latest run: {changed}. Retrain to use them.")
+    if decisions_on_run:
+        steps["review"] = "done"
+        if steps["train"] == "done":
+            steps["decide"] = "current"
+    else:
+        steps["review"] = "current" if steps["train"] == "done" else "todo"
+        add("not_reviewed", "review", "The latest run hasn't been reviewed yet. Triage a queue.")
+    add("undecided", "decide", f"Round {round_no} is open. Evaluate the run and record a decision.")
+    return {"round": round_no, "steps": steps, "reasons": reasons, "latest_run": latest_run,
+            "last_decision": last_decision}
 
 
 def label_changes_since(scheme_id, since):
@@ -136,12 +179,17 @@ def get_status(scheme_id, current_codebook_version):
     """iteration_status() for a scheme, from coding.db. The caller passes the current
     codebook version (codebook_export.current_codebook_version()), which keeps this package
     free of a dependency on the export module."""
+    decisions = rounds_store.active_decisions(scheme_id)
+    last = decisions[-1] if decisions else None
+    last_fact = {k: last[k] for k in ("decision", "codebook_version", "run_ref", "created_at", "round_no")} \
+        if last else None
     history = runs.list_runs(scheme_id)
-    latest = history[0] if history else None
+    latest = history[0] if history and (last is None or history[0]["trained_at"] > last["created_at"]) else None
     if latest is None:
-        return iteration_status(None, current_codebook_version, {}, 0)
+        changes = label_changes_since(scheme_id, last["created_at"]) if last else {}
+        return iteration_status(None, current_codebook_version, changes, 0, len(decisions), last_fact)
     run = {k: latest[k] for k in ("model_version", "trained_at", "engine", "codebook_version")}
     return iteration_status(
         run, current_codebook_version, label_changes_since(scheme_id, latest["trained_at"]),
-        decisions_on_run(latest["model_version"]),
+        decisions_on_run(latest["model_version"]), len(decisions), last_fact,
     )

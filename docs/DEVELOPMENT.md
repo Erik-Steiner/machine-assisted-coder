@@ -31,7 +31,7 @@ Endpoints:
 4. `GET /api/search/companies?keyword=..` and `GET /api/search/entities?keyword=..` proxy the live API's keyword search, for the Search & Export tab's disambiguation lists.
 5. `POST /api/query/start` kicks off a background thread that pages through `get_feed` for a chosen `company_id` or `entity_id`, builds export rows, and writes them to `queries/<kind>_<slug>_<timestamp>.{json,csv}`; it also appends an entry to `queries/_index.json` so the new dataset survives a server restart. Returns a `job_id`.
 6. `GET /api/query/status?job_id=..` is polled by the frontend to report progress (`items_fetched`, `pages_fetched`) and, on completion, the new dataset's id.
-7. `GET /api/transcript_search?dataset=<id>&q=<term>` returns the ids of records in that dataset whose `transcript_text` contains `<term>` (case-insensitive substring match), by scanning the dataset's full in-memory records server-side. This is what backs the "Interview contains" filter — `transcript_text` is deliberately left out of the index payload (see Data contract below), so a client-side substring filter isn't possible without it.
+7. `GET /api/transcript_search?dataset=<id>&q=<term>&whole_word=<0|1>` returns the ids of records in that dataset whose `transcript_text` contains `<term>` (case-insensitive substring match, or whole word with `whole_word=1`), by scanning the dataset's full in-memory records server-side. This is what backs the "Interview contains" filter — `transcript_text` is deliberately left out of the index payload (see Data contract below), so a client-side substring filter isn't possible without it. It returns ids only: the highlights and the match bar on Browse and Coding find positions in the browser as each tab renders its text (`app.js`'s `keywordHighlighter`/`syncMatchNav`/`stepMatch`), so `activeKeywordRegex()` has to keep matching what this endpoint matches. Only spoken text is marked, never speaker labels. On Coding, a code applied to the segment the match controls selected gets source `keyword_search` (`coding.js`'s `keywordProvenance`); that source has no effect on labels or training.
 8. `POST /api/interview/metadata` corrects one record's metadata (`{dataset_id, item_id, changes, note?}`) -- see **Editing a record's metadata** in the File reference's import notes below.
 
 The frontend is three static files in `viewer_static/`: `viewer.html`, `app.js`, and `styles.css`. The browser loads `viewer.html`, which loads `app.js`. On load, the script fetches `/api/datasets`, populates the dataset dropdown, and loads the selected one via `/api/index?dataset=<id>` into memory. All filtering and sorting happen in the browser, using this small index. The script fetches the full record from `/api/interview/<id>?dataset=<id>` only when the researcher views that record, and caches it (the cache is cleared on every dataset switch, since ids aren't globally unique). Search & Export is a separate, independent chunk of `app.js`: it drives the keyword search, the disambiguation click-to-select flow, and polling a query job to completion, then hands off to the same `loadDataset()` function Browse uses once a new dataset is ready.
@@ -440,7 +440,8 @@ interviewer" / "not nested", so old data behaves exactly as before.
 Coding is keyboard-driven in the frontend: `j`/`k` or arrow-down/up move focus between
 the current interview's segment cards without the mouse, and number keys `1`-`9`
 toggle the corresponding codebook theme (in list order) on the focused segment --
-`toggleFocusedSegmentTheme()` in `coding.js`. `postCode`/`deleteCode`/`buildChipsHtml`
+`toggleFocusedSegmentTheme()` in `coding.js`. `]` and `[` step through keyword matches on
+Browse and Coding (`stepMatch()` in `app.js`). `postCode`/`deleteCode`/`buildChipsHtml`
 live in `coding.js` rather than `app.js` specifically so `model.js` and `review.js` can
 reuse them without a dependency on Browse-only code.
 
@@ -571,11 +572,28 @@ codebook version, label changes since that pass, review decisions on it) and hol
 `get_status()` only gathers the facts. Label changes count codes and rejections added or removed,
 "fully coded" marks made or withdrawn (a bulk mark by `recorded_at`, not the earlier moment it's
 dated as of) and "none of these" confirmations, after the pass's `trained_at`. A pass with no
-recorded codebook version never counts as "codebook changed". Rounds close only when a decision
-is recorded (U4), so until then every scheme is in round 1. The strip refreshes on entering
+recorded codebook version never counts as "codebook changed". Rounds close when a decision is
+recorded (U4, below): "the latest run" is then the newest run of the open round, Decide becomes
+current once that run is reviewed and still up to date, and a round with no run yet says what the
+decision that opened it asks for (edit the codebook, label more, train again). A round ended by
+accepting a run shows as finished until a new run starts the next. The strip refreshes on entering
 either page, after a codebook save or flag change, 1.5 s after Review decisions pause, and when
 any background job finishes: `pollBackgroundJob()` calls `window.onBackgroundJobDone` after
 `onDone`.
+
+**Rounds and the Decide panel (CODEBOOK_PLAN U4).** The bottom of Review › Evaluate records the
+researcher's decision for the round (`coding_store/rounds.py`'s `DECISIONS`: refine codebook, more
+labels, retrain, try another engine, accept), with a note, about the run selected above, through
+`POST /api/rounds/decide`. The server stores the current `codebook_version` with it in
+`iteration_decisions` (created with `CREATE TABLE IF NOT EXISTS`, no version bump) and the runs
+trained during the round in `iteration_round_runs`, attached to the decision, with a `stage` column
+left NULL for score engines (U8 fills it for topic methods). Round n is closed by the n-th active
+decision; a run belongs to the round open when it was trained (`rounds.round_of()`, and the Runs
+page's Round column from `runs.list_runs()`). Only the latest decision can be withdrawn
+(`withdrawn_at`, never deleted), so earlier round numbers never shift. The response's `next`
+({tab, subpage}, `rounds.NEXT_STEP`) is where the app goes: Train › Codebook, Review › Queues in
+the borderline (`uncertain`) queue, Train › Models, or Train › Runs. Decisions and withdrawals are
+logged (`iteration_decision`, `iteration_decision_withdrawn`) and labelled in both appendix renderers.
 
 **Train tab sub-pages.** `codebook.js` registers the Codebook | Models | Runs sub-tabs
 (`#modelSubnav`) at the top of `#modelView`. The Models page is the original sidebar plus detail

@@ -12,6 +12,10 @@ ones included, so a run doesn't vanish from history when a theme is retired. The
 version comes from the pass's model_run_params (classifier.training_params()); passes
 from before it was recorded have none, and the page says "not recorded" rather than
 guessing.
+
+Each pass also carries the round it was trained in (CODEBOOK_PLAN U4): 1 + the scheme's
+active round decisions made before it, the same rule as rounds.round_of(). Read here with
+one query rather than by importing rounds.py, which imports this module.
 """
 import json
 
@@ -48,7 +52,7 @@ def _mean(values):
 
 def list_runs(scheme_id):
     """Every training pass that trained one of the scheme's themes, newest first:
-    {model_version, engine, trained_at, negative_mode, codebook_version (None when not
+    {model_version, engine, trained_at, round_no, negative_mode, codebook_version (None when not
     recorded), pinned, pin_note, n_themes, mean_<metric> for METRIC_KEYS, themes: [{theme_id,
     name, status, n_pos, n_neg, precision, recall, f1, pr_auc, threshold}]}. Themes in a
     pass are in codebook order."""
@@ -58,6 +62,9 @@ def list_runs(scheme_id):
     rows = [r for r in model_runs.list_model_runs() if r["theme_id"] in by_id]
     params = _params_by_version({r["model_version"] for r in rows})
     pins = storage.list_pins()
+    with schema.get_conn() as conn:
+        decided = [r["created_at"] for r in conn.execute(
+            "SELECT created_at FROM iteration_decisions WHERE scheme_id=? AND withdrawn_at IS NULL", (scheme_id,))]
 
     passes = {}
     for r in rows:
@@ -67,6 +74,7 @@ def list_runs(scheme_id):
             versions = (params.get(mv) or {}).get("codebook_versions") or {}
             p = passes[mv] = {
                 "model_version": mv, "engine": r["engine"], "trained_at": r["trained_at"],
+                "round_no": 1 + sum(1 for at in decided if at < r["trained_at"]),
                 "negative_mode": r["negative_mode"], "codebook_version": versions.get(scheme_id),
                 "pinned": mv in pins, "pin_note": (pins.get(mv) or {}).get("note"), "themes": [],
             }

@@ -170,7 +170,8 @@ engine" depends on A4's engine-aware notion of "latest".
   version, pins, the full-corpus export and Storage, plus the engine registry
   (`GET /api/engines`). U3 the cycle strip done 2026-10-08. U6 the Evaluate tab done 2026-10-09: per-theme precision /
   recall / F1 with Wilson intervals and PR-AUC against read-in-full gold, at the turn level, next to a
-  comparison run.)*
+  comparison run. U4 the Decide panel and round record done 2026-10-09: decisions close rounds,
+  stored with their runs and codebook version, logged, and the cycle strip follows them.)*
 
 ## Phase D — Stage 6: external-score round trip
 

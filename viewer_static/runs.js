@@ -1,6 +1,7 @@
 // Train tab -> Runs sub-page (docs/CODEBOOK_PLAN.md U2): every training run of the active
 // scheme, across engines, newest first: when, which engine, the codebook version it was
-// trained under (and whether the codebook has changed since), what counted as a negative,
+// trained under (and whether the codebook has changed since), the round of the cycle it was
+// trained in (U4), what counted as a negative,
 // and per-theme labels and metrics, with pin / unpin. Also houses what moved out of the
 // Models sidebar, unchanged: the full-corpus export (model.js binds its button) and the
 // Storage panel (storage.js), which loads the first time its section is opened, since
@@ -74,6 +75,7 @@ function runRowHtml(run, current) {
     `<td><button type="button" class="runs-expand" aria-expanded="${open}" ` +
     `title="Per-theme labels and metrics">${open ? "▾" : "▸"}</button></td>` +
     `<td>${escapeHtml(trainedAt)}</td>` +
+    `<td>${run.round_no}</td>` +
     `<td>${escapeHtml(ENGINE_LABELS[run.engine] || run.engine || "?")}</td>` +
     `<td>${codebookCellHtml(run, current)}</td>` +
     `<td>${escapeHtml(NEGATIVE_MODE_LABELS[run.negative_mode] || run.negative_mode || "—")}</td>` +
@@ -90,7 +92,7 @@ function runRowHtml(run, current) {
     `<td>${formatMetric(t.f1)}</td><td>${formatMetric(t.pr_auc)}</td><td>${formatMetric(t.threshold, 3)}</td></tr>`,
   ).join("");
   return row +
-    `<tr class="runs-detail"><td></td><td colspan="8">` +
+    `<tr class="runs-detail"><td></td><td colspan="9">` +
     `<div class="hint">Run ${escapeHtml(run.model_version)}. Positives and negatives are the labels each theme was trained on; ` +
     `metrics are cross-validated.</div>` +
     `<table class="runs-theme-table"><thead><tr><th>Theme</th><th>Positives</th><th>Negatives</th>` +
@@ -112,7 +114,7 @@ function renderRuns() {
     `${escapeHtml(shortCodebookVersion(current))}</code>`;
   tbody.innerHTML = data.runs.length
     ? data.runs.map((run) => runRowHtml(run, current)).join("")
-    : '<tr><td colspan="9" class="hint">No training runs for this scheme yet. Train one on the Models tab.</td></tr>';
+    : '<tr><td colspan="10" class="hint">No training runs for this scheme yet. Train one on the Models tab.</td></tr>';
 }
 
 function bindRunsEvents() {

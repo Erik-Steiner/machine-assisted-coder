@@ -98,9 +98,10 @@ Endpoints:
     POST /api/query/start                 -> kick off a background fetch+export job
     GET  /api/query/status?job_id=..      -> poll a job's progress/result
 
-    GET  /api/transcript_search?dataset=<id>&q=<term>
+    GET  /api/transcript_search?dataset=<id>&q=<term>&whole_word=<0|1>
         -> ids of records in that dataset whose transcript_text contains
-           <term> (case-insensitive). transcript_text isn't in the light
+           <term> (case-insensitive; whole_word=1 only counts it with no letter,
+           digit or underscore either side). transcript_text isn't in the light
            index payload, so this is how the frontend's "Interview contains"
            filter works without loading every transcript into the browser.
 
@@ -272,6 +273,16 @@ Endpoints:
                                                          run's on the same turns, plus score calibration bands:
                                                          Review -> Evaluate (CODEBOOK_PLAN U6;
                                                          coding_store/evaluation.py). Read-only
+    GET  /api/rounds?scheme_id=<id>                   -> {decisions: [{id, label}], rounds: [{round_no, decision, label,
+                                                         run_ref, codebook_version, note, created_at, runs}], open:
+                                                         {round_no, runs}} -- the scheme's closed rounds of the cycle
+                                                         and the one in progress (CODEBOOK_PLAN U4; coding_store/rounds.py)
+    POST /api/rounds/decide                           -> {scheme_id, decision, run_ref, note?} -> record the decision that
+                                                         closes the current round (the current codebook version is
+                                                         stored with it); returns it with next: {tab, subpage}, where
+                                                         the app goes next. Logged
+    POST /api/rounds/withdraw                         -> {scheme_id} -> withdraw the latest decision (withdrawn_at;
+                                                         never deleted), reopening its round. Logged
     GET  /api/model/export_full_corpus?scheme_id=&model_version=&engine=
         -> writes segment_topic_scores/topic_seed_pack (every segment's score against every
            trained theme, plus each theme's top terms + exemplars) to exports/ as JSON+CSV --
@@ -423,6 +434,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -451,6 +463,7 @@ from coding_store import (
     queues,
     review,
     reviewed as reviewed_store,
+    rounds as rounds_store,
     runs as runs_store,
     schema,
     schemes,
@@ -1261,10 +1274,14 @@ def get_transcript_search(req):
     term = (req.query.get("q", "")).strip().lower()
     if not term:
         return JsonResponse({"ids": []})
-    ids = [
-        rid for rid, rec in dataset["by_id"].items()
-        if term in (rec.get("transcript_text") or "").lower()
-    ]
+    # Same word boundary as app.js's activeKeywordRegex(), so the interviews listed and the
+    # matches highlighted inside them agree.
+    whole_word = re.compile(rf"(?<!\w){re.escape(term)}(?!\w)") if req.query.get("whole_word") == "1" else None
+    ids = []
+    for rid, rec in dataset["by_id"].items():
+        text = (rec.get("transcript_text") or "").lower()
+        if (whole_word.search(text) if whole_word else term in text):
+            ids.append(rid)
     return JsonResponse({"ids": ids})
 
 
@@ -1947,6 +1964,45 @@ def get_evaluate(req):
         return JsonResponse(evaluation.evaluate_run(scheme_id, model_version, compare, turn_lookup=turns))
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
+
+
+def _require_scheme(scheme_id):
+    if schemes.get_scheme(scheme_id or "") is None:
+        raise ApiError(f"unknown scheme '{scheme_id}'", status=400)
+    return scheme_id
+
+
+@ROUTER.get("/api/rounds")
+def get_rounds(req):
+    scheme_id = _require_scheme(req.query.get("scheme_id"))
+    return JsonResponse({
+        "decisions": [{"id": k, "label": v} for k, v in rounds_store.DECISIONS.items()],
+        **rounds_store.list_rounds(scheme_id),
+    })
+
+
+@ROUTER.post("/api/rounds/decide", json_body=True, required=["scheme_id", "decision", "run_ref"])
+def post_rounds_decide(req):
+    body = req.body
+    scheme_id = _require_scheme(body["scheme_id"])
+    try:
+        row = rounds_store.record_decision(
+            scheme_id, body["decision"], body["run_ref"], codebook_export.current_codebook_version(scheme_id),
+            note=body.get("note"), coder=body.get("coder") or CODER_NAME,
+        )
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse(row)
+
+
+@ROUTER.post("/api/rounds/withdraw", json_body=True, required=["scheme_id"])
+def post_rounds_withdraw(req):
+    scheme_id = _require_scheme(req.body["scheme_id"])
+    try:
+        row = rounds_store.withdraw_latest(scheme_id, coder=req.body.get("coder") or CODER_NAME)
+    except ValueError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    return JsonResponse({"ok": True, "withdrawn": row})
 
 
 @ROUTER.get("/api/model/export_full_corpus")

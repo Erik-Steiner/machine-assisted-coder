@@ -1399,6 +1399,27 @@ button.btn-secondary {
 #reviewModeHint { line-height: 1.5; max-width: 760px; }
 .reason-judged { background: var(--panel-alt); color: var(--text-dim); }
 .reason-oof { background: transparent; color: var(--text); border-style: dashed; }
+/* "Interview contains" matches in the text, and the bar that steps through them (app.js) */
+mark.kw-hit {
+  background: #ffe08a;
+  color: #1a1d23;
+  border-radius: 2px;
+}
+mark.kw-hit.kw-current {
+  background: #ff9f43;
+  outline: 2px solid #ff9f43;
+}
+.match-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.match-bar.hidden { display: none; }
+.match-bar button { padding: 3px 10px; font-size: 11px; }
+.transcript-search-options { margin-top: 6px; }
 /* Card explanations (roadmap B3): highlighted top terms and per-theme score bars */
 mark.term-hit {
   background: var(--accent-dim);
@@ -1651,3 +1672,13 @@ mark.term-hit {
 #evalTable th, #evalCalibration th { color: var(--text-dim); font-weight: 600; }
 .eval-ci { color: var(--text-dim); }
 .eval-few { color: #e0a800; font-size: 11px; }
+#evalDecide { margin-top: 28px; padding-top: 4px; border-top: 1px solid var(--border); max-width: 760px; }
+#evalDecisionOptions { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 8px 0 10px 0; }
+.eval-decision { cursor: pointer; }
+#evalDecisionNoteLabel { display: block; margin-bottom: 10px; }
+#evalDecisionNote { display: block; width: 100%; margin-top: 4px; font: inherit; }
+#evalRunRoundNote, #evalDecideStatus { margin-top: 6px; }
+#evalRoundsTable { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+#evalRoundsTable th, #evalRoundsTable td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border); }
+#evalRoundsTable th { color: var(--text-dim); font-weight: 600; }
+#evalWithdrawBtn.hidden { display: none; }

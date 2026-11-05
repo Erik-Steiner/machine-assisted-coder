@@ -21,6 +21,8 @@ const codingState = {
   segments: [], // [{segment_id, seg_index, speaker_name, speaker_role, depth, word_count, timestamp, text,
                 //   theme_ids, rejected_theme_ids, none_confirmed}] -- none_confirmed is per active scheme
   focusIndex: -1,
+  keywordSegmentId: null, // the segment the match controls selected, until focus moves off it:
+                          // a code applied there is tagged as found by keyword search
   pendingFocusSegmentId: null, // set by model.js's "View in Coding" before switching tabs
   backfillCandidates: [], // last /api/coding/backfill_candidates response (Datasets panel)
   unconfirmedMarks: [], // last /api/coding/unconfirmed_marks response (Datasets panel)
@@ -753,6 +755,8 @@ async function jumpToSegmentInCoding(target) {
 async function loadCodingSegments(itemId) {
   codingState.itemId = itemId;
   codingState.focusIndex = -1;
+  codingState.keywordSegmentId = null;
+  matchNav.coding.key = null; // focus is gone, so the place among the matches goes with it
   document.getElementById("segmentContent").innerHTML = "<em>Loading segments…</em>";
   const schemePart = codingState.activeSchemeId
     ? `&scheme_id=${encodeURIComponent(codingState.activeSchemeId)}` : "";
@@ -774,21 +778,37 @@ async function loadCodingSegments(itemId) {
 function renderSegments() {
   const container = document.getElementById("segmentContent");
   container.innerHTML = "";
+  const hl = keywordHighlighter();
+  const visible = visibleSegmentIndices();
   if (!codingState.segments.length) {
     container.innerHTML = "<em>No segments found for this interview — open <strong>Datasets</strong> above and click <strong>Segment</strong> next to its dataset.</em>";
-    return;
-  }
-  const visible = visibleSegmentIndices();
-  if (!visible.length) {
+  } else if (!visible.length) {
     container.innerHTML = "<em>No segments meet the current “min words” filter.</em>";
-    return;
+  } else {
+    visible.forEach((idx) => {
+      container.appendChild(renderSegmentCard(codingState.segments[idx], idx, hl));
+    });
   }
-  visible.forEach((idx) => {
-    container.appendChild(renderSegmentCard(codingState.segments[idx], idx));
-  });
+  syncCodingMatches(hl, visible);
 }
 
-function renderSegmentCard(seg, idx) {
+// The bar's count covers the segments on screen; matches in segments Min words hides are
+// only counted, for its note. An interview can be listed with no match here: the term may
+// be in a speaker label, or cross a point where segmentation split the text.
+function syncCodingMatches(hl, visible) {
+  const shown = new Set(visible);
+  const hidden = codingState.segments.reduce(
+    (sum, seg, idx) => (shown.has(idx) ? sum : sum + hl.countIn(seg.text)), 0);
+  let emptyNote = "No matches in this interview's segments";
+  if (!codingState.segments.length) {
+    emptyNote = "This interview has no segments yet";
+  } else if (hl.re && codingState.segments.some((seg) => (seg.speaker_name || "").search(hl.re) >= 0)) {
+    emptyNote = "No matches in the spoken text (speaker label only)";
+  }
+  syncMatchNav("coding", `${codingState.itemId}|${codingState.minWords}`, hl.count(), { hidden, emptyNote });
+}
+
+function renderSegmentCard(seg, idx, hl) {
   const div = document.createElement("div");
   const isInterviewer = seg.speaker_role === "interviewer";
   div.className = "segment-card" + (idx === codingState.focusIndex ? " focused" : "");
@@ -810,7 +830,7 @@ function renderSegmentCard(seg, idx) {
     noneBadge +
     (seg.timestamp ? `<span class="seg-timestamp">${escapeHtml(seg.timestamp)}</span>` : "") +
     `</div>`;
-  const text = `<div class="segment-text">${escapeHtml(seg.text)}</div>`;
+  const text = `<div class="segment-text">${hl.html(seg.text)}</div>`;
   // Interviewer turns display for context but aren't coded -- no chip buttons
   // rendered at all, so the normal workflow can't touch them (coding_store.
   // add_code itself has no role check, this is a UI-level default only).
@@ -847,12 +867,21 @@ async function toggleCode(seg, themeId) {
   renderSegments();
   try {
     if (active) await deleteCode(seg.segment_id, themeId);
-    else await postCode(seg.segment_id, themeId);
+    else await postCode(seg.segment_id, themeId, keywordProvenance(seg));
   } catch (err) {
     // leave the optimistic UI state as-is; a refresh will resync if this failed
   }
   refreshProgress();
   refreshThemeCounts();
+}
+
+// Provenance for a code applied on a segment the match controls led to, so keyword-led
+// coding can be told apart from reading in full. Undefined for every other segment.
+function keywordProvenance(seg) {
+  const term = state.filters.transcriptTerm;
+  if (!term || seg.segment_id !== codingState.keywordSegmentId) return undefined;
+  const wholeWord = state.filters.transcriptWholeWord ? " (whole word)" : "";
+  return { source: "keyword_search", note: `keyword search: "${term}"${wholeWord}` };
 }
 
 // --- "Reviewed" state (roadmap A6): which passages you've judged ------------------------
@@ -1092,6 +1121,7 @@ async function toggleFocusedSegmentNone() {
 }
 
 function setSegmentFocus(idx) {
+  if (idx !== codingState.focusIndex) codingState.keywordSegmentId = null;
   codingState.focusIndex = idx;
   document.querySelectorAll("#segmentContent .segment-card").forEach((card) => {
     card.classList.toggle("focused", Number(card.dataset.idx) === idx);
@@ -1336,6 +1366,13 @@ function bindCodingEvents() {
       toggleFocusedSegmentNone();
     }
   });
+
+  matchNav.coding.onMove = (mark) => {
+    const idx = Number(mark.closest(".segment-card").dataset.idx);
+    setSegmentFocus(idx);
+    codingState.keywordSegmentId = codingState.segments[idx].segment_id;
+  };
+  matchNav.coding.onReset = () => { codingState.keywordSegmentId = null; };
 
   window.onEnterCodingTab = syncCodingToCurrentInterview;
   window.onDatasetLoaded = () => {

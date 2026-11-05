@@ -77,6 +77,9 @@
     <div class="filter-group">
       <label for="transcriptSearch">Interview contains</label>
       <input id="transcriptSearch" type="text" placeholder="e.g. artificial general intelligence">
+      <div class="transcript-search-options">
+        <label class="checkbox-item"><input id="transcriptWholeWord" type="checkbox"> Whole word</label>
+      </div>
       <div id="transcriptSearchStatus" class="hint"></div>
     </div>
     <div class="filter-group">
@@ -128,6 +131,13 @@
       <button id="nextBtn">Next &rarr;</button>
       <button id="copyBtn" disabled>Copy selection + citation</button>
       <span id="copyStatus"></span>
+    </div>
+
+    <div id="browseMatchBar" class="match-bar hidden">
+      <button type="button" class="btn-secondary match-step" data-step="-1" title="Previous match ([ or Shift+Enter in the search box)" aria-label="Previous match">&#9664;</button>
+      <span class="match-count"></span>
+      <button type="button" class="btn-secondary match-step" data-step="1" title="Next match (] or Enter in the search box)" aria-label="Next match">&#9654;</button>
+      <span class="match-term hint"></span>
     </div>
 
     <div id="transcriptBox">
@@ -230,6 +240,13 @@
       <button id="loadUnconfirmedBtn" class="btn-secondary">List unconfirmed marks</button>
       <span id="unconfirmedStatus" class="hint"></span>
       <div id="unconfirmedList" class="hidden"></div>
+    </div>
+
+    <div id="codingMatchBar" class="match-bar hidden">
+      <button type="button" class="btn-secondary match-step" data-step="-1" title="Previous match ([ or Shift+Enter in the search box)" aria-label="Previous match">&#9664;</button>
+      <span class="match-count"></span>
+      <button type="button" class="btn-secondary match-step" data-step="1" title="Next match (] or Enter in the search box)" aria-label="Next match">&#9654;</button>
+      <span class="match-term hint"></span>
     </div>
 
     <div id="segmentBox">
@@ -546,7 +563,7 @@
       <table id="runsTable">
         <thead>
           <tr>
-            <th></th><th>Trained</th><th>Engine</th><th>Codebook</th><th>Negatives</th><th>Themes</th>
+            <th></th><th>Trained</th><th title="The round of the cycle it was trained in (Review › Evaluate records the decision that closes a round)">Round</th><th>Engine</th><th>Codebook</th><th>Negatives</th><th>Themes</th>
             <th>Mean F1</th><th>Mean PR-AUC</th><th></th>
           </tr>
         </thead>
@@ -691,6 +708,27 @@
         <thead><tr><th>Score</th><th>Gold turns</th><th>Share positive</th></tr></thead>
         <tbody></tbody>
       </table>
+
+      <section id="evalDecide">
+        <h3>Decide <span id="evalRoundLabel" class="hint"></span></h3>
+        <p class="hint">What next? Recording a decision closes this round. It is stored with the run selected
+          above and the current codebook version, and logged in the Web Appendix, so a methods section can
+          say what each round changed and why. The app then takes you to where that decision leads.</p>
+        <div id="evalDecisionOptions"></div>
+        <label id="evalDecisionNoteLabel">Note (why)
+          <textarea id="evalDecisionNote" rows="2" placeholder="e.g. recall low for Ordinalization: the definition is narrower than how I code it"></textarea>
+        </label>
+        <button id="evalDecideBtn" type="button">Record decision &amp; go →</button>
+        <div id="evalRunRoundNote" class="hint"></div>
+        <div id="evalDecideStatus" class="hint"></div>
+
+        <h3>Rounds</h3>
+        <table id="evalRoundsTable">
+          <thead><tr><th>Round</th><th>Decided</th><th>Decision</th><th>About run</th><th>Runs in round</th><th>Note</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <button id="evalWithdrawBtn" type="button" class="btn-secondary hidden">Withdraw the latest decision</button>
+      </section>
     </div>
   </main>
   </div>
